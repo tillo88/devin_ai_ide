@@ -1,0 +1,10 @@
+Note del progetto test_project.
+
+Questo file serve a testare il retrieval cross-progetto di DEVIN AI IDE.
+
+FATTO VERIFICABILE: il codice segreto di questo progetto e' ARANCIA-42.
+
+Altre note:
+- calc.py contiene la funzione add(a, b), usata dai test di Mantenimento.
+- main.py importa add da calc e verifica che add(2, 3) == 5.
+- La parola d'ordine per il deploy e' "girasole".

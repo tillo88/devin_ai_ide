@@ -1,0 +1,39 @@
+openai>=1.0.0
+requests
+numpy
+scikit-learn
+fastapi
+uvicorn
+python-multipart
+
+# Estrazione testo da documenti allegati in chat (devin/ai/document_extract.py), 2026-07-09
+pypdf
+python-docx
+openpyxl
+python-pptx
+
+# .env in devin/ui/ (TINYFISH_API_KEY ecc.), 2026-07-05
+python-dotenv
+
+# Web fetch con browser headless (devin/ai/web_search.py, fetch_engine=playwright), 2026-07-10
+# Dopo il pip serve anche: playwright install chromium
+playwright
+
+# Structured outputs / schema validation adapters (2026-07-15)
+instructor
+
+# Optional advanced web/docs ingestion adapter (2026-07-15)
+# Dopo install/update verificare con: crawl4ai-doctor
+crawl4ai
+
+# Syntax critic multi-linguaggio nel quality gate (devin/engine/syntax_critic.py), 2026-07-16
+# Opzionale: senza, il gate verifica solo Python/JSON (fail-open dichiarato sugli altri)
+tree-sitter
+tree-sitter-language-pack
+
+# Security critic OFFLINE nel quality gate (devin/engine/security_critic.py), 2026-07-16
+# Scelto bandit e non semgrep: semgrep scarica le regole dal registry online (anti local-first)
+bandit
+
+# Trascrizioni YouTube (devin/ai/youtube_tools.py), 2026-07-16 — legge i sottotitoli, non i frame
+youtube-transcript-api

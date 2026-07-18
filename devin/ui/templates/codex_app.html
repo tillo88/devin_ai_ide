@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="it" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#151311">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="DEVIN">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <title>DEVIN Workspace</title>
+  <link rel="stylesheet" href="/static/css/codex_app.css">
+</head>
+<body class="codex-shell">
+  <header class="topbar">
+    <button class="ghost-link panel-toggle" id="toggle-workspace-panel" type="button" title="Workspace" aria-label="Apri pannello workspace">&#9776;</button>
+    <div class="brand">
+      <span class="brand-mark">&#129504;</span>
+      <div>
+        <div class="brand-title">DEVIN</div>
+        <div class="brand-subtitle">desktop coding agent &middot; local workspace</div>
+      </div>
+    </div>
+    <div class="topbar-command" aria-label="DEVIN command status">
+      <span class="topbar-chip"><span>Progetto</span><strong id="active-scope-label">General chat</strong></span>
+      <span class="topbar-chip accent"><span>Sicurezza</span><strong>diff prima di applicare</strong></span>
+    </div>
+    <div class="topbar-status">
+      <button class="ghost-link panel-toggle" id="toggle-mind-panel" type="button" title="Attivit&agrave;" aria-label="Apri pannello attivit&agrave;">&#129504;</button>
+      <span class="status-pill" id="model-source">source: ...</span>
+      <span class="status-pill" id="memory-count">memory: ...</span>
+      <span class="status-pill" id="vram-pill">vram: ...</span>
+      <button class="ghost-link command-open-button" id="open-command-palette" type="button" title="Command palette Ctrl+K">⌘K</button>
+      <a class="ghost-link" href="/app/diagnostics">Diagnostics</a>
+    </div>
+  </header>
+
+  <main class="workspace-grid">
+    <aside class="panel workspace-panel">
+      <div class="panel-header">
+        <span>Workspace</span>
+        <button class="icon-button" id="refresh-app" title="Refresh">&#8635;</button>
+      </div>
+      <section class="panel-section">
+        <div class="section-title-row">
+          <h2>Projects</h2>
+          <div class="section-actions">
+            <button class="tiny-button" id="link-folder-button" title="Link external project folder">Link</button>
+            <button class="tiny-button" id="new-project-button" title="Create workspace project">New</button>
+          </div>
+        </div>
+        <div class="project-list" id="project-list">
+          <button class="project-card active" data-project-path="">
+            <strong>General chat</strong>
+            <span>Nessun progetto selezionato</span>
+          </button>
+        </div>
+      </section>
+      <section class="panel-section">
+        <div class="section-title-row">
+          <h2>Conversations</h2>
+          <button class="tiny-button" id="new-chat-button" title="Create project chat">New</button>
+        </div>
+        <div class="chat-list" id="chat-list"></div>
+      </section>
+    </aside>
+
+    <section class="panel workstream-panel">
+      <div class="panel-header">
+        <span>DEVIN Command Center</span>
+        <span class="status-dot" id="agent-dot"></span>
+      </div>
+      <div class="chat-thread" id="chat-thread" aria-live="polite">
+        <div class="chat-hero">
+          <div class="chat-hero-mark">&#129504;</div>
+          <h1>Ciao Alessandro.</h1>
+          <p class="chat-hero-sub">Su cosa lavoriamo oggi?</p>
+        </div>
+      </div>
+
+      <form class="chat-composer" id="chat-form">
+        <textarea id="chat-input" rows="2" placeholder="Chiedi a DEVIN..."></textarea>
+        <div class="composer-actions">
+          <select id="chat-mode" title="Model mode">
+            <option value="auto">auto</option>
+            <option value="chat">chat</option>
+            <option value="reasoning">reasoning</option>
+          </select>
+          <label class="toggle-label"><input type="checkbox" id="chat-web"> web</label>
+          <label class="attach-button" title="Attach one or more files">Files<input type="file" id="chat-file" multiple></label>
+          <span class="mini-label" id="chat-file-label" title="No files attached">no files</span>
+          <button type="submit" id="chat-send">Invia</button>
+        </div>
+      </form>
+
+      <details class="diff-preview-panel collapsible-panel">
+        <summary class="panel-header compact collapsible-summary">
+          <span>Diff preview</span>
+          <span class="mini-label">read-only &middot; click per aprire</span>
+        </summary>
+        <div class="diff-preview-body">
+          <textarea id="diff-input" rows="8" placeholder="Incolla qui una unified diff per vedere file, aggiunte e rimozioni prima di applicarla."></textarea>
+          <div class="diff-actions">
+            <button type="button" id="diff-preview-button">Preview diff</button>
+            <button type="button" id="diff-apply-button">Apply diff</button>
+            <span class="mini-label" id="diff-preview-status">idle</span>
+          </div>
+          <div class="diff-result" id="diff-result"></div>
+        </div>
+      </details>
+
+    </section>
+
+    <aside class="panel mind-panel focus-panel">
+      <div class="panel-header">
+        <span>Attività</span>
+        <span class="mini-label" id="mind-state">loading</span>
+      </div>
+
+      <section class="panel-section">
+        <h2>Avanzamento</h2>
+        <div class="pipeline-steps" id="pipeline-steps">
+          <span class="pipe-step">Plan</span>
+          <span class="pipe-step">Code</span>
+          <span class="pipe-step">Test</span>
+          <span class="pipe-step">Gate</span>
+        </div>
+        <div class="activity-run" id="activity-run">Nessun run recente in questo progetto.</div>
+      </section>
+
+      <section class="panel-section">
+        <div class="section-title-row">
+          <h2>Cartella di lavoro</h2>
+          <button class="tiny-button" id="workdir-set-button" title="Collega la cartella su cui DEVIN lavora">Collega</button>
+        </div>
+        <div class="workdir-box" id="workdir-box">Nessuna cartella collegata: i run girano nel progetto.</div>
+        <div class="file-list" id="workdir-files"></div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Contesto attivo</h2>
+        <div class="context-tags" id="context-tags"><span class="context-empty">Seleziona un progetto.</span></div>
+      </section>
+
+      <section class="panel-section rail-footer">
+        <a class="quick-link" href="/app/diagnostics">Diagnostics</a>
+        <a class="quick-link" href="/app/diagnostics#knowledge">Knowledge</a>
+      </section>
+    </aside>
+  </main>
+
+
+  <div class="command-overlay" id="command-overlay" hidden>
+    <section class="command-palette" role="dialog" aria-modal="true" aria-labelledby="command-title">
+      <div class="command-header">
+        <div>
+          <h2 id="command-title">Command Palette</h2>
+          <p>Azioni rapide, navigazione workspace e diagnostica. Nessun comando shell viene eseguito da qui.</p>
+        </div>
+        <button class="icon-button" id="close-command-palette" type="button" title="Chiudi">×</button>
+      </div>
+      <input id="command-search" class="command-search" type="search" placeholder="Cerca comando, progetto, run…" autocomplete="off">
+      <div class="command-list" id="command-list"></div>
+      <div class="command-footer">
+        <span>Ctrl/⌘+K apri</span>
+        <span>Esc chiudi</span>
+        <span>Enter esegui primo risultato</span>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // PWA (2026-07-18): registrazione service worker, guarded; la pagina e'
+    // gia' autenticata, il SW eredita il cookie di sessione (same-origin).
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js').catch(function () {});
+      });
+    }
+  </script>
+  <script type="module" src="/static/js/codex_app.js"></script>
+</body>
+</html>

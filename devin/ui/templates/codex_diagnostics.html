@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="it" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DEVIN Diagnostics</title>
+  <link rel="stylesheet" href="/static/css/codex_app.css">
+</head>
+<body class="codex-shell diagnostics-shell">
+  <header class="topbar diagnostics-topbar">
+    <div class="brand">
+      <span class="brand-mark">🧠</span>
+      <div>
+        <div class="brand-title">DEVIN</div>
+        <div class="brand-subtitle">diagnostics · training · memory</div>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span class="mini-label" id="diagnostics-refresh-state">loading</span>
+      <a class="ghost-link" href="/app">Workspace</a>
+      <a class="ghost-link" href="/">Legacy dashboard</a>
+    </div>
+  </header>
+
+  <nav class="diagnostics-tabs" aria-label="Diagnostics sections">
+    <a class="diagnostics-tab" href="#runs" data-diagnostics-tab="runs">Runs</a>
+    <a class="diagnostics-tab" href="#training" data-diagnostics-tab="training">Training</a>
+    <a class="diagnostics-tab" href="#memory" data-diagnostics-tab="memory">Memory</a>
+    <a class="diagnostics-tab" href="#knowledge" data-diagnostics-tab="knowledge">Knowledge</a>
+    <a class="diagnostics-tab" href="#sandbox" data-diagnostics-tab="sandbox">Sandbox</a>
+    <a class="diagnostics-tab" href="#settings" data-diagnostics-tab="settings">Settings</a>
+  </nav>
+  <main class="diagnostics-grid">
+    <section class="panel diagnostics-card" id="runs">
+      <div class="panel-header"><span>Runs</span><span class="mini-label" id="runs-status">loading</span></div>
+      <div class="diagnostics-body">
+        <div class="metric-grid" id="runs-metrics">
+          <div class="metric-card"><span>total</span><strong>—</strong></div>
+          <div class="metric-card"><span>success</span><strong>—</strong></div>
+          <div class="metric-card"><span>failed</span><strong>—</strong></div>
+        </div>
+        <div class="diagnostics-list" id="runs-list">Carico run recenti…</div>
+        <div class="diagnostics-retention" id="log-retention-panel">
+          <div class="diagnostics-inline-title">Log retention</div>
+          <p class="diagnostics-note" id="log-retention-summary">Carico policy autoclean…</p>
+          <div class="diagnostics-actions">
+            <button class="tiny-button" id="log-retention-dry-run" type="button">Preview cleanup</button>
+            <button class="tiny-button" id="log-retention-cleanup" type="button">Clean old logs</button>
+          </div>
+        </div>
+        <pre class="run-log-preview" id="run-log-viewer">Seleziona “Log” su un run recente per vedere il log qui.</pre>
+      </div>
+    </section>
+
+    <section class="panel diagnostics-card" id="training">
+      <div class="panel-header"><span>Training review</span><span class="mini-label" id="training-status">loading</span></div>
+      <div class="diagnostics-body">
+        <p class="diagnostics-note">Seed/run prepara dati e tentativi. Nessun auto_success entra nella memoria buona senza Teacher/human validation.</p>
+        <div class="diagnostics-actions">
+          <select class="diagnostics-select" id="benchmark-select" aria-label="Benchmark">
+            <option value="devin-mini">devin-mini</option>
+            <option value="mbpp">mbpp (importati)</option>
+          </select>
+          <button class="tiny-button" id="training-seed-action" type="button">Seed</button>
+          <button class="tiny-button primary-mini-button" id="training-run-action" type="button">Run mini bench</button>
+          <button class="tiny-button" id="mbpp-import-action" type="button">Import MBPP…</button>
+          <button class="tiny-button" id="teacher-packet-action" type="button">Export Teacher packet</button>
+          <button class="tiny-button" id="sft-export-action" type="button">Export SFT</button>
+        </div>
+        <div class="diagnostics-action-state" id="diagnostics-action-state">Idle. I run reali partono solo con conferma esplicita.</div>
+        <div class="metric-grid" id="training-metrics">
+          <div class="metric-card"><span>cases</span><strong>—</strong></div>
+          <div class="metric-card"><span>attempts</span><strong>—</strong></div>
+          <div class="metric-card"><span>verified</span><strong>—</strong></div>
+        </div>
+        <p class="diagnostics-inline-help">Review rapida: salva esito + metodo/evidenza in append-only. Non modifica l'attempt originale e non promuove memoria automaticamente.</p>
+        <div class="diagnostics-list" id="training-list">Carico training state…</div>
+        <h3 class="diagnostics-subtitle">Teacher review queue <span class="mini-label" id="review-queue-status">…</span></h3>
+        <p class="diagnostics-inline-help">Solo gli attempt SENZA review (auto_success/auto_failure/runner_error): ogni voce mostra l'evidenza del quality gate e dei validatori del caso. ✓/✕/Fix/Infra registrano la decisione append-only.</p>
+        <div class="diagnostics-list" id="review-queue-list">Carico review queue…</div>
+        <h3 class="diagnostics-subtitle">Correction editor <span class="mini-label" id="correction-status">idle</span></h3>
+        <p class="diagnostics-inline-help">Le correzioni sono l'UNICA fonte dell'export SFT: una review ✕/Fix senza correzione non produce dataset. Dopo ✕/Fix l'attempt viene precompilato qui.</p>
+        <div class="diagnostics-form-grid">
+          <label>Attempt ID<input class="diagnostics-input" id="correction-attempt-id" placeholder="attempt_… (si compila da ✕/Fix nella coda)"></label>
+          <label>Correzione (cosa andava fatto)<textarea class="diagnostics-input" id="correction-text" rows="3" placeholder="Es: usare l'endpoint ufficiale GetPlayerSummaries v2 e testare con mock, niente chiamate reali"></textarea></label>
+          <label>Soluzione corretta (opzionale, codice — diventa la risposta SFT)<textarea class="diagnostics-input" id="correction-solution" rows="6" placeholder="Codice/diff corretto. Se vuoto, l'export SFT usa il testo della correzione."></textarea></label>
+        </div>
+        <div class="diagnostics-actions">
+          <button class="tiny-button primary-mini-button" id="correction-save-action" type="button">Salva correzione (→ SFT)</button>
+        </div>
+        <h3 class="diagnostics-subtitle">Exports</h3>
+        <div class="diagnostics-list" id="exports-list">Carico export recenti…</div>
+      </div>
+    </section>
+
+    <section class="panel diagnostics-card" id="memory">
+      <div class="panel-header"><span>Memory audit</span><span class="mini-label" id="memory-status">loading</span></div>
+      <div class="diagnostics-body">
+        <p class="diagnostics-note">Vista anti-contaminazione: safe recall separato da review-only, errori salvati come lezioni e non come verità.</p>
+        <div class="metric-grid" id="memory-metrics">
+          <div class="metric-card"><span>schema</span><strong>—</strong></div>
+          <div class="metric-card"><span>records</span><strong>—</strong></div>
+          <div class="metric-card"><span>safe statuses</span><strong>—</strong></div>
+        </div>
+        <div class="diagnostics-list" id="memory-list">Carico memory policy…</div>
+      </div>
+    </section>
+
+
+
+    <section class="panel diagnostics-card" id="knowledge">
+      <div class="panel-header"><span>Knowledge crawl</span><span class="mini-label" id="crawl-status">ready</span></div>
+      <div class="diagnostics-body">
+        <p class="diagnostics-note">Aggiunge documentazione/siti alla knowledge di un progetto usando Crawl4AI quando disponibile, con fallback basic e validazione anti-SSRF.</p>
+        <div class="diagnostics-form-grid">
+          <label>Progetto<select class="diagnostics-select" id="crawl-project-select"><option value="">— scegli dalla workspace —</option></select></label>
+          <label>Project path<input class="diagnostics-input" id="crawl-project-path" placeholder="riempito dal menu, o incolla un path consentito"></label>
+          <label>URL<input class="diagnostics-input" id="crawl-url" placeholder="https://docs.example.com"></label>
+          <label>Mode<select class="diagnostics-select" id="crawl-mode"><option value="auto">auto</option><option value="crawl4ai">crawl4ai</option><option value="basic">basic</option></select></label>
+          <label>Max chars<input class="diagnostics-input" id="crawl-max-chars" type="number" min="1000" max="200000" value="50000"></label>
+        </div>
+        <div class="diagnostics-actions">
+          <button class="tiny-button primary-mini-button" id="crawl-url-action" type="button">Crawl into knowledge</button>
+          <button class="tiny-button" id="crawl-status-action" type="button">Check adapter</button>
+        </div>
+        <pre class="diagnostics-result" id="crawl-result">Pronto.</pre>
+      </div>
+    </section>
+
+    <section class="panel diagnostics-card" id="sandbox">
+      <div class="panel-header"><span>Project sandbox</span><span class="mini-label" id="sandbox-status">ready</span></div>
+      <div class="diagnostics-body">
+        <p class="diagnostics-note">Prepara una copia isolata per prove rischiose. L'originale resta read-only by contract; ritorno solo via diff/review/test.</p>
+        <div class="diagnostics-form-grid">
+          <label>Progetto<select class="diagnostics-select" id="sandbox-project-select"><option value="">— scegli dalla workspace —</option></select></label>
+          <label>Project path<input class="diagnostics-input" id="sandbox-project-path" placeholder="riempito dal menu, o incolla un path consentito"></label>
+          <label>Max file MB<input class="diagnostics-input" id="sandbox-max-file-size" type="number" min="1" max="500" value="50"></label>
+          <label class="diagnostics-check"><input type="checkbox" id="sandbox-link-venv"> link venv leggero</label>
+          <label class="diagnostics-check"><input type="checkbox" id="sandbox-include-venv"> copia venv</label>
+        </div>
+        <div class="diagnostics-actions">
+          <button class="tiny-button primary-mini-button" id="sandbox-prepare-action" type="button">Prepare sandbox</button>
+        </div>
+        <pre class="diagnostics-result" id="sandbox-result">Pronto.</pre>
+      </div>
+    </section>
+
+    <section class="panel diagnostics-card" id="settings">
+      <div class="panel-header"><span>Settings</span><span class="mini-label" id="settings-status">loading</span></div>
+      <div class="diagnostics-body">
+        <p class="diagnostics-note">Modelli, rig role, Tauri backend, CUDA/VRAM e adapter esterni opzionali OpenAI/Claude.</p>
+        <div class="metric-grid" id="desktop-readiness-metrics">
+          <div class="metric-card"><span>desktop</span><strong>—</strong></div>
+          <div class="metric-card"><span>cleanup</span><strong>—</strong></div>
+          <div class="metric-card"><span>local servers</span><strong>—</strong></div>
+          <div class="metric-card"><span>logs</span><strong>—</strong></div>
+        </div>
+        <div class="diagnostics-actions">
+          <button class="tiny-button" id="desktop-readiness-refresh" type="button">Refresh desktop readiness</button>
+          <button class="tiny-button" id="desktop-close-cleanup-action" type="button">Cleanup local models now</button>
+        </div>
+        <div class="diagnostics-list" id="desktop-readiness-list">Carico desktop readiness…</div>
+        <div class="diagnostics-list" id="settings-list">Carico model state…</div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/js/codex_diagnostics.js"></script>
+</body>
+</html>

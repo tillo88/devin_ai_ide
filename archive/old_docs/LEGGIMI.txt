@@ -1,0 +1,24 @@
+🚀 COSA FA DAVVERO
+
+✔ legge progetto
+✔ costruisce contesto
+✔ chiede all’LLM una strategia + patch
+✔ riceve unified diff (git-style)
+✔ valida sicurezza patch
+✔ applica su copia workspace
+✔ esegue progetto
+✔ analizza errori
+✔ ripete ciclo
+
+🧱 ARCHITETTURA
+project/
+agent.py
+workspace/
+  original/
+  working/
+  patched/
+logs/
+state.json
+🔥 DEPENDENZA
+
+Local model + rig esterno(se disponibile)

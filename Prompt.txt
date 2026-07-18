@@ -1,0 +1,496 @@
+Devi riprendere e proseguire lo sviluppo del progetto **DEVIN AI IDE** direttamente dalla cartella di lavoro.
+
+## Obiettivo generale
+
+DEVIN AI IDE è un coding agent locale, desktop-first, simile a Codex/Claude Desktop/Kimi Work. The best they have all togheter if possible.
+
+Architettura principale:
+
+* backend FastAPI;
+* interfaccia moderna `/app`;
+* shell desktop Tauri;
+* chat e contesto per progetto;
+* orchestratore `Planner → Coder → Patcher → Runner → Critic`;
+* sandbox sicura con diff e applicazione controllata;
+* routing tra modelli locali e rig esterno;
+* memoria anti-contaminazione;
+* training/eval con quality gate deterministico e revisione umana/Teacher.
+
+Non devi reinventare il progetto né ripartire da zero: devi prima comprenderne lo stato reale, verificare cosa è già implementato e continuare dal punto più avanzato.
+
+---
+
+## Repository corretto
+
+Il repository reale è:
+
+```text
+/home/tillo/devin_ai_ide
+```
+
+nella distribuzione WSL:
+
+```text
+Ubuntu
+```
+
+Non confonderlo con:
+
+## Repository correlato: AI Rig ISO Build
+
+Il progetto:
+
+```text
+/home/tillo/ai-rig-iso-build
+```
+
+nella distribuzione WSL:
+
+```text
+Ubuntu-24.04
+```
+
+è separato da DEVIN AI IDE, ma è direttamente collegato alla sua infrastruttura: prepara il sistema Ubuntu, i servizi, gli script di provisioning e il backend sul quale verrà eseguito il server DEVIN.
+
+Puoi accedere a questo repository **in sola lettura** quando serve per:
+
+* comprendere il deployment del ruolo DEVIN;
+* verificare servizi systemd, launcher e script di provisioning;
+* controllare percorsi, porte, utenti, modelli e dipendenze previste sul rig;
+* verificare la compatibilità tra DEVIN AI IDE e l’ambiente prodotto dalla ISO;
+* individuare discrepanze tra il codice applicativo e il deployment;
+* proporre modifiche coordinate tra i due repository.
+
+Regole obbligatorie:
+
+1. Non modificare, creare, eliminare, rinominare o formattare file dentro `ai-rig-iso-build` senza una mia autorizzazione esplicita.
+2. Non eseguire script di build, provisioning, installazione, deploy o scrittura presenti in quel repository senza autorizzazione esplicita.
+3. Sono consentiti soltanto comandi non distruttivi e di ispezione, ad esempio:
+
+```bash
+git status --short
+git log --oneline
+git diff
+find
+grep
+rg
+sed -n
+cat
+head
+tail
+ls
+tree
+bash -n
+systemd-analyze verify
+```
+
+4. Prima di usare un comando diverso, valuta se potrebbe scrivere file, aggiornare cache, scaricare contenuti, modificare permessi o cambiare lo stato del sistema. In caso affermativo, non eseguirlo senza permesso.
+5. Non usare formatter, autofix, installer, package manager o comandi Git che alterino il working tree.
+6. Se individui una modifica necessaria in `ai-rig-iso-build`, non applicarla. Fornisci invece:
+
+   * causa del problema;
+   * file interessati;
+   * patch o diff proposto;
+   * rischi;
+   * verifiche da eseguire;
+   * richiesta esplicita di autorizzazione.
+7. L’autorizzazione a modificare DEVIN AI IDE non implica automaticamente l’autorizzazione a modificare `ai-rig-iso-build`.
+8. Mantieni sempre separati lo stato Git, i test e il riepilogo finale dei due repository.
+
+Considera quindi:
+
+* `/home/tillo/devin_ai_ide` come repository operativo sul quale puoi lavorare;
+* `/home/tillo/ai-rig-iso-build` come repository correlato consultabile in sola lettura;
+* ForgeStudio e `price_check_bot` come progetti fuori scope, salvo richiesta esplicita.
+
+---
+
+## Prima fase obbligatoria: orientamento
+
+Prima di modificare qualsiasi file:
+
+1. Entra nel repository reale.
+2. Leggi, nell’ordine:
+
+```text
+AGENTS.md
+README.md
+README_DEVIN_AI_IDE.md
+docs/INDEX.md
+docs/CONTINUITY_*.md
+ROADMAP_DEVIN_UI.md
+docs/PROJECT_SANDBOX.md
+docs/API_TAURI_SPEC.md
+docs/CODEX_LIKE_MENTAL_MODEL.md
+docs/TRAINING.md
+docs/PACKAGING-ROADMAP.md
+config/settings.json
+```
+
+3. Per i file `CONTINUITY_*`, usa prima quello con data più recente. I documenti datati sono log storici append-only: non riscrivere retroattivamente il passato.
+4. Considera `archive/` materiale storico, non fonte primaria. Consultalo solo per capire vecchie decisioni o regressioni.
+5. Ispeziona lo stato Git:
+
+```bash
+cd /home/tillo/devin_ai_ide
+git status --short
+git log --oneline -10
+git diff --stat
+```
+
+6. Non assumere che il working tree sia pulito.
+7. Non usare `git reset --hard`, `git clean`, checkout distruttivi o riscritture massive.
+8. Non sovrascrivere modifiche già presenti e non create da te.
+
+Prima di intervenire, produci un riepilogo molto breve contenente:
+
+* stato architetturale reale;
+* ultima funzionalità completata;
+* attività incomplete confermate dal codice;
+* test disponibili;
+* piano di intervento scelto.
+
+Non limitarti però al riepilogo: dopo l’orientamento, esegui concretamente il lavoro.
+
+---
+
+## Stato noto da verificare nel codice
+
+Il target prodotto è una vera applicazione desktop Tauri. La pagina `/app` è la superficie moderna di sviluppo; FastAPI rimane il motore/API layer.
+
+L’entrypoint applicativo vivo è:
+
+```text
+devin/ui/fast_app.py
+```
+
+La vecchia UI Tkinter e il vecchio `web_app` Flask sono stati archiviati sotto:
+
+```text
+archive/legacy/
+```
+
+Le route web legacy `/`, `/chat` e `/history` possono ancora essere mantenute come fallback finché la nuova esperienza desktop non è completamente stabile.
+
+Componenti principali:
+
+```text
+devin/agents/       planner, coder, critic e prompt
+devin/ai/           client modelli, routing, web, docs, AutoMem
+devin/core/         orchestratore, contesto, progetti, persistenza, loop
+devin/engine/       patcher, runner, sandbox, syntax/security critic
+devin/memory/       memoria locale e vector store
+devin/training/     benchmark, gate, review e adapter
+devin/ui/           FastAPI, template e asset della GUI
+src-tauri/          shell desktop Windows
+scripts/            launcher, deploy, training e utility
+```
+
+La baseline documentata più recente è circa:
+
+```text
+122 passed, 1 skipped
+```
+
+Non fidarti ciecamente del numero: misura nuovamente la baseline corrente.
+
+---
+
+## Priorità di sviluppo
+
+Verifica quali parti siano già state completate e continua in questo ordine.
+
+### Priorità 1 — completare “Progetti come Claude”
+
+La fondazione esiste già:
+
+* `ProjectSpace.get_work_dir()` / `set_work_dir()`;
+* endpoint per collegare la cartella di lavoro;
+* allowlist delle cartelle;
+* `work_dir` negli overview dei progetti;
+* instradamento automatico di alcuni run sulla cartella collegata;
+* ricerca cross-chat su richiesta;
+* pannello destro “Attività”.
+
+Restano da verificare e, se ancora mancanti, completare:
+
+1. instradare anche **“Realizza dalla chat” / `generate_patch`** sulla `work_dir` collegata;
+2. rendere la sandbox trasparente:
+
+   * copia o aggiornamento automatico della cartella collegata;
+   * modifiche esclusivamente nella sandbox;
+   * diff chiaro verso l’originale;
+   * applicazione all’originale solo tramite azione esplicita e sicura;
+3. evitare scritture dirette accidentali nella cartella originale;
+4. aggiungere test dedicati per:
+
+   * routing verso `work_dir`;
+   * allowlist;
+   * preparazione sandbox;
+   * diff-back;
+   * apply e reject;
+   * protezione da path traversal;
+   * conservazione dei file non coinvolti;
+5. semplificare la UI affinché l’utente veda:
+
+   * cartella collegata;
+   * modifiche proposte;
+   * diff;
+   * applica o rifiuta;
+
+   senza dover conoscere i dettagli interni della sandbox.
+
+Non eliminare il vecchio percorso finché quello nuovo non è verificato end-to-end.
+
+### Priorità 2 — pannello “Attività” realmente live
+
+Collega gli eventi SSE dei run ai passaggi:
+
+```text
+Plan
+Code
+Test
+Gate
+```
+
+Il pannello deve distinguere almeno:
+
+```text
+waiting
+running
+done
+failed
+```
+
+Requisiti:
+
+* aggiornamento durante il run, non solo al refresh;
+* riconnessione/fallback se lo stream SSE si interrompe;
+* nessun duplicato di eventi;
+* stato finale coerente con il risultato del run;
+* assenza di run fantasma dopo reload o arresto;
+* test JS/backend o test di contratto per la timeline.
+
+### Priorità 3 — persistenza delle cartelle collegate
+
+Le cartelle esplicitamente autorizzate devono sopravvivere al riavvio del backend tramite configurazione locale sicura.
+
+Non salvare questa configurazione insieme ai file condivisi del repository se contiene percorsi specifici della macchina. Preferisci una configurazione utente locale, documentata e ignorata da Git.
+
+### Priorità 4 — packaging Windows
+
+Il packaging `.exe/.msi` è una milestone successiva. Non iniziarlo prima di avere stabilizzato il flusso Progetti/sandbox, salvo evidenza che tali attività siano già complete.
+
+La direzione prevista è:
+
+* backend leggero impacchettato con PyInstaller;
+* backend registrato come sidecar Tauri;
+* profilo `RIG` inizialmente prioritario;
+* wizard locale/rig;
+* configurazione in `%APPDATA%`;
+* installer Tauri `.msi` o `.exe`.
+
+Non includere modelli GGUF da molti GB nell’eseguibile.
+
+---
+
+## Modelli e infrastruttura
+
+Configurazione attuale da preservare salvo verifica contraria:
+
+* rig DEVIN: `192.168.1.100:8080`;
+* ruolo necessario sul rig: `devin`;
+* modello rig: Ornith 35B MoE;
+* fallback locale destinato principalmente a chat/autocomplete;
+* `local_test_mode` può essere ancora attivo per i test senza rig;
+* DEVIN non deve caricare vision/mmproj locale;
+* Ornith richiede `--jinja`.
+
+Il rig esegue un solo ruolo alla volta. Se è in `hermes` o `teacher`, il fallback locale di DEVIN è comportamento previsto, non automaticamente un bug.
+
+Non cambiare IP, modelli, porte, CUDA o impostazioni hardware senza una necessità verificata.
+
+---
+
+## Regole di sicurezza e qualità
+
+### File da non leggere, stampare o committare
+
+Non accedere inutilmente e non mostrare il contenuto di:
+
+```text
+.env
+tinyfish api.txt
+chiavi API
+token
+credenziali
+local_memories.jsonl
+log runtime
+modelli GGUF
+file pickle/cache
+workspace runtime dell’utente
+```
+
+Non aggiungere segreti a output, patch, test o commit.
+
+### Memoria anti-contaminazione
+
+Non promuovere automaticamente risultati di benchmark o ipotesi nella memoria recall-safe.
+
+Solo questi elementi possono diventare conoscenza affidabile:
+
+* risultati verificati;
+* correzioni confermate;
+* lezioni approvate;
+* fallimenti con causa, evidenza e regola di retry.
+
+### Modifiche
+
+* preferisci patch piccole e leggibili;
+* evita riscritture complete di file grandi;
+* mantieni compatibilità con il comportamento esistente;
+* aggiungi un regression test per ogni bug corretto;
+* non “aggiustare” test corretti solo per farli passare;
+* non mascherare errori con `except Exception: pass`;
+* non introdurre fallback che dichiarano successo senza verifica;
+* evita dipendenze cloud quando esiste un’alternativa locale ragionevole.
+
+### Sintassi e generazione file
+
+Controlla con particolare attenzione:
+
+* f-string con parentesi o virgolette annidate;
+* stringhe multilinea generate;
+* escaping Windows/WSL;
+* path con spazi;
+* comandi PowerShell;
+* heredoc;
+* newline inserite da generatori;
+* JavaScript generato dentro template Python;
+* JSON scritto tramite concatenazione manuale.
+
+Per contenuti complessi generati da script, preferisci serializzazione strutturata o `repr()` invece di quoting annidato fragile.
+
+---
+
+## Protocollo di verifica
+
+Prima delle modifiche:
+
+```bash
+cd /home/tillo/devin_ai_ide
+source venv/bin/activate
+venv/bin/python -m pytest -q --capture=no
+```
+
+Se la baseline non è verde:
+
+1. identifica se il fallimento è preesistente;
+2. non attribuirlo alle tue modifiche;
+3. documentalo;
+4. correggilo solo se blocca il lavoro o rientra nello scope.
+
+Dopo ogni gruppo di modifiche Python:
+
+```bash
+venv/bin/python -m compileall -q devin scripts
+venv/bin/python -m pytest -q --capture=no
+```
+
+Dopo modifiche a `fast_app.py`:
+
+```bash
+venv/bin/python -m py_compile devin/ui/fast_app.py
+venv/bin/python -m pytest -q --capture=no \
+  test_understory_hybrid.py \
+  test_scaffold_resilience.py \
+  test_security_regressions.py \
+  test_training_quality_gate.py
+```
+
+Dopo modifiche JavaScript:
+
+```bash
+node --check devin/ui/static/js/codex_app.js
+```
+
+Dopo modifiche Rust/Tauri, quando l’ambiente è disponibile:
+
+```bash
+cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+Controlla inoltre che questi file non abbiano mojibake o caratteri corrotti non intenzionali:
+
+```text
+devin/ui/templates/codex_app.html
+devin/ui/static/js/codex_app.js
+devin/ui/static/css/codex_app.css
+```
+
+Quando tocchi launcher Windows/WSL, verifica separatamente:
+
+* percorso WSL `Ubuntu`;
+* avvio da cartella Windows;
+* avvio da UNC;
+* quoting di path con spazi;
+* health check FastAPI;
+* chiusura pulita dei processi;
+* assenza di rebuild Tauri completo non necessario.
+
+---
+
+## Gestione dei bug risolti
+
+Quando correggi un bug:
+
+1. riproducilo;
+2. identifica la causa radice;
+3. applica la correzione minima;
+4. crea un regression test;
+5. esegui test mirati e suite completa;
+6. aggiungi una breve nota al file `docs/CONTINUITY_*` più recente, oppure crea un nuovo file datato se la sessione è successiva;
+7. se dal bug deriva una regola generale per le future AI, aggiorna anche `AGENTS.md`;
+8. indica chiaramente:
+
+   * causa;
+   * file modificati;
+   * test eseguiti;
+   * risultato.
+
+Non segnare un problema come risolto basandoti solo sulla lettura del codice.
+
+---
+
+## Git
+
+* non creare commit prima di avere un checkpoint verde;
+* usa commit piccoli e semanticamente coerenti;
+* non includere cache, log, runtime, modelli o segreti;
+* prima di ogni commit controlla:
+
+```bash
+git status --short
+git diff --check
+git diff --stat
+```
+
+* non fare push, merge o rebase senza richiesta esplicita;
+* non modificare la cronologia esistente.
+
+---
+
+## Output richiesto
+
+Lavora concretamente sui file e, al termine, restituisci:
+
+1. stato iniziale verificato;
+2. problema scelto e causa;
+3. file modificati;
+4. comportamento prima/dopo;
+5. test e controlli eseguiti con risultati reali;
+6. eventuali limiti non verificabili nell’ambiente;
+7. prossimo passo consigliato, uno solo;
+8. stato Git finale.
+
+Non fornire soltanto consigli teorici e non fermarti dopo l’audit. Procedi con la priorità più alta effettivamente incompleta, mantenendo il progetto funzionante e verificato.

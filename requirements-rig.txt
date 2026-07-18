@@ -1,0 +1,41 @@
+# requirements-rig.txt — set SNELLO per il bundle .exe in PROFILO RIG.
+# L'app fa solo GUI + coding e parla al rig via HTTP: niente inference locale
+# pesante. Derivato da requirements.txt TOGLIENDO 4 pacchetti, tutti a import
+# lazy/try-except con fallback funzionante (assenza = feature degradata, NON crash):
+#   - flask        -> solo devin/ui/web_app.py (UI legacy, non il path FastAPI/Tauri)
+#   - tk           -> solo devin/ui/app.py|main.py|editor.py (UI Tkinter legacy)
+#   - playwright   -> web_search.py cade su requests (gia' previsto in settings.json)
+#   - crawl4ai     -> crawl_ingestion.py cade su requests (try/except)
+# NB: torch e sentence-transformers non erano MAI in requirements.txt (opzionali,
+# installati a parte): la ricerca semantica usa scikit-learn TF-IDF, che resta.
+# La prova che "non si rompe" e' scripts/test_rig_bundle.sh (venv pulito + pytest).
+
+openai>=1.0.0
+requests
+numpy
+scikit-learn
+fastapi
+uvicorn
+python-multipart
+
+# Estrazione testo da documenti allegati in chat (devin/ai/document_extract.py)
+pypdf
+python-docx
+openpyxl
+python-pptx
+
+# .env in devin/ui/ (TINYFISH_API_KEY ecc.)
+python-dotenv
+
+# Structured outputs / schema validation adapters
+instructor
+
+# Syntax critic multi-linguaggio nel quality gate (gira in LOCALE, resta)
+tree-sitter
+tree-sitter-language-pack
+
+# Security critic OFFLINE nel quality gate (gira in LOCALE, resta)
+bandit
+
+# Trascrizioni YouTube (legge i sottotitoli)
+youtube-transcript-api

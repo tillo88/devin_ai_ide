@@ -1,0 +1,14 @@
+
+# File esclusi automaticamente perché superiori a 30MB
+devin_models/Qwen3.5-14B-A3B-Claude-Opus-Reasoning-Distilled-4.6-MXFP4_MOE.gguf
+devin_models/mmproj-deepreinforce-ai_Ornith-1.0-9B-bf16.gguf
+devin_models/deepreinforce-ai_Ornith-1.0-9B-Q8_0.gguf
+devin_models/qwen2.5-coder-7b-instruct-q5_k_m.gguf
+devin_models/Qwen3.5-35B-A3B-Claude-Opus-Reasoning-Distilled-4.6-mmproj-q8_0.gguf
+
+# File esclusi automaticamente perché superiori a 30MB
+devin_models/Qwen3.5-14B-A3B-Claude-Opus-Reasoning-Distilled-4.6-MXFP4_MOE.gguf
+devin_models/mmproj-deepreinforce-ai_Ornith-1.0-9B-bf16.gguf
+devin_models/deepreinforce-ai_Ornith-1.0-9B-Q8_0.gguf
+devin_models/qwen2.5-coder-7b-instruct-q5_k_m.gguf
+devin_models/Qwen3.5-35B-A3B-Claude-Opus-Reasoning-Distilled-4.6-mmproj-q8_0.gguf
