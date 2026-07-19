@@ -1156,3 +1156,12 @@ registrazione nella shell `/app`.
 - Verifica in browser reale (install prompt, standalone, overlay
   mobile): in questo ambiente non c'e' browser — la verifica e' solo
   HTTP-level + source-level.
+# Follow-up: generate-patch rispetta la cartella di lavoro
+
+`/api/chat/generate_patch` ora mantiene chat e knowledge sul progetto DEVIN ma
+instrada l'esecuzione sull'eventuale `work_dir` collegata, con la stessa
+validazione allowlist usata da run/scaffold/resume. Prima validava soltanto il
+progetto metadati e modificava quello, ignorando la cartella sorgente collegata.
+
+Regression test: `test_generate_patch_workdir.py` copre sia il routing verso la
+cartella collegata sia il comportamento compatibile senza `work_dir`.
