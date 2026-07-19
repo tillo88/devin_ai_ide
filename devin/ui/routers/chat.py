@@ -696,6 +696,7 @@ async def api_chat_generate_patch(request: Request):
     """
     from devin.ui.fast_app import (  # lazy: patchabili su fast_app
         LOG_DIR,
+        ProjectSpace,
         _make_run_callback,
         _validated_project_path,
     )
@@ -704,6 +705,15 @@ async def api_chat_generate_patch(request: Request):
     if not project_path:
         return {"error": "missing project_path — imposta un progetto prima di generare codice dalla chat"}
     project_path = _validated_project_path(project_path, allow_general=False)
+
+    # La conversazione e la knowledge restano associate al progetto DEVIN,
+    # mentre l'esecuzione deve rispettare l'eventuale cartella di lavoro
+    # collegata, esattamente come /api/run e /api/chat/scaffold.
+    execution_path = project_path
+    work_dir = ProjectSpace(project_path).get_work_dir()
+    if work_dir:
+        execution_path = _validated_project_path(work_dir, allow_general=False)
+        print(f"[WORKDIR] generate_patch instradato sulla cartella di lavoro: {execution_path}")
 
     # chat_id (modalita' Progetti, 2026-07-10): usa la conversazione SELEZIONATA
     # in sidebar, non piu' solo la sessione legacy.
@@ -716,7 +726,7 @@ async def api_chat_generate_patch(request: Request):
     # Progetto senza codice -> la cosa giusta e' lo Zero-Shot Scaffolding dalla
     # conversazione (creare i file), non il ciclo di patch (che presuppone
     # codice esistente da modificare).
-    _proj = Path(project_path).expanduser()
+    _proj = Path(execution_path).expanduser()
     _is_empty_project = (not _proj.exists()) or not any(
         f for f in _proj.rglob("*.py")
         if not any(part in (".devin", ".devin_chat", "workspace", "venv", ".git", "__pycache__")
@@ -740,7 +750,7 @@ async def api_chat_generate_patch(request: Request):
         try:
             with Orchestrator(
                 config_path=CONFIG_PATH,
-                project_path=project_path,
+                project_path=execution_path,
                 sse_callback=sse_callback
             ) as orch:
                 with runs_lock:
@@ -754,7 +764,7 @@ async def api_chat_generate_patch(request: Request):
                             task=("Realizza il progetto descritto in questa conversazione. "
                                   "Segui le decisioni prese e le correzioni piu' recenti.\n\n"
                                   + conversation_text),
-                            project_path=project_path,
+                            project_path=execution_path,
                             run_id=run_id
                         )
                         with open(log_path, "a", encoding="utf-8") as f:
@@ -762,7 +772,7 @@ async def api_chat_generate_patch(request: Request):
                     else:
                         result = orch.run_from_conversation(
                             conversation_text=conversation_text,
-                            project_path=project_path,
+                            project_path=execution_path,
                             run_id=run_id
                         )
                         # Niente scrittura qui: run_from_conversation() scrive gia' il
