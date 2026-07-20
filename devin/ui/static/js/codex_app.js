@@ -506,7 +506,7 @@ async function deleteChat(chatId) {
   renderChatHistory([]);
 }
 
-async function createProjectChat() {
+async function createProjectChat(continueCurrent = false) {
   if (!state.selectedProjectPath) {
     appendChatMessage("assistant", "Seleziona un progetto prima di creare una chat multipla.");
     return;
@@ -514,7 +514,8 @@ async function createProjectChat() {
 
   const result = await postJson("/api/project/chats/new", {
     project_path: state.selectedProjectPath,
-    title: "Nuova chat",
+    title: continueCurrent ? "Continuazione" : "Nuova chat",
+    continue_from_chat_id: continueCurrent ? (state.selectedChatId || "") : "",
   });
   state.selectedChatId = result.chat_id || null;
   await loadProjectOverview(state.selectedProjectPath);
@@ -845,6 +846,13 @@ async function loadChatHistory() {
   if (state.selectedChatId) params.set("chat_id", state.selectedChatId);
   const payload = await fetchJson(`/api/chat/history?${params.toString()}`);
   renderChatHistory(payload.history ?? []);
+  const continueButton = $("continue-chat-button");
+  if (continueButton) {
+    continueButton.hidden = !(payload.continuity_ready && state.selectedProjectPath && state.selectedChatId);
+    continueButton.title = payload.continuity_ready
+      ? `Continue with ${payload.continuity_summarized_messages ?? 0} summarized messages`
+      : "Continuity checkpoint not ready";
+  }
 }
 
 function setChatBusy(isBusy) {
@@ -1367,6 +1375,13 @@ function setupChatComposer() {
     createProjectChat().catch((err) => {
       console.error(err);
       appendChatMessage("assistant", `[error] ${err.message}`);
+    });
+  });
+
+  $("continue-chat-button")?.addEventListener("click", () => {
+    createProjectChat(true).catch((err) => {
+      console.error(err);
+      appendChatMessage("assistant", `[continuity error] ${err.message}`);
     });
   });
 

@@ -56,19 +56,39 @@ class ChatPersistence:
             print(f"[ChatPersistence] Errore lettura ({self.session_file}): {e}")
             return []
 
-    def save(self, history: List[Dict[str, str]], max_messages: int = 100) -> None:
+    def load_document(self) -> Dict:
+        """Load the full session document without exposing corrupt partial state."""
+        if not self.session_file.exists():
+            return {}
+        try:
+            data = json.loads(self.session_file.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            print(f"[ChatPersistence] Errore lettura ({self.session_file}): {e}")
+            return {}
+
+    def get_continuity(self) -> Optional[Dict]:
+        value = self.load_document().get("continuity")
+        return value if isinstance(value, dict) else None
+
+    def set_continuity(self, checkpoint: Optional[Dict]) -> None:
+        """Persist a checkpoint atomically without changing visible history."""
+        document = self.load_document()
+        history = document.get("history", [])
+        if not isinstance(history, list):
+            history = []
+        self.save(history, continuity=checkpoint)
+
+    def save(self, history: List[Dict[str, str]], max_messages: int = 100,
+             continuity=...) -> None:
         """Salva lo storico in modo atomico, troncato agli ultimi max_messages.
         In modalita' chat_id preserva il campo 'title' scritto da ProjectSpace
         (new_chat/rename_chat) — save() non deve cancellarlo."""
         self.chat_dir.mkdir(parents=True, exist_ok=True)
         trimmed = history[-max_messages:] if max_messages else history
 
-        title = None
-        if self.chat_id and self.session_file.exists():
-            try:
-                title = json.loads(self.session_file.read_text(encoding="utf-8")).get("title")
-            except Exception:
-                pass
+        previous = self.load_document()
+        title = previous.get("title") if self.chat_id else None
 
         data = {
             "project_path": str(self.project_path),
@@ -79,6 +99,9 @@ class ChatPersistence:
             data["chat_id"] = self.chat_id
             if title:
                 data["title"] = title
+        saved_continuity = previous.get("continuity") if continuity is ... else continuity
+        if isinstance(saved_continuity, dict):
+            data["continuity"] = saved_continuity
 
         tmp = self.session_file.with_suffix(".tmp")
         try:

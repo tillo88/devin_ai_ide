@@ -18,6 +18,8 @@ Install (opzionale ma consigliato):
 """
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -35,6 +37,7 @@ EXT_LANG = {
 
 _PARSERS: Dict[str, Any] = {}
 _PACK_AVAILABLE: bool | None = None
+_PACK_CONFIGURED = False
 
 
 def tree_sitter_available() -> bool:
@@ -49,8 +52,27 @@ def tree_sitter_available() -> bool:
 
 
 def _get_parser(language: str):
+    global _PACK_CONFIGURED
     if language not in _PARSERS:
         from tree_sitter_language_pack import get_parser
+        if not _PACK_CONFIGURED:
+            try:
+                from tree_sitter_language_pack import PackConfig, configure
+            except ImportError:
+                # 0.13.x bundles grammars and needs no runtime cache/download.
+                pass
+            else:
+                configured = os.environ.get("DEVIN_TREE_SITTER_CACHE", "").strip()
+                cache_dir = Path(configured).expanduser() if configured else (
+                    Path.home() / ".cache" / "devin" / "tree-sitter-language-pack"
+                )
+                try:
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    cache_dir = Path(tempfile.gettempdir()) / "devin-tree-sitter-language-pack"
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                configure(PackConfig(cache_dir=str(cache_dir)))
+            _PACK_CONFIGURED = True
         _PARSERS[language] = get_parser(language)
     return _PARSERS[language]
 

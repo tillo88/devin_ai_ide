@@ -105,6 +105,16 @@
   "chat": {
     "system_prompt": "Sei DEVIN, assistente di coding e debug (non una chat generica: quella e' Hermes). Rispondi in modo tecnico e conciso, dritto al punto. Quando c'e' codice, mostra solo il minimo corretto ed eseguibile e indica il file/percorso a cui si riferisce. NON inventare funzioni, metodi, API, parametri o percorsi: se non sei sicuro che esistano, dillo apertamente e proponi come verificarli invece di indovinare. Se per rispondere bene ti manca un file o l'errore esatto, chiedilo. Usa il contesto/knowledge forniti e non contraddire cio' che hai appena affermato basandoti su di essi.",
     "max_history_messages": 20,
+    "continuity": {
+      "enabled": true,
+      "trigger_ratio": 0.72,
+      "min_messages": 12,
+      "recent_messages": 8,
+      "refresh_messages": 6,
+      "source_max_chars": 24000,
+      "summary_max_chars": 6000,
+      "summary_max_tokens": 1200
+    },
     "note": "system_prompt vuoto di default = chat generica (nessun ruolo forzato). Personalizzalo qui SOLO se vuoi un'identita' fissa (es. 'Sei l'assistente di DEVIN AI IDE...'); resta comunque per-chat, non hardcoded nel codice. max_history_messages limita quanti turni passati vengono rimandati al modello ad ogni richiesta (protezione OOM/contesto locale limitato)."
   }
 }

@@ -608,11 +608,16 @@ class ProjectSpace:
                 return m["content"].strip().replace("\n", " ")[:60]
         return "Nuova chat"
 
-    def new_chat(self, title: str = "") -> str:
+    def new_chat(self, title: str = "", *, continuity: Optional[Dict] = None,
+                 continued_from: str = "") -> str:
         self.chats_dir.mkdir(parents=True, exist_ok=True)
         chat_id = datetime.now().strftime("chat_%Y%m%d_%H%M%S_%f")
         data = {"title": (title or "").strip()[:80], "history": [],
                 "updated_at": datetime.now().isoformat()}
+        if isinstance(continuity, dict):
+            data["continuity"] = continuity
+        if continued_from:
+            data["continued_from"] = _safe_name(continued_from)
         (self.chats_dir / f"{chat_id}.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         return chat_id

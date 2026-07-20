@@ -1156,6 +1156,25 @@ registrazione nella shell `/app`.
 - Verifica in browser reale (install prompt, standalone, overlay
   mobile): in questo ambiente non c'e' browser — la verifica e' solo
   HTTP-level + source-level.
+
+## 2026-07-20 — Continuita' preventiva delle chat lunghe
+
+Implementato un checkpoint `chat_continuity_v1` prima dell'espulsione dei
+turni vecchi dalla finestra del modello. Il trigger usa sia stima conservativa
+dei token sia numero messaggi; conserva una coda verbatim recente e compatta
+solo la parte precedente. Il riassunto ha prompt evidence-only, limiti rigidi,
+refresh incrementale e fallback deterministico se il modello non risponde.
+
+Il checkpoint vive nel JSON della singola chat ed e' esplicitamente stato di
+conversazione, non memoria long-term/recall-safe. `ChatPersistence.save()` lo
+preserva atomicamente insieme a titolo e history. La risposta chat lo inietta
+come system context separato e pubblica nel meta SSE se e' attivo.
+
+La UI mostra `Continue` solo quando il checkpoint e' pronto: crea una nuova
+chat vuota che eredita il handoff e registra `continued_from`, senza copiare lo
+storico completo. Configurazione bounded in `chat.continuity` dentro
+`config/settings.json`. Test dedicati coprono trigger, fingerprint, reuse,
+refresh incrementale, edit detection, fallback, persistenza e trasferimento.
 # Follow-up: generate-patch rispetta la cartella di lavoro
 
 `/api/chat/generate_patch` ora mantiene chat e knowledge sul progetto DEVIN ma

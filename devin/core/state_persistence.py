@@ -69,24 +69,31 @@ class StatePersistence:
         if not self.state_dir.exists():
             return None
 
-        state_files = sorted(
-            self.state_dir.glob("run_*.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-
-        for f in state_files:
+        # Il rename atomico e filesystem diversi possono conservare/coalescere
+        # mtime con risoluzione insufficiente. `_saved_at` e' scritto nel payload
+        # ad ogni save ed e' quindi l'ordine logico autorevole; mtime_ns/path sono
+        # solo tie-breaker deterministici per stati legacy.
+        candidates = []
+        for f in self.state_dir.glob("run_*.json"):
             try:
                 with open(f, "r", encoding="utf-8") as fobj:
                     state = json.load(fobj)
-                # Verifica che sia dello stesso progetto
                 if state.get("_project_path") == str(self.project_path):
-                    self.run_id = state.get("_run_id", self.run_id)
-                    self.state_file = f
-                    return state
+                    candidates.append((
+                        str(state.get("_saved_at") or ""),
+                        f.stat().st_mtime_ns,
+                        f.name,
+                        f,
+                        state,
+                    ))
             except Exception:
                 continue
-        return None
+        if not candidates:
+            return None
+        _, _, _, latest_file, latest_state = max(candidates, key=lambda item: item[:3])
+        self.run_id = latest_state.get("_run_id", self.run_id)
+        self.state_file = latest_file
+        return latest_state
 
     def cleanup(self, max_age_hours: int = 24) -> int:
         """Rimuove stati più vecchi di max_age_hours. Ritorna numero file rimossi."""
