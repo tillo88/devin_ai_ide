@@ -85,6 +85,7 @@ templates = Jinja2Templates(env=jinja_env)
 
 # === RUNTIME STATE ===
 active_runs = {}
+starting_runs = set()
 runs_lock = threading.Lock()
 _run_events = RunEventStore(LOG_DIR)
 _model_launcher = None

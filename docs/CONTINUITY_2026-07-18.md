@@ -1246,3 +1246,23 @@ aperti. Cache portata a `devin-shell-v4`; nessun refresh multiplo richiesto.
 
 Verifica: **417 passed, 1 skipped**, inclusi test HTTP e source-level sulla
 policy cache, JavaScript syntax e `git diff --check` verdi.
+
+## 2026-07-20 — Attività live durante startup modelli
+
+Il test desktop successivo mostrava il nuovo run nel messaggio chat ma il
+pannello Attività restava su `READY` e sul precedente run `stalled`. La causa
+era tripla: `READY` era hardcoded, timeline/log avevano logica JavaScript ma
+nessun elemento nella home, e il run entrava in `active_runs` soltanto dopo la
+costruzione dell'Orchestrator. Durante uno startup modelli lento gli stream lo
+consideravano morto dopo circa tre secondi.
+
+I run accettati sono ora registrati in `starting_runs`, persistono subito uno
+stato `starting` e restano vivi per API/SSE e protezione close-cleanup fino al
+passaggio atomico in `active_runs`. Un errore durante lo startup diventa uno
+stato terminale `startup_failed/failed`, quindi non rimane nascosto dietro il
+run precedente. La home mostra timeline live e log tecnico, deriva
+Plan/Code/Test/Gate dagli eventi e aggiorna l'etichetta Attività con lo stato
+reale. Cache shell portata a `devin-shell-v5`.
+
+Verifica: **419 passed, 1 skipped**, py_compile, JavaScript syntax e
+`git diff --check` verdi.

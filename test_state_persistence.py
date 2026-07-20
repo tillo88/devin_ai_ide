@@ -368,3 +368,72 @@ def test_last_run_marks_crashed_run_resumable_within_retry_budget(tmp_path):
     result = asyncio.run(fast_app.api_project_last_run(project_path=str(tmp_path)))
     assert result["run_id"] == "run_dead_2"
     assert result["resumable"] is False
+
+
+def test_new_run_is_immediately_visible_while_orchestrator_starts(tmp_path, monkeypatch):
+    """Model startup may take minutes: the accepted run must replace the old
+    badge immediately and must not be offered as a crashed resumable run."""
+    import asyncio
+    import devin.ui.fast_app as fast_app
+    from devin.ui.routers import runs_core
+
+    _patch_resume_surface(monkeypatch, fast_app, tmp_path)
+
+    class FrozenThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(runs_core, "RunThread", FrozenThread)
+    fast_app.starting_runs.clear()
+    try:
+        result = asyncio.run(fast_app.api_run(fast_app.RunRequest(
+            path=str(tmp_path), task="repair the GUI",
+        )))
+        state = StatePersistence(str(tmp_path), result["run_id"]).load()
+        last = asyncio.run(fast_app.api_project_last_run(project_path=str(tmp_path)))
+
+        assert state["step"] == "starting"
+        assert state["task"] == "repair the GUI"
+        assert last["run_id"] == result["run_id"]
+        assert last["status"] == "starting"
+        assert last["starting"] is True
+        assert last["resumable"] is False
+    finally:
+        fast_app.starting_runs.clear()
+
+
+def test_run_startup_failure_replaces_starting_state_with_failed(tmp_path, monkeypatch):
+    import asyncio
+    import devin.ui.fast_app as fast_app
+    from devin.ui.routers import runs_core
+
+    _patch_resume_surface(monkeypatch, fast_app, tmp_path)
+    monkeypatch.setattr(fast_app, "_make_run_callback", lambda *args: lambda *a, **k: None)
+
+    class BrokenOrchestrator:
+        def __init__(self, **kwargs):
+            raise RuntimeError("planner failed to load")
+
+    class ImmediateThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(fast_app, "Orchestrator", BrokenOrchestrator)
+    monkeypatch.setattr(runs_core, "RunThread", ImmediateThread)
+    fast_app.starting_runs.clear()
+
+    result = asyncio.run(fast_app.api_run(fast_app.RunRequest(
+        path=str(tmp_path), task="repair the GUI",
+    )))
+    state = StatePersistence(str(tmp_path), result["run_id"]).load()
+
+    assert state["final_status"] == "failed"
+    assert state["step"] == "startup_failed"
+    assert "planner failed to load" in state["last_error"]
+    assert result["run_id"] not in fast_app.starting_runs

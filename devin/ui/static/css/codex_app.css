@@ -2417,6 +2417,39 @@ details[open] > .collapsible-summary::after {
 .activity-run .run-decision-btn.reject { border-color: var(--danger); color: var(--danger); }
 .activity-run .run-decision-btn.reject:hover { background: var(--danger); color: var(--bg); }
 
+.activity-feed-section { min-height: 0; }
+.activity-timeline.timeline {
+  gap: 6px;
+  margin: 0;
+  max-height: 230px;
+  overflow-y: auto;
+}
+.activity-timeline .timeline-item {
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(231,225,218,.03);
+}
+.activity-timeline .timeline-kind { font-size: 9px; overflow-wrap: anywhere; }
+.activity-timeline .timeline-item h3 { margin: 0 0 3px; font-size: 11px; line-height: 1.3; }
+.activity-timeline .timeline-item p,
+.activity-timeline .timeline-time { font-size: 9px; }
+.activity-log-details summary {
+  color: var(--muted-2);
+  cursor: pointer;
+  font-size: 11px;
+}
+.activity-log-details #run-log-output {
+  min-height: 100px;
+  max-height: 220px;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  font-size: 9px;
+}
+.pipe-step.complete { color: var(--success); border-color: rgba(105,190,132,.4); }
+
 .file-list { display: flex; flex-direction: column; gap: 2px; max-height: 150px; overflow-y: auto; }
 .file-row {
   font-size: 11px;

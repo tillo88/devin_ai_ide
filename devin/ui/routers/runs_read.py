@@ -45,9 +45,9 @@ async def api_runs_active():
     riga finale 'status: ...' ha status='unknown' in /api/runs ma NON e' qui dentro:
     evita che la dashboard lo mostri come 'in esecuzione' per sempre.
     """
-    from devin.ui.fast_app import active_runs, runs_lock  # lazy: run-core
+    from devin.ui.fast_app import active_runs, runs_lock, starting_runs  # lazy: run-core
     with runs_lock:
-        return {"active_run_ids": list(active_runs.keys())}
+        return {"active_run_ids": sorted(set(starting_runs) | set(active_runs))}
 
 
 @router.get("/api/logs/retention")
@@ -135,7 +135,7 @@ async def api_run_events(run_id: str, after_seq: Optional[int] = None, limit: in
 @router.get("/api/run/{run_id}/events/stream")
 async def api_run_events_stream(run_id: str, after_seq: Optional[int] = None):
     """SSE stream of structured run events. Keeps /stream/{run_id} for legacy log text."""
-    from devin.ui.fast_app import _run_events, active_runs, runs_lock  # lazy
+    from devin.ui.fast_app import _run_events, active_runs, runs_lock, starting_runs  # lazy
     try:
         _run_events.path_for(run_id)
     except ValueError:
@@ -152,7 +152,7 @@ async def api_run_events_stream(run_id: str, after_seq: Optional[int] = None):
                 if event.get("type") == "run_finished":
                     return
             with runs_lock:
-                alive = run_id in active_runs
+                alive = run_id in active_runs or run_id in starting_runs
             if not alive:
                 idle_polls += 1
                 if idle_polls > 10:
@@ -187,7 +187,7 @@ async def api_run_log(run_id: str, download: int = 0):
 
 @router.get("/stream/{run_id}")
 async def stream_log(run_id: str):
-    from devin.ui.fast_app import LOG_DIR, active_runs, runs_lock  # lazy
+    from devin.ui.fast_app import LOG_DIR, active_runs, runs_lock, starting_runs  # lazy
     log_path = LOG_DIR / f"{run_id}.log"
 
     async def generate():
@@ -224,7 +224,7 @@ async def stream_log(run_id: str):
                     continue
                 # nessuna riga nuova: il run e' ancora vivo?
                 with runs_lock:
-                    alive = run_id in active_runs
+                    alive = run_id in active_runs or run_id in starting_runs
                 if not alive:
                     dead_polls += 1
                     if dead_polls > 10:  # ~3s di grazia per l'ultimo flush su disco

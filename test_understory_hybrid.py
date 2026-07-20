@@ -385,9 +385,11 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert 'diff-input' in html
     assert 'diff-apply-button' in html
     assert '/api/terminal/output' in js
-    assert 'run-log-output' not in html
+    assert 'run-log-output' in html
     assert 'run-list' not in html
-    assert 'timeline' not in html
+    assert 'id="timeline"' in html
+    assert 'function applyRunEventToActivity' in js
+    assert 'showRunStatus(payload.run_id, "starting")' in js
     # Home Claude-like (2026-07-16): hero di benvenuto al posto del finto
     # messaggio assistant e del banner runs; il link a Diagnostics resta
     # (asserito sopra), la diff preview e' collassabile.
@@ -417,7 +419,7 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert 'command-shell' not in html
     assert 'EventSource' in js
     assert 'data-run-log' in diagnostics_js
-    assert 'timeline' not in html
+    assert 'activity-timeline' in html
 
     response = asyncio.run(fast_app.codex_app_page(type('Req', (), {})()))
     assert response.template.name == 'codex_app.html'
