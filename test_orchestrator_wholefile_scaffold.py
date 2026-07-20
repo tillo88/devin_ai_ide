@@ -186,6 +186,50 @@ def test_whole_file_success_updates_project_file():
         print("✓ Whole-file: file intero riscritto, progetto aggiornato, success")
 
 
+def test_review_mode_keeps_verified_changes_pending():
+    """In review mode un runner verde non scrive né committa il progetto."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project = _make_project(tmpdir)
+
+        def mock_local(messages, mode="reasoning", timeout=None):
+            content = _user_content(messages)
+            if "TASK" in content:
+                return "RESULT: ACTION_NEEDED\n1. Fix calc.py"
+            if "CURRENT CODE" in content:
+                return WHOLE_FILE_ANSWER
+            if "ERROR" in content:
+                return "Change minus to plus"
+            return "OK"
+
+        orch, lp, ap = _make_orchestrator(
+            project, mock_local, coder_cfg={"whole_file_enabled": True})
+        orch.change_application_mode = "review"
+        orch.git_ops.commit = MagicMock()
+        try:
+            result = orch.run(
+                "Fix the bug in calc.py",
+                project_path=str(project),
+                run_id="run_review_mode",
+            )
+        finally:
+            lp.stop()
+            ap.stop()
+
+        assert result["success"] is False
+        assert result["verified"] is True
+        assert result["applied"] is False
+        assert result["status"] == "awaiting_approval"
+        assert "return a - b" in (project / "calc.py").read_text()
+        assert result["change_manifest"]["counts"]["modify"] == 1
+        assert result["change_manifest"]["entries"][0]["path"] == "calc.py"
+        orch.git_ops.commit.assert_not_called()
+        state = json.loads(
+            (project / ".devin_state" / "run_review_mode.json").read_text()
+        )
+        assert state["final_status"] == "awaiting_approval"
+        assert state["verified"] is True and state["applied"] is False
+
+
 def test_whole_file_empty_output_stalls_without_apply():
     """Coder whole-file che risponde senza blocchi '### FILE:' -> il guard
     L1158-1163 mette il contratto esatto in last_error e riprova SENZA mai

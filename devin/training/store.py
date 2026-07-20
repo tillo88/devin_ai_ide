@@ -1,5 +1,7 @@
 
+import hashlib
 import json
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -45,6 +47,44 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
         if isinstance(item, dict):
             out.append(item)
     return out
+
+
+def _write_export_jsonl(target: Path, rows: List[Dict[str, Any]], export_format: str) -> Dict[str, Any]:
+    """Write an export atomically and persist authoritative ordering metadata.
+
+    Some shared/virtual filesystems coalesce nanosecond mtimes.  A sidecar with
+    a logical creation timestamp keeps ``list_exports`` deterministic even when
+    two different exports are produced in the same clock tick.  The digest
+    prevents stale sidecars from being trusted after an external file edit.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = "".join(
+        json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+        for row in rows
+    )
+    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(target)
+
+    created_at_ns = time.time_ns()
+    metadata = {
+        "schema_version": "training_export_meta_v1",
+        "filename": target.name,
+        "format": export_format,
+        "rows": len(rows),
+        "size": len(payload.encode("utf-8")),
+        "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        "created_at": datetime.now().isoformat(timespec="microseconds"),
+        "created_at_ns": created_at_ns,
+    }
+    metadata_path = target.with_suffix(target.suffix + ".meta.json")
+    metadata_tmp = metadata_path.with_name(f".{metadata_path.name}.{uuid.uuid4().hex}.tmp")
+    metadata_tmp.write_text(
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    metadata_tmp.replace(metadata_path)
+    return metadata
 
 
 class TrainingStore:
@@ -331,7 +371,7 @@ class TrainingStore:
         if not self.exports_dir.exists():
             return []
         items = []
-        for path in sorted(self.exports_dir.glob("*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True):
+        for path in self.exports_dir.glob("*.jsonl"):
             text = path.read_text(encoding="utf-8", errors="ignore")
             first_line = next((line for line in text.splitlines() if line.strip()), "")
             export_format = "unknown"
@@ -339,17 +379,44 @@ class TrainingStore:
                 export_format = "teacher_review_v1"
             elif '"messages"' in first_line:
                 export_format = "sft_messages_jsonl"
+
+            stat = path.stat()
+            logical_order_ns = stat.st_mtime_ns
+            created_at = None
+            metadata_path = path.with_suffix(path.suffix + ".meta.json")
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                if (
+                    metadata.get("schema_version") == "training_export_meta_v1"
+                    and metadata.get("filename") == path.name
+                    and metadata.get("sha256") == digest
+                ):
+                    logical_order_ns = int(metadata.get("created_at_ns") or logical_order_ns)
+                    created_at = metadata.get("created_at") or None
+                    export_format = metadata.get("format") or export_format
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                # Legacy exports and corrupt/stale sidecars remain listable;
+                # their filesystem timestamp is only a deterministic fallback.
+                pass
             items.append({
                 "filename": path.name,
                 "path": str(path),
                 "format": export_format,
                 "rows": sum(1 for line in text.splitlines() if line.strip()),
-                "size": path.stat().st_size,
-                "mtime": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
+                "size": stat.st_size,
+                "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                "created_at": created_at,
+                "_logical_order_ns": logical_order_ns,
             })
-            if len(items) >= limit:
-                break
-        return items
+        items.sort(
+            key=lambda item: (item["_logical_order_ns"], item["filename"]),
+            reverse=True,
+        )
+        selected = items[:max(0, limit)]
+        for item in selected:
+            item.pop("_logical_order_ns", None)
+        return selected
 
     def export_teacher_packet(self, filename: str = "") -> Dict[str, Any]:
         """Export review-ready JSONL for TEACHER/Colibri without promoting memory.
@@ -412,11 +479,13 @@ class TrainingStore:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"devin_teacher_packet_{stamp}.jsonl"
         target = self.exports_dir / Path(filename).name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as fh:
-            for row in rows:
-                fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-        return {"path": str(target), "rows": len(rows), "format": "teacher_review_v1"}
+        metadata = _write_export_jsonl(target, rows, "teacher_review_v1")
+        return {
+            "path": str(target),
+            "rows": len(rows),
+            "format": "teacher_review_v1",
+            "created_at": metadata["created_at"],
+        }
 
     def export_sft_dataset(self, filename: str = "") -> Dict[str, Any]:
         attempts = {item.get("attempt_id"): item for item in self.list_attempts(limit=10000)}
@@ -446,8 +515,10 @@ class TrainingStore:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"devin_training_sft_{stamp}.jsonl"
         target = self.exports_dir / Path(filename).name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as fh:
-            for row in rows:
-                fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-        return {"path": str(target), "rows": len(rows)}
+        metadata = _write_export_jsonl(target, rows, "sft_messages_jsonl")
+        return {
+            "path": str(target),
+            "rows": len(rows),
+            "format": "sft_messages_jsonl",
+            "created_at": metadata["created_at"],
+        }

@@ -181,6 +181,12 @@ async def api_project_last_run(project_path: str = ""):
         return {"has_run": False}
     pp = str(Path(project_path).expanduser().resolve())
     try:
+        work_dir = ProjectSpace(pp).get_work_dir()
+        if work_dir:
+            pp = str(Path(work_dir).expanduser().resolve())
+    except Exception:
+        pass
+    try:
         st = await asyncio.to_thread(lambda: StatePersistence(pp).load_latest())
     except Exception:
         st = None
@@ -208,6 +214,11 @@ async def api_project_last_run(project_path: str = ""):
         "resumable": resumable,
         "saved_at": st.get("_saved_at"),
         "task": (st.get("task") or "")[:200],
+        "verified": bool(st.get("verified")),
+        "applied": bool(st.get("applied")),
+        "change_manifest_status": st.get("change_manifest_status") or (
+            "pending" if final_status == "awaiting_approval" else None
+        ),
     }
 
 
@@ -269,10 +280,24 @@ async def api_project_knowledge_delete(request: Request):
 @router.post("/api/project/chats/new")
 async def api_project_chats_new(request: Request):
     from devin.ui.fast_app import _project_space_for  # lazy
+    from devin.core.chat_continuity import CHECKPOINT_SCHEMA
+    from devin.core.chat_persistence import ChatPersistence
     data = await request.json()
     ps = _project_space_for(data.get("project_path", ""))
-    chat_id = ps.new_chat(data.get("title", ""))
-    return {"chat_id": chat_id}
+    continue_from = (data.get("continue_from_chat_id") or "").strip()
+    continuity = None
+    if continue_from:
+        continuity = ChatPersistence(
+            str(ps.project_path), chat_id=continue_from
+        ).get_continuity()
+        if not continuity or continuity.get("schema") != CHECKPOINT_SCHEMA:
+            return {"error": "continuity checkpoint non disponibile per la chat sorgente"}
+    chat_id = ps.new_chat(
+        data.get("title", ""), continuity=continuity,
+        continued_from=continue_from,
+    )
+    return {"chat_id": chat_id, "continued_from": continue_from or None,
+            "continuity_ready": bool(continuity)}
 
 
 @router.post("/api/project/chats/rename")

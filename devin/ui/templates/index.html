@@ -590,6 +590,11 @@
                         <span class="run-badge run-running" id="run-badge">⏳ In esecuzione</span>
                     </div>
                     <div class="log-console" id="log-console"><div class="log-line log-info">In attesa di log...</div></div>
+                    <div class="btn-group hidden" id="run-decision-actions" style="margin-top: 10px;">
+                        <button class="btn btn-ghost" onclick="previewRunChangesLegacy()">👁 Visualizza diff</button>
+                        <button class="btn btn-primary" onclick="decideRunChangesLegacy('apply')">✓ Applica modifiche verificate</button>
+                        <button class="btn btn-danger" onclick="decideRunChangesLegacy('reject')">× Rifiuta</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -657,7 +662,7 @@
         }
 
         // ===== STATE =====
-        let currentRunId = null, eventSource = null, currentProjectPath = '';
+        let currentRunId = null, eventSource = null, currentProjectPath = '', pendingDecisionRunId = null, pendingDecisionReviewed = false;
         let monacoEditor = null, monacoReady = false, currentFilePath = '';
         let isFetchingCompletion = false;
         let ghostDecorations = [];
@@ -1131,6 +1136,9 @@
                 document.getElementById('run-title').textContent = `${isScaffold ? '🏗️ Scaffold' : 'Run'}: ${currentRunId}`;
                 document.getElementById('run-badge').className = 'run-badge run-running';
                 document.getElementById('run-badge').textContent = '⏳ In esecuzione';
+                document.getElementById('run-decision-actions').classList.add('hidden');
+                pendingDecisionRunId = null;
+                pendingDecisionReviewed = false;
                 document.getElementById('log-console').innerHTML = `<div class="log-line log-info">Avvio ${isScaffold ? 'scaffolding' : 'run'}...</div>`;
                 document.getElementById('btn-run').disabled = true;
                 document.getElementById('btn-stop').disabled = false;
@@ -1205,6 +1213,13 @@
                         document.getElementById('run-badge').className = 'run-badge run-success';
                         document.getElementById('run-badge').textContent = '✅ Completato';
                         addLogLine('✅ Run completato!', 'success');
+                    } else if (content.includes('status: awaiting_approval')) {
+                        document.getElementById('run-badge').className = 'run-badge run-timeout';
+                        document.getElementById('run-badge').textContent = '👁 In attesa di approvazione';
+                        addLogLine('👁 Test superati: controlla e approva o rifiuta le modifiche.', 'warning');
+                        pendingDecisionRunId = runId;
+                        pendingDecisionReviewed = false;
+                        document.getElementById('run-decision-actions').classList.remove('hidden');
                     } else if (content.includes('status: failed') || content.includes('status: timeout')) {
                         document.getElementById('run-badge').className = 'run-badge run-failed';
                         document.getElementById('run-badge').textContent = '❌ Fallito';
@@ -1213,6 +1228,55 @@
                 }
             } catch (e) { console.error('Check status error:', e); }
             resetRunUI(); refreshRecentRuns();
+        }
+
+        async function decideRunChangesLegacy(action) {
+            const runId = pendingDecisionRunId;
+            if (!runId) return;
+            if (action === 'apply' && !pendingDecisionReviewed) {
+                alert('Visualizza prima la diff verificata.');
+                return;
+            }
+            const verb = action === 'apply' ? 'applicare' : 'rifiutare';
+            if (!confirm(`Confermi di ${verb} le modifiche verificate del run ${runId}?`)) return;
+            const projectPath = document.getElementById('custom-path').value || document.getElementById('project-select').value;
+            try {
+                const res = await fetch(`/api/run/changes/${action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: projectPath, run_id: runId, commit: action === 'apply' })
+                });
+                const data = await res.json();
+                if (data.error) { alert('Errore: ' + data.error); return; }
+                document.getElementById('run-decision-actions').classList.add('hidden');
+                document.getElementById('run-badge').className = `run-badge ${action === 'apply' ? 'run-success' : 'run-stopped'}`;
+                document.getElementById('run-badge').textContent = action === 'apply' ? '✅ Applicato' : '🚫 Rifiutato';
+                addLogLine(action === 'apply' ? '✅ Modifiche applicate.' : '🚫 Modifiche rifiutate.', action === 'apply' ? 'success' : 'warning');
+                pendingDecisionRunId = null;
+                pendingDecisionReviewed = false;
+                refreshRecentRuns();
+            } catch (e) { alert('Errore decisione: ' + e.message); }
+        }
+
+        async function previewRunChangesLegacy() {
+            const runId = pendingDecisionRunId;
+            if (!runId) return;
+            const projectPath = document.getElementById('custom-path').value || document.getElementById('project-select').value;
+            try {
+                const params = new URLSearchParams({ path: projectPath });
+                const res = await fetch(`/api/run/changes/${encodeURIComponent(runId)}?${params.toString()}`);
+                const data = await res.json();
+                if (data.error) { alert('Errore: ' + data.error); return; }
+                const popup = window.open('', '_blank', 'width=1000,height=760');
+                if (!popup) { alert('Il browser ha bloccato la finestra della diff.'); return; }
+                popup.document.title = `DEVIN diff ${runId}`;
+                const pre = popup.document.createElement('pre');
+                pre.style.cssText = 'white-space:pre-wrap;font:13px monospace;padding:20px;background:#111;color:#eee;min-height:100vh;margin:0';
+                pre.textContent = data.unified_diff || '(nessuna differenza testuale)';
+                popup.document.body.style.margin = '0';
+                popup.document.body.appendChild(pre);
+                pendingDecisionReviewed = true;
+            } catch (e) { alert('Errore preview: ' + e.message); }
         }
 
         function resetRunUI() {

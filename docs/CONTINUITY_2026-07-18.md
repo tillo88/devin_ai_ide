@@ -1156,3 +1156,58 @@ registrazione nella shell `/app`.
 - Verifica in browser reale (install prompt, standalone, overlay
   mobile): in questo ambiente non c'e' browser — la verifica e' solo
   HTTP-level + source-level.
+
+## 2026-07-20 — Continuita' preventiva delle chat lunghe
+
+Implementato un checkpoint `chat_continuity_v1` prima dell'espulsione dei
+turni vecchi dalla finestra del modello. Il trigger usa sia stima conservativa
+dei token sia numero messaggi; conserva una coda verbatim recente e compatta
+solo la parte precedente. Il riassunto ha prompt evidence-only, limiti rigidi,
+refresh incrementale e fallback deterministico se il modello non risponde.
+
+Il checkpoint vive nel JSON della singola chat ed e' esplicitamente stato di
+conversazione, non memoria long-term/recall-safe. `ChatPersistence.save()` lo
+preserva atomicamente insieme a titolo e history. La risposta chat lo inietta
+come system context separato e pubblica nel meta SSE se e' attivo.
+
+La UI mostra `Continue` solo quando il checkpoint e' pronto: crea una nuova
+chat vuota che eredita il handoff e registra `continued_from`, senza copiare lo
+storico completo. Configurazione bounded in `chat.continuity` dentro
+`config/settings.json`. Test dedicati coprono trigger, fingerprint, reuse,
+refresh incrementale, edit detection, fallback, persistenza e trasferimento.
+# Follow-up: generate-patch rispetta la cartella di lavoro
+
+`/api/chat/generate_patch` ora mantiene chat e knowledge sul progetto DEVIN ma
+instrada l'esecuzione sull'eventuale `work_dir` collegata, con la stessa
+validazione allowlist usata da run/scaffold/resume. Prima validava soltanto il
+progetto metadati e modificava quello, ignorando la cartella sorgente collegata.
+
+Regression test: `test_generate_patch_workdir.py` copre sia il routing verso la
+cartella collegata sia il comportamento compatibile senza `work_dir`.
+
+## 2026-07-20 — P1: sandbox verificata → diff → approvazione → rollback
+
+Il run di manutenzione usa ora `execution.change_application_mode=review`.
+Dopo Runner verde non scrive né committa il progetto: genera un manifest
+deterministico `change_manifest_v1`, persiste lo stato
+`awaiting_approval` e conserva il sandbox verificato. La modalità precedente
+resta dietro `legacy_auto_apply` per migrazione e test di compatibilità.
+
+`devin/core/change_manifest.py` implementa confronto ordinato, SHA-256 e mode
+prima/dopo, preview unified-diff bounded, esclusione di runtime/venv/modelli/
+segreti/chiavi/symlink, integrità del manifest, stale-source e tamper checks,
+lock inter-processo sulle decisioni, apply con backup e rollback-on-error,
+reject terminale e rollback esplicito che non sovrascrive edit successivi.
+I file cambiati oltre 30 MB bloccano la promozione. Le decisioni sono
+idempotenti rispetto a crash tra manifest/apply/commit/state save: il manifest
+autorevole viene riconciliato al retry; lo stato porta schema
+`orchestrator_state_v1` mantenendo lettura legacy.
+
+API e UI completano il trust boundary: preview obbligatoria, Apply, Reject e
+Rollback; state/log/eventi vengono riconciliati e i pending/applied recovery
+point non sono eliminati dal cleanup 24h. GitOps non stagea più `.devin_state`
+o `workspace/sandboxes`. Il badge ultimo-run segue anche il `work_dir`
+collegato. Service worker aggiornato a `devin-shell-v2`.
+
+Verifica: **413 passed, 1 skipped**, py_compile/compileall, JSON, JavaScript,
+HTML inline-script e `git diff --check` verdi.

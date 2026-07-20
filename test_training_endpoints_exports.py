@@ -22,6 +22,7 @@ Nessuna sorgente toccata.
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -392,6 +393,28 @@ def test_list_exports_lists_both_formats(tmp_path):
     assert packet_item["format"] == "teacher_review_v1"
     assert packet_item["rows"] == 1
     assert packet_item["path"] == packet["path"]
+
+
+def test_list_exports_uses_logical_order_when_filesystem_mtimes_tie(tmp_path):
+    store, _case, _attempt, _review, _corr = _store_with_full_chain(tmp_path)
+    sft = store.export_sft_dataset("sft_same_tick.jsonl")
+    packet = store.export_teacher_packet("packet_same_tick.jsonl")
+
+    # Shared/virtual filesystems can give consecutive writes the exact same
+    # mtime.  The persisted export metadata must remain authoritative.
+    same_ns = 1_700_000_000_000_000_000
+    os.utime(sft["path"], ns=(same_ns, same_ns))
+    os.utime(packet["path"], ns=(same_ns, same_ns))
+
+    exports = store.list_exports()
+    assert [item["filename"] for item in exports] == [
+        "packet_same_tick.jsonl",
+        "sft_same_tick.jsonl",
+    ]
+    assert exports[0]["format"] == "teacher_review_v1"
+    assert exports[0]["created_at"] == packet["created_at"]
+    assert Path(packet["path"] + ".meta.json").exists()
+    assert Path(sft["path"] + ".meta.json").exists()
 
 
 # ---------------------------------------------------------------------------

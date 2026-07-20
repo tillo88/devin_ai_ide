@@ -32,5 +32,9 @@ These instructions are intentionally practical. This project is usually edited f
 ## Product direction reminders
 
 - DEVIN should evolve toward a local Codex/Claude Desktop-like workspace: left workspace, center conversation/work-stream, right Mind/context panel.
+- Operational endpoints must keep chat/knowledge metadata on the DEVIN project but execute against its validated linked `work_dir` when present; keep this routing consistent across run, scaffold, resume, and generate-patch flows.
 - Memory must stay anti-contamination-first: verified successes/failures and human-confirmed lessons are recall-safe; hypotheses/quarantine/pending-review are review-only.
 - Failures are useful memories only when stored with cause, evidence, and retry rule.
+- Chat continuity checkpoints are per-conversation handoff state, never recall-safe
+  long-term memory. Keep them bounded, evidence-labelled, paired with recent
+  verbatim turns, and transferable to a successor chat without copying history.

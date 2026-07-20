@@ -29,7 +29,7 @@ crawl4ai
 # Syntax critic multi-linguaggio nel quality gate (devin/engine/syntax_critic.py), 2026-07-16
 # Opzionale: senza, il gate verifica solo Python/JSON (fail-open dichiarato sugli altri)
 tree-sitter
-tree-sitter-language-pack
+tree-sitter-language-pack==0.13.0
 
 # Security critic OFFLINE nel quality gate (devin/engine/security_critic.py), 2026-07-16
 # Scelto bandit e non semgrep: semgrep scarica le regole dal registry online (anti local-first)

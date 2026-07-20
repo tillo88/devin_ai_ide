@@ -16,6 +16,7 @@ fast_app re-esporta `api_run_events` (shim: i test lo chiamano).
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -105,15 +106,10 @@ async def api_runs():
     for f in sorted(LOG_DIR.glob("run_*.log"), reverse=True):
         stat = f.stat()
         content = f.read_text(encoding="utf-8", errors="ignore")
-        status = "unknown"
-        if "status: success" in content.lower():
-            status = "success"
-        elif "status: failed" in content.lower():
-            status = "failed"
-        elif "status: timeout" in content.lower():
-            status = "timeout"
-        elif "status: stopped" in content.lower():
-            status = "stopped"
+        statuses = re.findall(
+            r"(?im)^status:\s*([a-z_]+)\s*$", content
+        )
+        status = statuses[-1].lower() if statuses else "unknown"
         runs.append({
             "run_id": f.stem,
             "file": str(f.name),
@@ -211,7 +207,10 @@ async def stream_log(run_id: str):
         # os._exit). Ora: lettura da inizio file, chiusura sul footer di stato o
         # quando il run non e' piu' attivo.
         import re as _re
-        status_re = _re.compile(r"^status:\s*(success|failed|timeout|stopped)\s*$")
+        status_re = _re.compile(
+            r"^status:\s*(success|failed|timeout|stopped|stalled|"
+            r"awaiting_approval|applied_uncommitted|rejected|rolled_back)\s*$"
+        )
         dead_polls = 0
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
             while True:

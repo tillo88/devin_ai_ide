@@ -50,6 +50,12 @@ from devin.ai.web_search import (
     get_web_search_provider,
 )
 from devin.core.chat_persistence import ChatPersistence
+from devin.core.chat_continuity import (
+    build_checkpoint,
+    checkpoint_needs_refresh,
+    context_from_checkpoint,
+    should_checkpoint,
+)
 from devin.memory.eval_recorder import (
     detect_chat_only_output,
     is_operational_build_request,
@@ -403,13 +409,66 @@ async def api_chat(req: ChatRequest):
         "LINGUA: rispondi SEMPRE nella stessa lingua del messaggio dell'utente "
         "(se ti scrive in italiano, rispondi in italiano).")
 
+    # Continuita' preventiva: prima che i turni vecchi escano dalla finestra,
+    # crea un handoff strutturato e lo abbina sempre a una coda verbatim recente.
+    # E' stato conversazionale per-chat, mai memoria recall-safe.
+    continuity_cfg = chat_cfg.get("continuity", {})
+    continuity_enabled = continuity_cfg.get("enabled", True)
+    recent_messages = max(2, int(continuity_cfg.get("recent_messages", 8)))
+    checkpoint = chat_persistence.get_continuity() if continuity_enabled else None
+    local_cfgs = ai.config.get("models", {}).get("local_models", {})
+    configured_contexts = [
+        int(cfg.get("ctx_size")) for cfg in local_cfgs.values()
+        if isinstance(cfg, dict) and str(cfg.get("ctx_size", "")).isdigit()
+    ]
+    context_size = min(configured_contexts) if configured_contexts else 8192
+    fixed_context = "\n\n".join(system_parts)
+    if continuity_enabled and should_checkpoint(
+        persisted_history,
+        context_size=context_size,
+        fixed_context=fixed_context,
+        trigger_ratio=float(continuity_cfg.get("trigger_ratio", 0.72)),
+        max_history_messages=max_history,
+        recent_messages=recent_messages,
+        min_messages=int(continuity_cfg.get("min_messages", 12)),
+    ) and checkpoint_needs_refresh(
+        persisted_history,
+        checkpoint,
+        recent_messages=recent_messages,
+        refresh_messages=int(continuity_cfg.get("refresh_messages", 6)),
+    ):
+        def _summarize_continuity(prompt: str):
+            return ai.complete(
+                prompt,
+                max_tokens=int(continuity_cfg.get("summary_max_tokens", 1200)),
+                temperature=0.0,
+                mode="reasoning",
+            )
+
+        checkpoint = await asyncio.to_thread(
+            build_checkpoint,
+            persisted_history,
+            existing=checkpoint,
+            summarizer=_summarize_continuity,
+            recent_messages=recent_messages,
+            source_max_chars=int(continuity_cfg.get("source_max_chars", 24000)),
+            summary_max_chars=int(continuity_cfg.get("summary_max_chars", 6000)),
+        )
+        if checkpoint:
+            chat_persistence.set_continuity(checkpoint)
+
+    continuity_context = context_from_checkpoint(checkpoint)
+    if continuity_context:
+        system_parts.append(continuity_context)
+
     messages = []
     if system_parts:
         messages.append({"role": "system", "content": "\n\n".join(system_parts)})
     if persisted_history:
         # Tronca ai piu' recenti max_history messaggi: protegge da OOM/contesto
         # locale limitato su run prolungate (vincolo hardware locale).
-        messages.extend(persisted_history[-max_history:])
+        history_limit = recent_messages if continuity_context else max_history
+        messages.extend(persisted_history[-history_limit:])
     messages.append({"role": "user", "content": content})
 
     model_name = (
@@ -427,6 +486,10 @@ async def api_chat(req: ChatRequest):
         "ctx_size": model_cfg.get("ctx_size", ""),
         "vision": model_cfg.get("vision", {}).get("enabled", False),
         "web_search_used": req.use_web_search,
+        "continuity_checkpoint": bool(continuity_context),
+        "continuity_summarized_messages": (
+            int(checkpoint.get("summarized_messages") or 0) if checkpoint else 0
+        ),
     }
 
     async def generate_sse(model_name: str, model_detail: dict):
@@ -639,7 +702,15 @@ async def api_chat_history_get(project_path: str = "", chat_id: str = ""):
     persistence_key = (_validated_project_path(project_path, allow_general=False)
                        if project_path else GENERAL_CHAT_PROJECT_KEY)
     cp = ChatPersistence(persistence_key, chat_id=chat_id or None)
-    return {"history": cp.load(), "updated_at": cp.last_updated()}
+    checkpoint = cp.get_continuity()
+    return {
+        "history": cp.load(),
+        "updated_at": cp.last_updated(),
+        "continuity_ready": bool(context_from_checkpoint(checkpoint)),
+        "continuity_summarized_messages": (
+            int(checkpoint.get("summarized_messages") or 0) if checkpoint else 0
+        ),
+    }
 
 
 @router.post("/api/chat/history/clear")
@@ -696,6 +767,7 @@ async def api_chat_generate_patch(request: Request):
     """
     from devin.ui.fast_app import (  # lazy: patchabili su fast_app
         LOG_DIR,
+        ProjectSpace,
         _make_run_callback,
         _validated_project_path,
     )
@@ -704,6 +776,15 @@ async def api_chat_generate_patch(request: Request):
     if not project_path:
         return {"error": "missing project_path — imposta un progetto prima di generare codice dalla chat"}
     project_path = _validated_project_path(project_path, allow_general=False)
+
+    # La conversazione e la knowledge restano associate al progetto DEVIN,
+    # mentre l'esecuzione deve rispettare l'eventuale cartella di lavoro
+    # collegata, esattamente come /api/run e /api/chat/scaffold.
+    execution_path = project_path
+    work_dir = ProjectSpace(project_path).get_work_dir()
+    if work_dir:
+        execution_path = _validated_project_path(work_dir, allow_general=False)
+        print(f"[WORKDIR] generate_patch instradato sulla cartella di lavoro: {execution_path}")
 
     # chat_id (modalita' Progetti, 2026-07-10): usa la conversazione SELEZIONATA
     # in sidebar, non piu' solo la sessione legacy.
@@ -716,7 +797,7 @@ async def api_chat_generate_patch(request: Request):
     # Progetto senza codice -> la cosa giusta e' lo Zero-Shot Scaffolding dalla
     # conversazione (creare i file), non il ciclo di patch (che presuppone
     # codice esistente da modificare).
-    _proj = Path(project_path).expanduser()
+    _proj = Path(execution_path).expanduser()
     _is_empty_project = (not _proj.exists()) or not any(
         f for f in _proj.rglob("*.py")
         if not any(part in (".devin", ".devin_chat", "workspace", "venv", ".git", "__pycache__")
@@ -740,7 +821,7 @@ async def api_chat_generate_patch(request: Request):
         try:
             with Orchestrator(
                 config_path=CONFIG_PATH,
-                project_path=project_path,
+                project_path=execution_path,
                 sse_callback=sse_callback
             ) as orch:
                 with runs_lock:
@@ -754,7 +835,7 @@ async def api_chat_generate_patch(request: Request):
                             task=("Realizza il progetto descritto in questa conversazione. "
                                   "Segui le decisioni prese e le correzioni piu' recenti.\n\n"
                                   + conversation_text),
-                            project_path=project_path,
+                            project_path=execution_path,
                             run_id=run_id
                         )
                         with open(log_path, "a", encoding="utf-8") as f:
@@ -762,7 +843,7 @@ async def api_chat_generate_patch(request: Request):
                     else:
                         result = orch.run_from_conversation(
                             conversation_text=conversation_text,
-                            project_path=project_path,
+                            project_path=execution_path,
                             run_id=run_id
                         )
                         # Niente scrittura qui: run_from_conversation() scrive gia' il

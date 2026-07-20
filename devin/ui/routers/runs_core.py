@@ -126,6 +126,184 @@ class ResumeRequest(BaseModel):
     max_seconds: int = 300
 
 
+class ChangeDecisionRequest(BaseModel):
+    path: str
+    run_id: str
+    commit: bool = True
+
+
+def _decision_project_path(path: str) -> str:
+    from devin.ui.fast_app import ProjectSpace, _validated_project_path
+
+    resolved = _validated_project_path(path, allow_general=False)
+    work_dir = ProjectSpace(resolved).get_work_dir()
+    if work_dir:
+        resolved = _validated_project_path(work_dir, allow_general=False)
+    return resolved
+
+
+def _decision_state(req: ChangeDecisionRequest, expected_status):
+    from devin.core.state_persistence import StatePersistence
+    from devin.ui.fast_app import active_runs, runs_lock
+
+    safe_run_id(req.run_id)
+    req.path = _decision_project_path(req.path)
+    with runs_lock:
+        if req.run_id in active_runs:
+            raise ValueError("run is still active")
+    persistence = StatePersistence(req.path, req.run_id)
+    state = persistence.load()
+    expected = ((expected_status,) if isinstance(expected_status, str)
+                else tuple(expected_status))
+    if not state or state.get("final_status") not in expected:
+        actual = state.get("final_status") if state else "missing"
+        raise ValueError(f"run state is {actual}, expected one of {expected}")
+    return persistence, state
+
+
+def _record_decision(req: ChangeDecisionRequest, status: str, message: str) -> None:
+    from devin.ui.fast_app import LOG_DIR, _run_events
+
+    log_path = LOG_DIR / f"{safe_run_id(req.run_id)}.log"
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n{message}\nstatus: {status}\n")
+    _run_events.append(
+        req.run_id, f"changes_{status}",
+        level="info" if status == "success" else "warning",
+        message=message,
+        data={"status": status},
+    )
+
+
+@router.post("/api/run/changes/apply")
+async def api_run_changes_apply(req: ChangeDecisionRequest):
+    """Apply one explicitly approved, already-verified sandbox manifest."""
+    from devin.core.change_manifest import (
+        ChangeManifestError,
+        apply_change_manifest,
+        load_change_manifest,
+    )
+    from devin.engine.git_ops import GitOps
+    try:
+        persistence, state = _decision_state(req, "awaiting_approval")
+        recovered = False
+        try:
+            manifest = apply_change_manifest(req.path, req.run_id)
+        except ChangeManifestError:
+            manifest = load_change_manifest(req.path, req.run_id)
+            if manifest.get("status") != "applied":
+                raise
+            # Crash-safe idempotency: manifest application is authoritative.
+            recovered = True
+        commit_result = None
+        if req.commit:
+            commit_result = GitOps(req.path).commit(
+                state.get("last_patch", ""), state.get("task", "approved change")
+            )
+        final_status = "success"
+        if commit_result is not None and not commit_result.get("success"):
+            final_status = "applied_uncommitted"
+        state.update({
+            "final_status": final_status,
+            "step": "changes_applied",
+            "verified": True,
+            "applied": True,
+            "change_manifest_status": manifest["status"],
+            "commit_result": commit_result,
+            "decision_recovered": recovered,
+        })
+        persistence.save(state)
+        _record_decision(
+            req, final_status, "verified changes applied by user approval"
+        )
+        return {
+            "run_id": req.run_id,
+            "status": final_status,
+            "applied": True,
+            "commit": commit_result,
+            "counts": manifest["counts"],
+            "recovered": recovered,
+        }
+    except (ValueError, RuntimeError) as exc:
+        return {"error": str(exc), "run_id": req.run_id}
+
+
+@router.get("/api/run/changes/{run_id}")
+async def api_run_changes_preview(run_id: str, path: str = ""):
+    """Return the bounded explicit diff that must be reviewed before approval."""
+    from devin.core.change_manifest import preview_change_manifest
+
+    try:
+        req = ChangeDecisionRequest(path=path, run_id=run_id, commit=False)
+        _decision_state(req, "awaiting_approval")
+        return preview_change_manifest(req.path, req.run_id)
+    except (ValueError, RuntimeError) as exc:
+        return {"error": str(exc), "run_id": run_id}
+
+
+@router.post("/api/run/changes/reject")
+async def api_run_changes_reject(req: ChangeDecisionRequest):
+    from devin.core.change_manifest import (
+        ChangeManifestError,
+        load_change_manifest,
+        reject_change_manifest,
+    )
+    try:
+        persistence, state = _decision_state(req, "awaiting_approval")
+        recovered = False
+        try:
+            manifest = reject_change_manifest(req.path, req.run_id)
+        except ChangeManifestError:
+            manifest = load_change_manifest(req.path, req.run_id)
+            if manifest.get("status") != "rejected":
+                raise
+            recovered = True
+        state.update({
+            "final_status": "rejected",
+            "step": "changes_rejected",
+            "verified": True,
+            "applied": False,
+            "change_manifest_status": manifest["status"],
+        })
+        persistence.save(state)
+        _record_decision(req, "rejected", "verified changes rejected by user")
+        return {"run_id": req.run_id, "status": "rejected", "applied": False,
+                "recovered": recovered}
+    except (ValueError, RuntimeError) as exc:
+        return {"error": str(exc), "run_id": req.run_id}
+
+
+@router.post("/api/run/changes/rollback")
+async def api_run_changes_rollback(req: ChangeDecisionRequest):
+    from devin.core.change_manifest import (
+        ChangeManifestError,
+        load_change_manifest,
+        rollback_change_manifest,
+    )
+    try:
+        persistence, state = _decision_state(req, ("success", "applied_uncommitted"))
+        recovered = False
+        try:
+            manifest = rollback_change_manifest(req.path, req.run_id)
+        except ChangeManifestError:
+            manifest = load_change_manifest(req.path, req.run_id)
+            if manifest.get("status") != "rolled_back":
+                raise
+            recovered = True
+        state.update({
+            "final_status": "rolled_back",
+            "step": "changes_rolled_back",
+            "applied": False,
+            "change_manifest_status": manifest["status"],
+        })
+        persistence.save(state)
+        _record_decision(req, "rolled_back", "approved changes rolled back")
+        return {"run_id": req.run_id, "status": "rolled_back", "applied": False,
+                "recovered": recovered}
+    except (ValueError, RuntimeError) as exc:
+        return {"error": str(exc), "run_id": req.run_id}
+
+
 @router.post("/api/run/resume")
 async def api_run_resume(req: ResumeRequest):
     """Riprende un run di mantenimento INTERROTTO (crash/restart del backend).

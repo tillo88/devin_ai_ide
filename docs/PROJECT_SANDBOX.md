@@ -52,6 +52,38 @@ Content-Type: application/json
 }
 ```
 
+## Flusso integrato dei run di manutenzione
+
+Con `execution.change_application_mode=review` il ciclo
+`Planner → Coder → Patcher → Runner` non copia più automaticamente il
+sandbox nel progetto. Un Runner verde produce invece un
+`change_manifest_v1` sotto `.devin_state/pending_changes/<run_id>/` e termina
+con `status: awaiting_approval`.
+
+Il manifest contiene l'elenco ordinato di file creati, modificati e rimossi,
+hash SHA-256, dimensioni e permessi prima/dopo. `.env`, chiavi private,
+runtime state, sandbox, venv, build, modelli e symlink non sono promuovibili.
+Un file cambiato oltre `execution.max_promotable_file_mb` (30 MB di default)
+blocca il manifest invece di essere ignorato silenziosamente.
+La UI richiede di aprire la diff verificata prima di abilitare **Applica**.
+
+```http
+GET  /api/run/changes/{run_id}?path=<project>
+POST /api/run/changes/apply
+POST /api/run/changes/reject
+POST /api/run/changes/rollback
+```
+
+Le decisioni POST ricevono `path`, `run_id` e, per apply, `commit`. Apply
+ricontrolla integralmente gli hash del progetto e del sandbox prima della
+prima scrittura: una modifica esterna rende il manifest stale e blocca tutto.
+Le scritture usano replace atomico per file, mantengono backup verificati e
+fanno rollback automatico se l'applicazione fallisce. Il rollback esplicito
+rifiuta di sovrascrivere cambiamenti effettuati dopo l'approvazione.
+
+`legacy_auto_apply` resta disponibile solo come modalità di migrazione; la
+configurazione prodotto usa `review`.
+
 Risposta:
 
 ```json

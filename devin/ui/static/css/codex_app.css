@@ -2401,7 +2401,8 @@ details[open] > .collapsible-summary::after {
 .workdir-box .folder-ico { font-style: normal; margin-right: 4px; }
 .activity-run .run-badge { color: var(--text); }
 .activity-run .run-id { color: var(--muted-2); font-size: 11px; }
-.activity-run .run-resume-btn {
+.activity-run .run-resume-btn,
+.activity-run .run-decision-btn {
   margin-left: 8px;
   font-size: 11px;
   padding: 2px 8px;
@@ -2411,7 +2412,10 @@ details[open] > .collapsible-summary::after {
   color: var(--accent);
   cursor: pointer;
 }
-.activity-run .run-resume-btn:hover { background: var(--accent); color: var(--bg); }
+.activity-run .run-resume-btn:hover,
+.activity-run .run-decision-btn:hover { background: var(--accent); color: var(--bg); }
+.activity-run .run-decision-btn.reject { border-color: var(--danger); color: var(--danger); }
+.activity-run .run-decision-btn.reject:hover { background: var(--danger); color: var(--bg); }
 
 .file-list { display: flex; flex-direction: column; gap: 2px; max-height: 150px; overflow-y: auto; }
 .file-row {

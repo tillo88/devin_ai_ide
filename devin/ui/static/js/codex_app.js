@@ -9,6 +9,7 @@ const state = {
   lastEventSeq: -1,
   chatAbort: null,
   diffPreviewOk: false,
+  reviewedChangeRunId: null,
   trainingCases: [],
   trainingJobPoll: null,
   projects: [],
@@ -438,13 +439,28 @@ async function renderActivityRail(projectPath) {
     try {
       const lr = await fetchJson(`/api/project/last_run?${new URLSearchParams({ project_path: projectPath }).toString()}`, {});
       if (lr && lr.run_id) {
-        const icon = { success: "✅", verified_success: "✅", syntax_only: "⚠️", failed: "❌", timeout: "⏱️", stopped: "🛑", stalled: "⏸️", running: "🔵" }[lr.status] || "⏸️";
+        const icon = { success: "✅", verified_success: "✅", syntax_only: "⚠️", failed: "❌", timeout: "⏱️", stopped: "🛑", stalled: "⏸️", awaiting_approval: "👁", rejected: "🚫", rolled_back: "↩", applied_uncommitted: "⚠️", running: "🔵" }[lr.status] || "⏸️";
         const resumeBtn = lr.resumable
           ? ` <button class="run-resume-btn" data-resume-run="${escapeHtml(lr.run_id)}" title="Riprendi il run interrotto da dove era arrivato">▶ Riprendi</button>`
           : "";
-        runEl.innerHTML = `<span class="run-badge">${icon} ${escapeHtml(lr.status || "?")}</span> <span class="run-id">${escapeHtml(lr.run_id)}</span>${resumeBtn}`;
+        const reviewBtns = lr.status === "awaiting_approval"
+          ? ` <button class="run-decision-btn" data-review-change-run="${escapeHtml(lr.run_id)}">👁 Diff</button><button class="run-decision-btn approve" data-change-action="apply" data-change-run="${escapeHtml(lr.run_id)}">✓ Applica</button><button class="run-decision-btn reject" data-change-action="reject" data-change-run="${escapeHtml(lr.run_id)}">× Rifiuta</button>`
+          : "";
+        const rollbackBtn = lr.change_manifest_status === "applied"
+          ? ` <button class="run-decision-btn" data-change-action="rollback" data-change-run="${escapeHtml(lr.run_id)}">↩ Rollback</button>`
+          : "";
+        runEl.innerHTML = `<span class="run-badge">${icon} ${escapeHtml(lr.status || "?")}</span> <span class="run-id">${escapeHtml(lr.run_id)}</span>${resumeBtn}${reviewBtns}${rollbackBtn}`;
         const btn = runEl.querySelector("[data-resume-run]");
         if (btn) btn.addEventListener("click", () => resumeRun(projectPath, btn.dataset.resumeRun));
+        runEl.querySelectorAll("[data-change-action]").forEach((decision) => {
+          decision.addEventListener("click", () => decideRunChanges(
+            projectPath, decision.dataset.changeRun, decision.dataset.changeAction,
+          ));
+        });
+        const review = runEl.querySelector("[data-review-change-run]");
+        if (review) review.addEventListener("click", () => reviewRunChanges(
+          projectPath, review.dataset.reviewChangeRun,
+        ));
       } else {
         runEl.textContent = "Nessun run recente in questo progetto.";
       }
@@ -506,7 +522,7 @@ async function deleteChat(chatId) {
   renderChatHistory([]);
 }
 
-async function createProjectChat() {
+async function createProjectChat(continueCurrent = false) {
   if (!state.selectedProjectPath) {
     appendChatMessage("assistant", "Seleziona un progetto prima di creare una chat multipla.");
     return;
@@ -514,7 +530,8 @@ async function createProjectChat() {
 
   const result = await postJson("/api/project/chats/new", {
     project_path: state.selectedProjectPath,
-    title: "Nuova chat",
+    title: continueCurrent ? "Continuazione" : "Nuova chat",
+    continue_from_chat_id: continueCurrent ? (state.selectedChatId || "") : "",
   });
   state.selectedChatId = result.chat_id || null;
   await loadProjectOverview(state.selectedProjectPath);
@@ -745,6 +762,57 @@ async function resumeRun(projectPath, runId) {
   }
 }
 
+async function decideRunChanges(projectPath, runId, action) {
+  if (action === "apply" && state.reviewedChangeRunId !== runId) {
+    appendChatMessage("assistant", "Apri prima Diff e controlla le modifiche verificate.");
+    return;
+  }
+  const labels = { apply: "applicare", reject: "rifiutare", rollback: "ripristinare" };
+  if (!window.confirm(`Confermi di ${labels[action] || action} le modifiche verificate del run ${runId}?`)) return;
+  try {
+    const result = await postJson(`/api/run/changes/${action}`, {
+      path: projectPath,
+      run_id: runId,
+      commit: action === "apply",
+    });
+    if (result?.error) {
+      appendChatMessage("assistant", `Decisione non applicata: ${result.error}`);
+      return;
+    }
+    appendChatMessage("assistant", `Run ${runId}: ${result.status}.`);
+    await renderActivityRail(projectPath);
+    await loadRunLog(runId);
+  } catch (err) {
+    console.error(err);
+    appendChatMessage("assistant", `Decisione non applicata: ${err.message || err}`);
+  }
+}
+
+async function reviewRunChanges(projectPath, runId) {
+  try {
+    const params = new URLSearchParams({ path: projectPath });
+    const payload = await fetchJson(`/api/run/changes/${encodeURIComponent(runId)}?${params.toString()}`);
+    if (payload?.error) {
+      appendChatMessage("assistant", `Preview non disponibile: ${payload.error}`);
+      return;
+    }
+    const input = $("diff-input");
+    if (input) input.value = payload.unified_diff || "(nessuna differenza testuale)";
+    const panel = document.querySelector(".diff-preview-panel");
+    if (panel) panel.open = true;
+    const result = $("diff-result");
+    if (result) {
+      result.innerHTML = `<div class="diff-summary">Manifest verificato · ${escapeHtml(payload.entries?.length || 0)} file · digest ${escapeHtml((payload.entry_digest || "").slice(0, 12))}${payload.truncated ? " · preview troncata" : ""}</div>`;
+    }
+    setText("diff-preview-status", "verified manifest");
+    state.diffPreviewOk = false;
+    state.reviewedChangeRunId = runId;
+    panel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    appendChatMessage("assistant", `Preview non disponibile: ${err.message || err}`);
+  }
+}
+
 function appendChatMessage(role, content = "", options = {}) {
   const thread = $("chat-thread");
   // La hero di benvenuto vive solo finche' la chat e' vuota: al primo
@@ -845,6 +913,13 @@ async function loadChatHistory() {
   if (state.selectedChatId) params.set("chat_id", state.selectedChatId);
   const payload = await fetchJson(`/api/chat/history?${params.toString()}`);
   renderChatHistory(payload.history ?? []);
+  const continueButton = $("continue-chat-button");
+  if (continueButton) {
+    continueButton.hidden = !(payload.continuity_ready && state.selectedProjectPath && state.selectedChatId);
+    continueButton.title = payload.continuity_ready
+      ? `Continue with ${payload.continuity_summarized_messages ?? 0} summarized messages`
+      : "Continuity checkpoint not ready";
+  }
 }
 
 function setChatBusy(isBusy) {
@@ -1367,6 +1442,13 @@ function setupChatComposer() {
     createProjectChat().catch((err) => {
       console.error(err);
       appendChatMessage("assistant", `[error] ${err.message}`);
+    });
+  });
+
+  $("continue-chat-button")?.addEventListener("click", () => {
+    createProjectChat(true).catch((err) => {
+      console.error(err);
+      appendChatMessage("assistant", `[continuity error] ${err.message}`);
     });
   });
 
