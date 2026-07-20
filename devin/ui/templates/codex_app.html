@@ -11,7 +11,7 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
   <title>DEVIN Workspace</title>
-  <link rel="stylesheet" href="/static/css/codex_app.css">
+  <link rel="stylesheet" href="/static/css/codex_app.css?v={{ shell_version }}">
 </head>
 <body class="codex-shell">
   <header class="topbar">
@@ -177,10 +177,12 @@
     // gia' autenticata, il SW eredita il cookie di sessione (same-origin).
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('/sw.js').catch(function () {});
+        navigator.serviceWorker.register('/sw.js?v={{ shell_version }}', {
+          updateViaCache: 'none'
+        }).catch(function () {});
       });
     }
   </script>
-  <script type="module" src="/static/js/codex_app.js"></script>
+  <script type="module" src="/static/js/codex_app.js?v={{ shell_version }}"></script>
 </body>
 </html>

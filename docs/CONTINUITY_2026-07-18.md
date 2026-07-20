@@ -1234,3 +1234,15 @@ verdi, produce il manifest `awaiting_approval`. Il router rispetta inoltre il
 
 Verifica: **417 passed, 1 skipped**, py_compile, JavaScript syntax e
 `git diff --check` verdi.
+
+## 2026-07-20 — Desktop shell anti-cache
+
+Un test dopo il merge mostrava ancora `chat returned JSON: 200`: GitHub e il
+pull erano corretti, ma WebView2 stava servendo la shell precedente dalla PWA
+cache. La shell e' ora network-first con fallback offline, `/app` risponde
+`no-store`, CSS/JS e registrazione SW hanno una versione esplicita, e
+l'attivazione di un nuovo worker ricarica una sola volta i client `/app` gia'
+aperti. Cache portata a `devin-shell-v4`; nessun refresh multiplo richiesto.
+
+Verifica: **417 passed, 1 skipped**, inclusi test HTTP e source-level sulla
+policy cache, JavaScript syntax e `git diff --check` verdi.

@@ -5,14 +5,14 @@
  *   manifest + icone, in una cache versionata (CACHE_VERSION).
  * - NETWORK-ONLY per TUTTE le chiamate /api/*: contenuti di memoria/chat
  *   non devono MAI finire in cache (requisito di privacy, non preferenza).
- * - Cache-first per gli asset di shell, con fallback di rete.
+ * - Network-first per pagina e asset di shell, con fallback offline.
  * - Activate: pulizia delle cache di versioni precedenti.
  *
  * Convenzione deploy: incrementare CACHE_VERSION ad ogni modifica della
  * shell (HTML/CSS/JS/icone), altrimenti i client continuano a servire la
  * versione vecchia dalla cache. Vedi docs/CONTINUITY_2026-07-18.md.
  */
-const CACHE_VERSION = "devin-shell-v3";
+const CACHE_VERSION = "devin-shell-v4";
 const SHELL_URLS = [
   "/app",
   "/manifest.webmanifest",
@@ -43,6 +43,19 @@ self.addEventListener("activate", (event) => {
         )
       )
       .then(() => self.clients.claim())
+      // Una shell desktop puo' restare aperta per giorni. Dopo l'attivazione
+      // forza una sola navigazione dei client /app: il nuovo worker prende il
+      // controllo subito e non lascia il vecchio JavaScript visibile fino al
+      // secondo riavvio manuale.
+      .then(() => self.clients.matchAll({ type: "window" }))
+      .then((clients) =>
+        Promise.all(
+          clients.map((client) => {
+            const url = new URL(client.url);
+            return url.pathname === "/app" ? client.navigate(client.url) : null;
+          })
+        )
+      )
   );
 });
 
@@ -62,17 +75,27 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Asset di shell: cache-first, poi rete (e ripopola la cache).
+  const isShellRequest =
+    request.mode === "navigate" || SHELL_URLS.includes(url.pathname);
+  if (!isShellRequest) return;
+
+  // Shell network-first: un update appena installato non puo' restare
+  // intrappolato nella vecchia cache. La cache serve soltanto da fallback
+  // offline e viene aggiornata dopo ogni risposta valida del backend.
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response.ok && SHELL_URLS.includes(url.pathname)) {
+    fetch(request, { cache: "no-store" })
+      .then((response) => {
+        if (response.ok) {
           const copy = response.clone();
           caches.open(CACHE_VERSION).then((cache) => cache.put(request, copy));
         }
         return response;
-      });
-    })
+      })
+      .catch(() =>
+        caches.match(request).then((cached) => {
+          if (cached) return cached;
+          return caches.match(url.pathname, { ignoreSearch: true });
+        })
+      )
   );
 });
