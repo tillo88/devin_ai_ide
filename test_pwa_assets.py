@@ -71,6 +71,15 @@ def test_service_worker_source_shell_only_cache_and_network_only_api():
     # Il branch /api/ precede qualunque scrittura in cache: nessuna API puo'
     # finire in cache per costruzione.
     assert api_check < source.index("cache.put(request")
+    # La shell e' network-first: una vecchia cache non puo' mascherare un
+    # aggiornamento appena installato. Dopo activate i client /app vengono
+    # ricaricati una sola volta sotto il nuovo worker.
+    shell_branch = source[source.index("const isShellRequest"):]
+    assert shell_branch.index('fetch(request, { cache: "no-store" })') < shell_branch.index(
+        "caches.match(request)"
+    )
+    assert 'self.clients.matchAll({ type: "window" })' in source
+    assert 'client.navigate(client.url)' in source
 
 
 def test_pwa_icons_served_as_png():
@@ -92,4 +101,9 @@ def test_app_shell_includes_pwa_meta_and_sw_registration():
     assert "apple-mobile-web-app-capable" in html
     assert "mobile-web-app-capable" in html
     assert "serviceWorker" in html
-    assert "navigator.serviceWorker.register('/sw.js')" in html
+    assert "navigator.serviceWorker.register('/sw.js?v=v4'" in html
+    assert "updateViaCache: 'none'" in html
+    assert '/static/css/codex_app.css?v=v4' in html
+    assert '/static/js/codex_app.js?v=v4' in html
+    assert "no-store" in response.headers["Cache-Control"]
+    assert response.headers["Pragma"] == "no-cache"

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 router = APIRouter()
+APP_SHELL_VERSION = "v4"
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -99,7 +100,15 @@ async def index(request: Request):
 async def codex_app_page(request: Request):
     """Codex-like SPA shell; legacy dashboard/chat stay available while this matures."""
     from devin.ui.fast_app import templates  # lazy
-    return templates.TemplateResponse(request=request, name="codex_app.html", context={})
+    return templates.TemplateResponse(
+        request=request,
+        name="codex_app.html",
+        context={"shell_version": APP_SHELL_VERSION},
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @router.get("/app/diagnostics", response_class=HTMLResponse)
