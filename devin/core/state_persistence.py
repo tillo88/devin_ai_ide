@@ -40,6 +40,7 @@ class StatePersistence:
     def save(self, state: Dict[str, Any]) -> None:
         """Salva lo stato corrente su disco in modo atomico."""
         state["_saved_at"] = datetime.now().isoformat()
+        state["_schema"] = "orchestrator_state_v1"
         state["_run_id"] = self.run_id
         state["_project_path"] = str(self.project_path)
 
@@ -154,6 +155,7 @@ class StatePersistence:
             return None
 
         return {
+            "schema": state.get("_schema", "orchestrator_state_legacy"),
             "run_id": state.get("_run_id"),
             "task": state.get("task"),
             "attempt": state.get("attempt", 0),

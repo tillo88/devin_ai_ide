@@ -178,11 +178,23 @@ def _record_decision(req: ChangeDecisionRequest, status: str, message: str) -> N
 @router.post("/api/run/changes/apply")
 async def api_run_changes_apply(req: ChangeDecisionRequest):
     """Apply one explicitly approved, already-verified sandbox manifest."""
-    from devin.core.change_manifest import apply_change_manifest
+    from devin.core.change_manifest import (
+        ChangeManifestError,
+        apply_change_manifest,
+        load_change_manifest,
+    )
     from devin.engine.git_ops import GitOps
     try:
         persistence, state = _decision_state(req, "awaiting_approval")
-        manifest = apply_change_manifest(req.path, req.run_id)
+        recovered = False
+        try:
+            manifest = apply_change_manifest(req.path, req.run_id)
+        except ChangeManifestError:
+            manifest = load_change_manifest(req.path, req.run_id)
+            if manifest.get("status") != "applied":
+                raise
+            # Crash-safe idempotency: manifest application is authoritative.
+            recovered = True
         commit_result = None
         if req.commit:
             commit_result = GitOps(req.path).commit(
@@ -198,6 +210,7 @@ async def api_run_changes_apply(req: ChangeDecisionRequest):
             "applied": True,
             "change_manifest_status": manifest["status"],
             "commit_result": commit_result,
+            "decision_recovered": recovered,
         })
         persistence.save(state)
         _record_decision(
@@ -209,6 +222,7 @@ async def api_run_changes_apply(req: ChangeDecisionRequest):
             "applied": True,
             "commit": commit_result,
             "counts": manifest["counts"],
+            "recovered": recovered,
         }
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc), "run_id": req.run_id}
@@ -229,10 +243,21 @@ async def api_run_changes_preview(run_id: str, path: str = ""):
 
 @router.post("/api/run/changes/reject")
 async def api_run_changes_reject(req: ChangeDecisionRequest):
-    from devin.core.change_manifest import reject_change_manifest
+    from devin.core.change_manifest import (
+        ChangeManifestError,
+        load_change_manifest,
+        reject_change_manifest,
+    )
     try:
         persistence, state = _decision_state(req, "awaiting_approval")
-        manifest = reject_change_manifest(req.path, req.run_id)
+        recovered = False
+        try:
+            manifest = reject_change_manifest(req.path, req.run_id)
+        except ChangeManifestError:
+            manifest = load_change_manifest(req.path, req.run_id)
+            if manifest.get("status") != "rejected":
+                raise
+            recovered = True
         state.update({
             "final_status": "rejected",
             "step": "changes_rejected",
@@ -242,17 +267,29 @@ async def api_run_changes_reject(req: ChangeDecisionRequest):
         })
         persistence.save(state)
         _record_decision(req, "rejected", "verified changes rejected by user")
-        return {"run_id": req.run_id, "status": "rejected", "applied": False}
+        return {"run_id": req.run_id, "status": "rejected", "applied": False,
+                "recovered": recovered}
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc), "run_id": req.run_id}
 
 
 @router.post("/api/run/changes/rollback")
 async def api_run_changes_rollback(req: ChangeDecisionRequest):
-    from devin.core.change_manifest import rollback_change_manifest
+    from devin.core.change_manifest import (
+        ChangeManifestError,
+        load_change_manifest,
+        rollback_change_manifest,
+    )
     try:
         persistence, state = _decision_state(req, ("success", "applied_uncommitted"))
-        manifest = rollback_change_manifest(req.path, req.run_id)
+        recovered = False
+        try:
+            manifest = rollback_change_manifest(req.path, req.run_id)
+        except ChangeManifestError:
+            manifest = load_change_manifest(req.path, req.run_id)
+            if manifest.get("status") != "rolled_back":
+                raise
+            recovered = True
         state.update({
             "final_status": "rolled_back",
             "step": "changes_rolled_back",
@@ -261,7 +298,8 @@ async def api_run_changes_rollback(req: ChangeDecisionRequest):
         })
         persistence.save(state)
         _record_decision(req, "rolled_back", "approved changes rolled back")
-        return {"run_id": req.run_id, "status": "rolled_back", "applied": False}
+        return {"run_id": req.run_id, "status": "rolled_back", "applied": False,
+                "recovered": recovered}
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc), "run_id": req.run_id}
 

@@ -296,6 +296,33 @@ def test_change_decision_endpoint_rejects_without_writing(tmp_path, monkeypatch)
     assert state["final_status"] == "rejected"
 
 
+def test_apply_endpoint_recovers_after_manifest_applied_before_state_save(tmp_path, monkeypatch):
+    import asyncio
+    import devin.ui.fast_app as fast_app
+    from devin.core.change_manifest import apply_change_manifest
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _patch_resume_surface(monkeypatch, fast_app, tmp_path)
+    _pending_change(project, "run_decision_recovery")
+    apply_change_manifest(project, "run_decision_recovery")
+    # Simula crash: manifest applicato, state ancora awaiting_approval.
+    assert StatePersistence(str(project), "run_decision_recovery").load()[
+        "final_status"
+    ] == "awaiting_approval"
+
+    req = fast_app.ChangeDecisionRequest(
+        path=str(project), run_id="run_decision_recovery", commit=False)
+    recovered = asyncio.run(fast_app.api_run_changes_apply(req))
+
+    assert recovered["status"] == "success"
+    assert recovered["recovered"] is True
+    assert (project / "value.txt").read_text(encoding="utf-8") == "after\n"
+    state = StatePersistence(str(project), "run_decision_recovery").load()
+    assert state["final_status"] == "success"
+    assert state["decision_recovered"] is True
+
+
 # ============================================================
 # /api/project/last_run: riconciliazione con active_runs (2026-07-18)
 # ============================================================

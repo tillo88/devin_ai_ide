@@ -9,6 +9,7 @@
   },
   "execution": {
     "change_application_mode": "review",
+    "max_promotable_file_mb": 30,
     "note": "review = i test girano nella sandbox e le modifiche restano pending finche' l'utente non le approva. legacy_auto_apply resta disponibile solo come compatibilita' temporanea."
   },
   "models": {

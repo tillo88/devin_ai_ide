@@ -130,3 +130,13 @@ def test_manifest_never_promotes_env_or_private_key_files(tmp_path):
     paths = {entry["path"] for entry in manifest["entries"]}
     assert ".env" not in paths
     assert "signing.key" not in paths
+
+
+def test_manifest_rejects_changed_files_over_promotion_limit(tmp_path):
+    project, sandbox = _trees(tmp_path)
+    (sandbox / "large.bin").write_bytes(b"x" * 65)
+
+    with pytest.raises(ChangeManifestError, match="exceed promotion limit"):
+        build_change_manifest(
+            project, sandbox, "run_large", max_file_bytes=64
+        )

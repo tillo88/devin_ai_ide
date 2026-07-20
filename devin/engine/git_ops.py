@@ -53,8 +53,15 @@ def commit_changes(project_path, message):
         ["git", "commit", "-m", message],
         cwd=str(project_path), capture_output=True, text=True
     )
+    combined = f"{result.stdout}\n{result.stderr}".lower()
+    no_changes = result.returncode != 0 and (
+        "nothing to commit" in combined
+        or "no changes added to commit" in combined
+        or "nothing added to commit" in combined
+    )
     return {
-        "success": result.returncode == 0,
+        "success": result.returncode == 0 or no_changes,
+        "no_changes": no_changes,
         "stdout": result.stdout,
         "stderr": result.stderr
     }

@@ -162,6 +162,8 @@ def build_change_manifest(
     project_path: str | Path,
     sandbox_path: str | Path,
     run_id: str,
+    *,
+    max_file_bytes: int = 30 * 1024 * 1024,
 ) -> dict[str, Any]:
     """Compare source and verified sandbox and persist a deterministic manifest."""
     project = Path(project_path).expanduser().resolve()
@@ -192,6 +194,20 @@ def build_change_manifest(
             "after": new,
         })
 
+    oversized = [
+        item["path"] for item in entries
+        if max(
+            int((item.get("before") or {}).get("size", 0)),
+            int((item.get("after") or {}).get("size", 0)),
+        ) > max(1, int(max_file_bytes))
+    ]
+    if oversized:
+        shown = ", ".join(oversized[:5])
+        extra = f" (+{len(oversized) - 5} more)" if len(oversized) > 5 else ""
+        raise ChangeManifestError(
+            f"changed files exceed promotion limit ({max_file_bytes} bytes): {shown}{extra}"
+        )
+
     counts = {name: sum(1 for item in entries if item["operation"] == name)
               for name in ("create", "modify", "delete")}
     manifest = {
@@ -204,6 +220,7 @@ def build_change_manifest(
         "entries": entries,
         "counts": counts,
         "entry_digest": _canonical_digest(entries),
+        "limits": {"max_file_bytes": int(max_file_bytes)},
     }
     _write_json_atomic(manifest_path(project, run_id), manifest)
     return manifest

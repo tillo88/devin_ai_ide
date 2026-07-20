@@ -1198,6 +1198,10 @@ prima/dopo, preview unified-diff bounded, esclusione di runtime/venv/modelli/
 segreti/chiavi/symlink, integrità del manifest, stale-source e tamper checks,
 lock inter-processo sulle decisioni, apply con backup e rollback-on-error,
 reject terminale e rollback esplicito che non sovrascrive edit successivi.
+I file cambiati oltre 30 MB bloccano la promozione. Le decisioni sono
+idempotenti rispetto a crash tra manifest/apply/commit/state save: il manifest
+autorevole viene riconciliato al retry; lo stato porta schema
+`orchestrator_state_v1` mantenendo lettura legacy.
 
 API e UI completano il trust boundary: preview obbligatoria, Apply, Reject e
 Rollback; state/log/eventi vengono riconciliati e i pending/applied recovery
@@ -1205,5 +1209,5 @@ point non sono eliminati dal cleanup 24h. GitOps non stagea più `.devin_state`
 o `workspace/sandboxes`. Il badge ultimo-run segue anche il `work_dir`
 collegato. Service worker aggiornato a `devin-shell-v2`.
 
-Verifica: **411 passed, 1 skipped**, py_compile/compileall, JSON, JavaScript,
+Verifica: **413 passed, 1 skipped**, py_compile/compileall, JSON, JavaScript,
 HTML inline-script e `git diff --check` verdi.

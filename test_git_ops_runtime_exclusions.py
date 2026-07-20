@@ -35,3 +35,7 @@ def test_commit_excludes_runtime_state_and_run_sandboxes(tmp_path):
     status = _git(project, "status", "--short")
     assert ".devin_state/" in status
     assert "workspace/" in status
+
+    repeated = GitOps(str(project)).commit("patch", "approved again")
+    assert repeated["success"] is True
+    assert repeated["no_changes"] is True

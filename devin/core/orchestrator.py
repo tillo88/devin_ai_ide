@@ -1306,8 +1306,15 @@ class Orchestrator:
                     if self.change_application_mode == "review":
                         try:
                             effective_run_id = self._state_persistence.run_id
+                            execution_cfg = self.config.get("execution", {})
+                            max_promotable_mb = max(
+                                1, int(execution_cfg.get("max_promotable_file_mb", 30))
+                            )
                             change_manifest = build_change_manifest(
-                                self.project_path, sandbox_path, effective_run_id
+                                self.project_path,
+                                sandbox_path,
+                                effective_run_id,
+                                max_file_bytes=max_promotable_mb * 1024 * 1024,
                             )
                         except Exception as e:
                             log(f"Change manifest failed: {e}", "error")

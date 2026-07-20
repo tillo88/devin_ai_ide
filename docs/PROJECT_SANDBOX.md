@@ -63,6 +63,8 @@ con `status: awaiting_approval`.
 Il manifest contiene l'elenco ordinato di file creati, modificati e rimossi,
 hash SHA-256, dimensioni e permessi prima/dopo. `.env`, chiavi private,
 runtime state, sandbox, venv, build, modelli e symlink non sono promuovibili.
+Un file cambiato oltre `execution.max_promotable_file_mb` (30 MB di default)
+blocca il manifest invece di essere ignorato silenziosamente.
 La UI richiede di aprire la diff verificata prima di abilitare **Applica**.
 
 ```http
