@@ -181,6 +181,12 @@ async def api_project_last_run(project_path: str = ""):
         return {"has_run": False}
     pp = str(Path(project_path).expanduser().resolve())
     try:
+        work_dir = ProjectSpace(pp).get_work_dir()
+        if work_dir:
+            pp = str(Path(work_dir).expanduser().resolve())
+    except Exception:
+        pass
+    try:
         st = await asyncio.to_thread(lambda: StatePersistence(pp).load_latest())
     except Exception:
         st = None
@@ -208,6 +214,11 @@ async def api_project_last_run(project_path: str = ""):
         "resumable": resumable,
         "saved_at": st.get("_saved_at"),
         "task": (st.get("task") or "")[:200],
+        "verified": bool(st.get("verified")),
+        "applied": bool(st.get("applied")),
+        "change_manifest_status": st.get("change_manifest_status") or (
+            "pending" if final_status == "awaiting_approval" else None
+        ),
     }
 
 

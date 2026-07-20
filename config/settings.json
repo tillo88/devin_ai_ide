@@ -7,6 +7,10 @@
     "whole_file_enabled": true,
     "whole_file_max_lines": 300
   },
+  "execution": {
+    "change_application_mode": "review",
+    "note": "review = i test girano nella sandbox e le modifiche restano pending finche' l'utente non le approva. legacy_auto_apply resta disponibile solo come compatibilita' temporanea."
+  },
   "models": {
     "rig_host": "192.168.1.100",
     "rig_port": 8080,

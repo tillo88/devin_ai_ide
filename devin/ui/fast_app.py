@@ -170,8 +170,13 @@ from devin.ui.routers.runs_core import (
     # router->router (devin.ui.routers.chat, fetta split 14).
     ResumeRequest,
     RunRequest,
+    ChangeDecisionRequest,
     api_chat_scaffold,
     api_run,
+    api_run_changes_apply,
+    api_run_changes_preview,
+    api_run_changes_reject,
+    api_run_changes_rollback,
     api_run_resume,
     api_stop,
 )
@@ -876,4 +881,3 @@ def run_server():
 
 if __name__ == "__main__":
     run_server()
-

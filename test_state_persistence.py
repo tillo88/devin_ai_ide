@@ -87,6 +87,29 @@ def test_cleanup_removes_only_stale_states(tmp_path):
     assert recent.state_file.exists()
 
 
+def test_cleanup_preserves_pending_approval_and_rollback_state(tmp_path):
+    pending = StatePersistence(str(tmp_path), "run_pending_review")
+    pending_state = _interrupted_state()
+    pending_state["final_status"] = "awaiting_approval"
+    pending.save(pending_state)
+    applied = StatePersistence(str(tmp_path), "run_applied_review")
+    applied_state = _interrupted_state()
+    applied_state.update({
+        "final_status": "success",
+        "change_manifest_status": "applied",
+    })
+    applied.save(applied_state)
+    stale_ts = time.time() - 25 * 3600
+    os.utime(pending.state_file, (stale_ts, stale_ts))
+    os.utime(applied.state_file, (stale_ts, stale_ts))
+
+    removed = pending.cleanup(max_age_hours=24)
+
+    assert removed == 0
+    assert pending.state_file.exists()
+    assert applied.state_file.exists()
+
+
 def test_load_latest_remains_available_for_readonly_endpoints(tmp_path):
     """Status endpoints need 'latest state for project' regardless of run_id."""
     first = StatePersistence(str(tmp_path), "run_20000101_000000")
@@ -200,6 +223,77 @@ def test_resume_endpoint_relaunches_interrupted_run(tmp_path, monkeypatch):
     assert done.wait(timeout=10), "il run ripreso non e' partito"
     assert launched["run_kwargs"]["run_id"] == "run_20000101_000003"
     assert launched["run_kwargs"]["task"] == "fix the real bug"
+
+
+def _pending_change(project, run_id, *, after="after\n"):
+    import shutil
+    from devin.core.change_manifest import build_change_manifest
+
+    (project / "value.txt").write_text("before\n", encoding="utf-8")
+    sandbox = project / "workspace" / "sandboxes" / run_id
+    sandbox.mkdir(parents=True)
+    shutil.copy2(project / "value.txt", sandbox / "value.txt")
+    (sandbox / "value.txt").write_text(after, encoding="utf-8")
+    build_change_manifest(project, sandbox, run_id)
+    state = _interrupted_state(task="approved edit")
+    state.update({
+        "final_status": "awaiting_approval",
+        "verified": True,
+        "applied": False,
+    })
+    StatePersistence(str(project), run_id).save(state)
+
+
+def test_change_decision_endpoints_apply_then_rollback(tmp_path, monkeypatch):
+    import asyncio
+    import devin.ui.fast_app as fast_app
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _patch_resume_surface(monkeypatch, fast_app, tmp_path)
+    _pending_change(project, "run_decision_apply")
+
+    apply_req = fast_app.ChangeDecisionRequest(
+        path=str(project), run_id="run_decision_apply", commit=False)
+    preview = asyncio.run(fast_app.api_run_changes_preview(
+        "run_decision_apply", path=str(project)))
+    assert preview["status"] == "pending"
+    assert "+after" in preview["unified_diff"]
+    applied = asyncio.run(fast_app.api_run_changes_apply(apply_req))
+
+    assert applied["status"] == "success"
+    assert applied["applied"] is True
+    assert (project / "value.txt").read_text(encoding="utf-8") == "after\n"
+    state = StatePersistence(str(project), "run_decision_apply").load()
+    assert state["final_status"] == "success"
+    assert state["applied"] is True
+
+    rollback_req = fast_app.ChangeDecisionRequest(
+        path=str(project), run_id="run_decision_apply", commit=False)
+    rolled_back = asyncio.run(fast_app.api_run_changes_rollback(rollback_req))
+
+    assert rolled_back["status"] == "rolled_back"
+    assert (project / "value.txt").read_text(encoding="utf-8") == "before\n"
+
+
+def test_change_decision_endpoint_rejects_without_writing(tmp_path, monkeypatch):
+    import asyncio
+    import devin.ui.fast_app as fast_app
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _patch_resume_surface(monkeypatch, fast_app, tmp_path)
+    _pending_change(project, "run_decision_reject")
+
+    req = fast_app.ChangeDecisionRequest(
+        path=str(project), run_id="run_decision_reject", commit=False)
+    rejected = asyncio.run(fast_app.api_run_changes_reject(req))
+
+    assert rejected["status"] == "rejected"
+    assert rejected["applied"] is False
+    assert (project / "value.txt").read_text(encoding="utf-8") == "before\n"
+    state = StatePersistence(str(project), "run_decision_reject").load()
+    assert state["final_status"] == "rejected"
 
 
 # ============================================================

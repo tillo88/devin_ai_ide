@@ -30,6 +30,7 @@ from devin.ai.local_model_launcher import (
 from devin.core.context_engine import ContextEngine
 from devin.core.context_retriever import ContextRetriever
 from devin.core.state_persistence import StatePersistence
+from devin.core.change_manifest import build_change_manifest, manifest_path
 from devin.agents.planner import Planner
 from devin.agents.coder import Coder
 from devin.agents.critic import Critic
@@ -91,6 +92,17 @@ class Orchestrator:
 
         with open(config_path, "r") as f:
             self.config = json.load(f)
+
+        requested_application_mode = str(
+            self.config.get("execution", {}).get(
+                "change_application_mode", "legacy_auto_apply"
+            )
+        ).strip().lower()
+        if requested_application_mode not in {"legacy_auto_apply", "review"}:
+            # Un valore sconosciuto non deve mai degradare silenziosamente verso
+            # scritture automatiche nel progetto reale.
+            requested_application_mode = "review"
+        self.change_application_mode = requested_application_mode
 
         # FASE 1: Configurazione serializzazione VRAM
         models_config = self.config.get("models", {})
@@ -1290,6 +1302,80 @@ class Orchestrator:
                     sandbox_path, entrypoint=entrypoint, timeout=runner_timeout)
                 if result.success:
                     log("Execution successful!", "success")
+
+                    if self.change_application_mode == "review":
+                        try:
+                            effective_run_id = self._state_persistence.run_id
+                            change_manifest = build_change_manifest(
+                                self.project_path, sandbox_path, effective_run_id
+                            )
+                        except Exception as e:
+                            log(f"Change manifest failed: {e}", "error")
+                            save_state(
+                                final_status="failed",
+                                last_error=str(e),
+                                step="change_manifest_failed",
+                            )
+                            write_status_footer("failed")
+                            return {
+                                "success": False,
+                                "status": "failed",
+                                "error": f"Change manifest failed: {e}",
+                                "logs": logs,
+                                "duration": time.time() - start_time,
+                                "model_source": model_status.model_source,
+                            }
+
+                        if change_manifest["entries"]:
+                            manifest_file = manifest_path(
+                                self.project_path, effective_run_id
+                            )
+                            log(
+                                "Verified changes are awaiting explicit approval "
+                                f"({len(change_manifest['entries'])} file(s))",
+                                "warning",
+                            )
+                            save_state(
+                                final_status="awaiting_approval",
+                                patch=patch,
+                                step="awaiting_approval",
+                                verified=True,
+                                applied=False,
+                                sandbox_path=str(sandbox_path),
+                                change_manifest_path=str(manifest_file),
+                            )
+                            write_status_footer("awaiting_approval")
+                            return {
+                                "success": False,
+                                "verified": True,
+                                "applied": False,
+                                "status": "awaiting_approval",
+                                "plan": plan.to_dict(),
+                                "patch": patch,
+                                "change_manifest": change_manifest,
+                                "logs": logs,
+                                "duration": time.time() - start_time,
+                                "model_source": model_status.model_source,
+                            }
+
+                        log("Execution verified; sandbox contains no source changes", "info")
+                        final_result = {
+                            "success": True,
+                            "verified": True,
+                            "applied": False,
+                            "no_changes": True,
+                            "status": "success",
+                            "plan": plan.to_dict(),
+                            "patch": patch,
+                            "logs": logs,
+                            "duration": time.time() - start_time,
+                            "model_source": model_status.model_source,
+                        }
+                        save_state(final_status="success", patch=patch, verified=True,
+                                   applied=False, no_changes=True)
+                        self._state_persistence.delete()
+                        write_status_footer("success")
+                        return final_result
 
                     try:
                         self._sync_sandbox_to_project(sandbox_path, self.project_path)

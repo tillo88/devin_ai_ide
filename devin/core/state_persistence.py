@@ -106,6 +106,17 @@ class StatePersistence:
         for f in self.state_dir.glob("run_*.json"):
             try:
                 if f.stat().st_mtime < cutoff:
+                    try:
+                        state = json.loads(f.read_text(encoding="utf-8"))
+                    except Exception:
+                        state = {}
+                    # Pending approval and applied manifests are deliberate
+                    # user-controlled recovery points, not abandoned run state.
+                    if (
+                        state.get("final_status") == "awaiting_approval"
+                        or state.get("change_manifest_status") == "applied"
+                    ):
+                        continue
                     f.unlink()
                     removed += 1
             except Exception:
@@ -136,7 +147,10 @@ class StatePersistence:
 
         # Non riprendere se il run era già completato
         final_status = state.get("final_status")
-        if final_status in ("success", "failed", "timeout", "stopped"):
+        if final_status in (
+            "success", "failed", "timeout", "stopped", "stalled",
+            "awaiting_approval", "applied_uncommitted", "rejected", "rolled_back",
+        ):
             return None
 
         return {

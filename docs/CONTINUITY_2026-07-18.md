@@ -1184,3 +1184,26 @@ progetto metadati e modificava quello, ignorando la cartella sorgente collegata.
 
 Regression test: `test_generate_patch_workdir.py` copre sia il routing verso la
 cartella collegata sia il comportamento compatibile senza `work_dir`.
+
+## 2026-07-20 — P1: sandbox verificata → diff → approvazione → rollback
+
+Il run di manutenzione usa ora `execution.change_application_mode=review`.
+Dopo Runner verde non scrive né committa il progetto: genera un manifest
+deterministico `change_manifest_v1`, persiste lo stato
+`awaiting_approval` e conserva il sandbox verificato. La modalità precedente
+resta dietro `legacy_auto_apply` per migrazione e test di compatibilità.
+
+`devin/core/change_manifest.py` implementa confronto ordinato, SHA-256 e mode
+prima/dopo, preview unified-diff bounded, esclusione di runtime/venv/modelli/
+segreti/chiavi/symlink, integrità del manifest, stale-source e tamper checks,
+lock inter-processo sulle decisioni, apply con backup e rollback-on-error,
+reject terminale e rollback esplicito che non sovrascrive edit successivi.
+
+API e UI completano il trust boundary: preview obbligatoria, Apply, Reject e
+Rollback; state/log/eventi vengono riconciliati e i pending/applied recovery
+point non sono eliminati dal cleanup 24h. GitOps non stagea più `.devin_state`
+o `workspace/sandboxes`. Il badge ultimo-run segue anche il `work_dir`
+collegato. Service worker aggiornato a `devin-shell-v2`.
+
+Verifica: **411 passed, 1 skipped**, py_compile/compileall, JSON, JavaScript,
+HTML inline-script e `git diff --check` verdi.
