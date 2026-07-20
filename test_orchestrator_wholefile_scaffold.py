@@ -365,6 +365,60 @@ def test_scaffold_gate_red_heal_exhausted_fails_without_commit():
         print("✓ Scaffold: gate rosso post-heal -> failed, <quality_gate>, nessun commit")
 
 
+def test_scaffold_review_mode_keeps_green_candidate_in_sandbox():
+    """Uno scaffold verde in review mode non scrive né committa il progetto.
+
+    La sandbox verificata produce lo stesso manifest pending usato dalla
+    manutenzione; soltanto Apply potrà promuovere i file reali.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project = _make_project(tmpdir)
+
+        def mock_local(messages, mode="reasoning", timeout=None):
+            return "OK"
+
+        orch, lp, ap = _make_orchestrator(
+            project, mock_local,
+            coder_cfg={"whole_file_enabled": False, "self_heal_loop": False},
+        )
+        try:
+            _patch_scaffold_agents(orch, {
+                "calc.py": "def add(a, b):\n    return a + b\n",
+                "test_calc.py": (
+                    "from calc import add\n\n"
+                    "def test_add():\n    assert add(2, 3) == 5\n"
+                ),
+            })
+            orch.change_application_mode = "review"
+            orch.git_ops.commit = MagicMock()
+
+            result = orch.run_scaffold(
+                "Correggi la calcolatrice con test reali",
+                project_path=str(project),
+                run_id="run_scaffold_review",
+            )
+        finally:
+            lp.stop()
+            ap.stop()
+
+        assert result["status"] == "awaiting_approval"
+        assert result["verified"] is True
+        assert result["applied"] is False
+        assert "return a - b" in (project / "calc.py").read_text()
+        assert not (project / "test_calc.py").exists()
+        assert {item["path"] for item in result["change_manifest"]["entries"]} == {
+            "calc.py", "test_calc.py"
+        }
+        orch.git_ops.commit.assert_not_called()
+
+        state = json.loads(
+            (project / ".devin_state" / "run_scaffold_review.json").read_text()
+        )
+        assert state["final_status"] == "awaiting_approval"
+        assert state["verified"] is True
+        assert state["applied"] is False
+
+
 def test_scaffold_failure_memory_negative_polarity():
     """Stesso scenario rosso con Memory fake: il fallimento del gate diventa
     evidenza strutturata — store_local chiamato con status:verified_failure

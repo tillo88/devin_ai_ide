@@ -36,6 +36,7 @@ from devin.agents.coder import Coder
 from devin.agents.critic import Critic
 from devin.engine.patcher import Patcher
 from devin.engine.runner import Runner
+from devin.engine.sandbox import create_sandbox
 from devin.engine.syntax_critic import check_text as syntax_check_text
 from devin.engine.security_critic import bandit_available, scan_python_files
 from devin.core.loop_runner import run_loop, VerifyResult
@@ -440,7 +441,9 @@ class Orchestrator:
             }
         return last
 
-    def _scaffold_quality_gate(self, written: List[str]) -> Dict[str, Any]:
+    def _scaffold_quality_gate(
+        self, written: List[str], *, root: Path | str | None = None
+    ) -> Dict[str, Any]:
         """Syntax-check generated Python and run the project's tests for real.
 
         Estensione 2026-07-15 (fix del falso 'ok 3' nel mini bench): oltre al
@@ -448,7 +451,7 @@ class Orchestrator:
         (test_*.py, *_test.py, tests/) con `python -m pytest`, fallback
         unittest, fallback legacy tests.py via runner.
         """
-        root = Path(self.project_path).resolve()
+        root = Path(root or self.project_path).resolve()
         errors = []
         checked = []
 
@@ -525,13 +528,14 @@ class Orchestrator:
 
     def _scaffold_heal_loop(self, quality: Dict[str, Any], impl_files: List[str],
                             spec_by_name: Dict[str, str], running_context: str,
-                            max_iterations: int = 2) -> Dict[str, Any]:
+                            max_iterations: int = 2,
+                            root: Path | str | None = None) -> Dict[str, Any]:
         """Rigenera i file di implementazione col feedback dei test falliti e
         ri-verifica, finche' il gate e' verde o esaurite le iterazioni.
         Usa il LoopRunner generico (goal+azione+verifica+stop)."""
         if not impl_files:
             return quality
-        root = Path(self.project_path).resolve()
+        root = Path(root or self.project_path).resolve()
 
         def action(iteration: int, last: VerifyResult | None) -> Dict[str, Any]:
             gate = (last.evidence if last and last.evidence else quality)
@@ -553,13 +557,13 @@ class Orchestrator:
                         continue
                     if syntax_check_text(fname, content)["errors"]:
                         continue  # sintassi rotta: tieni la versione precedente
-                    target = _safe_project_target(self.project_path, fname)
+                    target = _safe_project_target(str(root), fname)
                     target.write_text(content, encoding="utf-8")
                 except Exception as exc:
                     self._log(f"  self-heal: {fname} non rigenerato ({exc})", "warning")
             return self._scaffold_quality_gate(
                 [str(p.relative_to(root)) for p in root.rglob("*.py")
-                 if p.is_file()])
+                 if p.is_file()], root=root)
 
         def verifier(gate: Dict[str, Any]) -> VerifyResult:
             ok = gate.get("status") == "verified_success"
@@ -651,6 +655,9 @@ class Orchestrator:
         if project_path:
             self.project_path = project_path
             self.git_ops.project_path = project_path
+        source_project = Path(self.project_path).expanduser().resolve()
+        scaffold_root = source_project
+        scaffold_state = None
         start_time = time.time()
 
         Path(self.project_path).mkdir(parents=True, exist_ok=True)
@@ -695,6 +702,32 @@ class Orchestrator:
             self._log("Planner non ha prodotto un piano file valido (JSON non parsabile o task ambiguo)", "error")
             self._restore_local_test_models()
             return {"success": False, "status": "failed", "error": "empty file plan", "duration": time.time() - start_time}
+
+        # In review mode lo Zero-Shot Scaffolding non puo' scrivere nel
+        # progetto reale. Genera e testa in una copia isolata; solo un gate
+        # verde produrra' un manifest sottoposto all'approvazione dell'utente.
+        if self.change_application_mode == "review":
+            raw_run_token = run_id or datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
+            run_token = "".join(
+                ch for ch in raw_run_token if ch.isalnum() or ch in "-_"
+            )[:96]
+            scaffold_root = create_sandbox(
+                source_project, sandbox_root=f"workspace/sandboxes/{run_token}"
+            )
+            scaffold_state = StatePersistence(str(source_project), raw_run_token)
+            scaffold_state.save({
+                "task": task,
+                "attempt": 0,
+                "max_retries": 0,
+                "step": "scaffold_generating",
+                "final_status": "running",
+                "verified": False,
+                "applied": False,
+                "sandbox_path": str(scaffold_root),
+            })
+            self._log(
+                f"Scaffold isolato nella sandbox: {scaffold_root}", "info"
+            )
 
         self._log(f"Piano: {len(file_plan)} file da creare", "info")
 
@@ -758,7 +791,7 @@ class Orchestrator:
                         + "; ".join(verdict["errors"][:3])
                     )
 
-                target = _safe_project_target(self.project_path, fname)
+                target = _safe_project_target(str(scaffold_root), fname)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
 
@@ -772,7 +805,7 @@ class Orchestrator:
                 self._log(f"✗ {fname} fallito — feedback Critic: {healed_feedback[:150]}", "error")
                 failed.append({"filename": fname, "error": str(e), "critic_feedback": healed_feedback})
 
-        quality = self._scaffold_quality_gate(written)
+        quality = self._scaffold_quality_gate(written, root=scaffold_root)
 
         # LOOP MODE (2026-07-16): "green tests streak". Se il gate e' rosso, non
         # consegnare — rigenera i file di IMPLEMENTAZIONE passando al Coder
@@ -788,7 +821,7 @@ class Orchestrator:
             impl_files = [f for f in written if not _is_test_filename(f)]
             quality = self._scaffold_heal_loop(
                 quality, impl_files, spec_by_name, running_context,
-                max_iterations=heal_iters)
+                max_iterations=heal_iters, root=scaffold_root)
 
         if quality["status"] == "verified_failure":
             gate_error = "; ".join(quality["errors"])
@@ -811,11 +844,16 @@ class Orchestrator:
                 "warning",
             )
 
-        memory_outcome = self._remember_scaffold_outcome(task, quality, written)
+        if self.change_application_mode == "review" and quality.get("status") == "verified_success":
+            # Un successo verificato ma non ancora approvato non e' una lezione
+            # permanente. La promozione avverra' soltanto dopo la decisione.
+            memory_outcome = "pending_approval"
+        else:
+            memory_outcome = self._remember_scaffold_outcome(task, quality, written)
         if memory_outcome != "not_recorded":
             self._log(f"Esito strutturato memoria: {memory_outcome}", "info")
 
-        if written and not failed:
+        if written and not failed and self.change_application_mode != "review":
             try:
                 self.git_ops.commit("", f"Zero-Shot Scaffold: {task}")
                 self._log("Progetto committato", "info")
@@ -834,6 +872,93 @@ class Orchestrator:
         else:
             scaffold_status = "syntax_only"
 
+        if (
+            self.change_application_mode == "review"
+            and scaffold_success
+            and quality.get("status") == "verified_success"
+        ):
+            try:
+                execution_cfg = self.config.get("execution", {})
+                max_promotable_mb = max(
+                    1, int(execution_cfg.get("max_promotable_file_mb", 30))
+                )
+                effective_run_id = scaffold_state.run_id
+                change_manifest = build_change_manifest(
+                    source_project,
+                    scaffold_root,
+                    effective_run_id,
+                    max_file_bytes=max_promotable_mb * 1024 * 1024,
+                )
+            except Exception as exc:
+                if scaffold_state:
+                    scaffold_state.save({
+                        "task": task,
+                        "attempt": 0,
+                        "final_status": "failed",
+                        "step": "change_manifest_failed",
+                        "last_error": str(exc),
+                        "verified": False,
+                        "applied": False,
+                        "sandbox_path": str(scaffold_root),
+                    })
+                self._restore_local_test_models()
+                return {
+                    "success": False,
+                    "status": "failed",
+                    "error": f"Change manifest failed: {exc}",
+                    "quality_gate": quality,
+                    "duration": time.time() - start_time,
+                }
+
+            if change_manifest["entries"]:
+                manifest_file = manifest_path(source_project, effective_run_id)
+                scaffold_state.save({
+                    "task": task,
+                    "attempt": 0,
+                    "max_retries": 0,
+                    "final_status": "awaiting_approval",
+                    "step": "awaiting_approval",
+                    "verified": True,
+                    "applied": False,
+                    "sandbox_path": str(scaffold_root),
+                    "change_manifest_path": str(manifest_file),
+                    "quality_gate": quality,
+                    "files_written": written,
+                })
+                self._restore_local_test_models()
+                self._log(
+                    "Scaffold verificato: modifiche in attesa di approvazione esplicita",
+                    "warning",
+                )
+                return {
+                    "success": False,
+                    "verified": True,
+                    "applied": False,
+                    "status": "awaiting_approval",
+                    "files_written": written,
+                    "files_failed": failed,
+                    "total_planned": len(file_plan),
+                    "change_manifest": change_manifest,
+                    "quality_gate": quality,
+                    "memory_outcome": memory_outcome,
+                    "duration": time.time() - start_time,
+                    "degraded_mode": self._degraded_mode,
+                }
+
+        if scaffold_state:
+            scaffold_state.save({
+                "task": task,
+                "attempt": 0,
+                "max_retries": 0,
+                "final_status": scaffold_status,
+                "step": "scaffold_finished",
+                "verified": quality.get("status") == "verified_success",
+                "applied": False,
+                "sandbox_path": str(scaffold_root),
+                "quality_gate": quality,
+                "files_written": written,
+            })
+
         result = {
             "success": scaffold_success,
             "status": scaffold_status,
@@ -844,6 +969,9 @@ class Orchestrator:
             "degraded_mode": self._degraded_mode,
             "quality_gate": quality,
             "memory_outcome": memory_outcome,
+            "verified": quality.get("status") == "verified_success",
+            "applied": self.change_application_mode != "review" and scaffold_success,
+            "sandbox_path": str(scaffold_root) if self.change_application_mode == "review" else None,
         }
         self._restore_local_test_models()
         self._log(f"Scaffolding completato: {len(written)}/{len(file_plan)} file scritti", "success" if not failed else "warning")

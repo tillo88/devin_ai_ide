@@ -123,6 +123,9 @@ def test_scaffold_event_status_reflects_evidence_tier():
 
     assert _scaffold_event_status({"success": False}) == "failed"
     assert _scaffold_event_status(
+        {"success": False, "status": "awaiting_approval", "verified": True}
+    ) == "awaiting_approval"
+    assert _scaffold_event_status(
         {"success": True, "quality_gate": {"status": "verified_success"}}
     ) == "verified_success"
     assert _scaffold_event_status(

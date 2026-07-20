@@ -294,15 +294,52 @@ def test_record_eval_result_is_idempotent_and_structured(tmp_path):
     assert 'eval:chat_only_output_detector' in records[0]['tags']
 
 
-def test_scaffold_request_routes_strong_operational_requests_for_non_empty_project(tmp_path):
+def test_scaffold_request_routes_only_empty_projects(tmp_path):
     from devin.ui.fast_app import _is_scaffold_request
 
     (tmp_path / 'existing.py').write_text('print(1)\n', encoding='utf-8')
-    assert _is_scaffold_request(
+    assert not _is_scaffold_request(
         "Crea un'applicazione Steam Profile Checker MVP con tests.py e file reali",
         str(tmp_path),
     )
     assert not _is_scaffold_request("Che ne pensi di questo progetto?", str(tmp_path))
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert _is_scaffold_request(
+        "Crea un'applicazione Steam Profile Checker MVP con tests.py e file reali",
+        str(empty),
+    )
+
+
+def test_existing_project_operational_chat_starts_maintenance_run(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    project = tmp_path / "calculator"
+    project.mkdir()
+    (project / "calculator.py").write_text("print('old')\n", encoding="utf-8")
+    captured = {}
+
+    async def fake_run(req):
+        captured["path"] = req.path
+        captured["task"] = req.task
+        return {"run_id": "run_maintenance", "status": "started"}
+
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(chat_router, "api_run", fake_run)
+
+    result = asyncio.run(chat_router.api_chat(chat_router.ChatRequest(
+        message="Rendi la UI/UX più moderna e simmetrica, modifica la GUI",
+        project_path=str(project),
+    )))
+
+    assert result == {"run_id": "run_maintenance", "status": "started"}
+    assert captured["path"] == str(project)
+    assert "UI/UX" in captured["task"]
 
 
 
@@ -331,6 +368,9 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert '/events/stream' in js
     assert '/api/chat' in js
     assert '/api/chat/document' in js
+    assert 'payload.run_id && ["started", "queued", "running"]' in js
+    assert 'await selectRun(payload.run_id)' in js
+    assert 'chat returned JSON' in js
     assert 'chat-file' in html
     assert '/api/workspace/projects' in js
     assert 'project_path' in js

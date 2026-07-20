@@ -1010,6 +1010,15 @@ async function sendChatMessage(message) {
     if (contentType.includes("application/json")) {
       const payload = await response.json();
       if (payload.error) throw new Error(payload.error);
+      if (payload.run_id && ["started", "queued", "running"].includes(payload.status)) {
+        const mode = payload.mode === "scaffold" ? "scaffold" : "manutenzione";
+        assistantNode.textContent = `Run ${payload.run_id} avviato in modalità ${mode}. Seguo la timeline.`;
+        await selectRun(payload.run_id);
+        if (state.selectedProjectPath) {
+          renderActivityRail(state.selectedProjectPath).catch(() => {});
+        }
+        return;
+      }
       throw new Error(payload.message || `chat returned JSON: ${response.status}`);
     }
 

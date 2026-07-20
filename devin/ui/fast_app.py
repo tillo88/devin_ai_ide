@@ -241,6 +241,9 @@ def _scaffold_event_status(result: dict) -> str:
     di uno con suite verde: la timeline mostra 'syntax_only' invece di un
     'success' indistinto. Il footer 'status: success|failed' del log resta
     invariato (contratto letto da /api/runs e dagli altri parser)."""
+    explicit = result.get("status")
+    if explicit == "awaiting_approval":
+        return "awaiting_approval"
     if not result.get("success"):
         return "failed"
     if (result.get("quality_gate") or {}).get("status") == "verified_success":

@@ -406,6 +406,7 @@ async def api_chat_scaffold(req: RunRequest):
     """
     from devin.ui.fast_app import (  # lazy: patchabili su fast_app
         LOG_DIR,
+        ProjectSpace,
         _make_run_callback,
         _run_events,
         _validated_project_path,
@@ -413,6 +414,10 @@ async def api_chat_scaffold(req: RunRequest):
     if not req.path:
         return {"error": "missing path"}
     req.path = _validated_project_path(req.path, allow_general=False)
+    work_dir = ProjectSpace(req.path).get_work_dir()
+    if work_dir:
+        req.path = _validated_project_path(work_dir, allow_general=False)
+        print(f"[WORKDIR] scaffold instradato sulla cartella di lavoro: {req.path}")
 
     run_id = datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
     log_path = LOG_DIR / f"{run_id}.log"
@@ -443,7 +448,7 @@ async def api_chat_scaffold(req: RunRequest):
                     scaffold_status = _scaffold_event_status(result)
                     with open(log_path, "a", encoding="utf-8") as f:
                         f.write(f"\nevidence: {scaffold_status}\n")
-                        f.write(f"status: {'success' if result.get('success') else 'failed'}\n")
+                        f.write(f"status: {scaffold_status}\n")
                     _finish_run_events(run_id, scaffold_status, mode='scaffold')
                 finally:
                     with runs_lock:
