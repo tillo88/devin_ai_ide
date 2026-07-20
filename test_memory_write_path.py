@@ -406,6 +406,8 @@ def test_fallback_envelope_explicit_polarity_tag_still_wins():
         ("build an mvp", False),                      # deliv=1 (just-below, EN)
         ("build an mvp with a gui", True),            # deliv=2 (just-above, EN)
         ("realizza il progetto e la gui", True),      # deliv=2 (just-above, IT)
+        ("rendi la UI/UX più moderna e simmetrica", True),
+        ("migliora l'interfaccia frontend e scrivi il codice", True),
         # --- explanation_score: veto (deve essere 0) ---
         ("crea una app con i test e spiega come funziona", False),  # veto spiega+come funziona
         ("analizza e crea una app con i test", False),              # veto analizza (ordine irrilevante)
@@ -423,6 +425,8 @@ def test_fallback_envelope_explicit_polarity_tag_still_wins():
         "deliverable-just-below-en",
         "deliverable-just-above-en",
         "deliverable-just-above-it",
+        "change-ui-ux",
+        "change-frontend-code",
         "explanation-veto-spiega",
         "explanation-veto-analizza",
         "explanation-veto-roadmap",

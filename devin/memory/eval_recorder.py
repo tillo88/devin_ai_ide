@@ -13,23 +13,38 @@ _OPERATIONAL_CREATE_TERMS = (
     "crea", "creare", "realizza", "implementa", "costruisci", "build", "create",
     "scaffold", "genera",
 )
+_OPERATIONAL_CHANGE_TERMS = (
+    "modifica", "modificare", "migliora", "migliorare", "rendi", "refactor",
+    "correggi", "correggere", "fix", "aggiorna", "aggiornare",
+)
 _OPERATIONAL_DELIVERABLE_TERMS = (
     "app", "applicazione", "mvp", "progetto", "file reali", "tests.py", "test",
-    "gui", "api key", "commit", "non mostrare snippet", "non mostrare soltanto snippet",
+    "gui", "ui", "ux", "frontend", "interfaccia", "codice", "api key", "commit",
+    "non mostrare snippet", "non mostrare soltanto snippet",
 )
 _EXPLANATION_TERMS = (
     "spiega", "come funziona", "che ne pensi", "piano", "roadmap", "analizza", "consigliami",
 )
 
 
+def _contains_term(text: str, term: str) -> bool:
+    """Match intent terms as words/phrases, not as fragments of other words."""
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) is not None
+
+
 def is_operational_build_request(message: str) -> bool:
     text = (message or "").lower()
     if not text:
         return False
-    create_score = sum(1 for term in _OPERATIONAL_CREATE_TERMS if term in text)
-    deliverable_score = sum(1 for term in _OPERATIONAL_DELIVERABLE_TERMS if term in text)
-    explanation_score = sum(1 for term in _EXPLANATION_TERMS if term in text)
-    return create_score >= 1 and deliverable_score >= 2 and explanation_score == 0
+    action_score = sum(
+        1 for term in _OPERATIONAL_CREATE_TERMS + _OPERATIONAL_CHANGE_TERMS
+        if _contains_term(text, term)
+    )
+    deliverable_score = sum(
+        1 for term in _OPERATIONAL_DELIVERABLE_TERMS if _contains_term(text, term)
+    )
+    explanation_score = sum(1 for term in _EXPLANATION_TERMS if _contains_term(text, term))
+    return action_score >= 1 and deliverable_score >= 2 and explanation_score == 0
 
 
 def detect_chat_only_output(user_message: str, assistant_response: str) -> dict[str, Any] | None:

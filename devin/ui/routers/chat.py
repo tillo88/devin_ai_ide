@@ -61,7 +61,7 @@ from devin.memory.eval_recorder import (
     is_operational_build_request,
     record_eval_result,
 )
-from devin.ui.routers.runs_core import RunRequest, api_chat_scaffold
+from devin.ui.routers.runs_core import RunRequest, api_chat_scaffold, api_run
 
 router = APIRouter()
 
@@ -99,8 +99,10 @@ def _is_scaffold_request(message: str, project_path: str) -> bool:
     '''Euristica per il routing chat -> scaffolding.
 
     Caso leggero: progetto vuoto/mancante + verbo di creazione.
-    Caso forte: anche su progetto gia' non vuoto, richieste operative esplicite
-    tipo crea app/MVP/tests.py/file reali devono diventare lavoro sui file.
+    Lo scaffold e' riservato a un progetto vuoto/mancante. Le richieste
+    operative su un progetto che contiene gia' codice devono passare dal run
+    di manutenzione, che preserva l'architettura esistente e usa la pipeline
+    sandbox -> test -> diff -> approvazione.
     '''
     if not project_path:
         return False
@@ -117,7 +119,7 @@ def _is_scaffold_request(message: str, project_path: str) -> bool:
     has_scaffold_intent = any(v in msg_lower for v in scaffold_verbs)
     has_strong_operational_intent = is_operational_build_request(message)
 
-    return (is_empty_or_missing and has_scaffold_intent) or has_strong_operational_intent
+    return is_empty_or_missing and (has_scaffold_intent or has_strong_operational_intent)
 
 
 _RETRY_PHRASES = {"riprova", "riprova adesso", "riprova ora", "ritenta", "prova ancora",
@@ -276,6 +278,13 @@ async def api_chat(req: ChatRequest):
                     }
                 print(f"[Scaffold Web] ricerca non disponibile, proseguo senza: {exc}")
         return await api_chat_scaffold(RunRequest(path=req.project_path, task=scaffold_task))
+
+    # Un progetto esistente non deve mai finire nello Zero-Shot Scaffolding:
+    # quel percorso pianifica una nuova struttura. Le richieste che chiedono
+    # modifiche reali vengono avviate come manutenzione e restano soggette a
+    # sandbox, test e approvazione esplicita.
+    if req.project_path and is_operational_build_request(message):
+        return await api_run(RunRequest(path=req.project_path, task=message))
 
     # Vision rimosso da DEVIN (2026-07-09): nessun modello locale/rig di questo
     # progetto ha piu' --mmproj caricato. Un'immagine qui non verrebbe letta dal

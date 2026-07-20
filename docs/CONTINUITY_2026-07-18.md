@@ -1211,3 +1211,26 @@ collegato. Service worker aggiornato a `devin-shell-v2`.
 
 Verifica: **413 passed, 1 skipped**, py_compile/compileall, JSON, JavaScript,
 HTML inline-script e `git diff --check` verdi.
+
+## 2026-07-20 — Debug reale: chat operativa, manutenzione e scaffold sicuro
+
+Il test manuale sulla calcolatrice ha isolato tre problemi distinti. Il Planner
+non era crashato: i log mostrano piano e generazione completati dopo lo swap
+VRAM. L'errore visibile `chat returned JSON: 200` era nel client, che trattava
+come SSE anche la risposta JSON valida con `run_id`. La UI ora riconosce il run,
+lo seleziona e apre la timeline; cache PWA portata a `devin-shell-v3`.
+
+Le richieste operative su progetti esistenti vengono ora instradate al run di
+manutenzione, non allo Zero-Shot Scaffold. Lo scaffold resta per progetti
+vuoti, mentre manutenzione preserva l'architettura e usa sandbox, test, diff e
+approvazione. Il rilevatore comprende anche verbi di modifica e termini UI/UX,
+con matching a confini di parola per evitare falsi positivi (`ui` in `build`).
+
+Chiuso anche il trust boundary dello scaffold: in modalità `review` genera e
+fa self-heal esclusivamente nel sandbox, non modifica né committa il sorgente,
+non promuove successi non approvati in memoria e, solo con test realmente
+verdi, produce il manifest `awaiting_approval`. Il router rispetta inoltre il
+`work_dir` collegato e propaga lo stato corretto nella timeline.
+
+Verifica: **417 passed, 1 skipped**, py_compile, JavaScript syntax e
+`git diff --check` verdi.
