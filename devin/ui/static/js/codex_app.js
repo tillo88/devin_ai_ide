@@ -2,6 +2,8 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   selectedRunId: null,
+  selectedRunStatus: null,
+  pipelineStage: null,
   selectedProjectPath: "",
   selectedChatId: null,
   chatLoaded: false,
@@ -258,7 +260,7 @@ async function exportTrainingDataset() {
 }
 
 function renderMind(status) {
-  setText("mind-state", "ready");
+  if (!state.selectedRunId) setText("mind-state", "ready");
   setText("model-source", `source: ${status.models?.launcher_source ?? "unavailable"}`);
 
   const localMemory = status.memory?.local ?? {};
@@ -303,6 +305,61 @@ function renderMind(status) {
       .map((detector) => `<span class="tag">${escapeHtml(detector)}</span>`)
       .join("");
   }
+}
+
+const terminalRunStatuses = new Set([
+  "success", "verified_success", "syntax_only", "failed", "timeout", "stopped",
+  "stalled", "awaiting_approval", "rejected", "rolled_back", "applied_uncommitted",
+]);
+
+function runStatusIcon(status) {
+  return {
+    starting: "🟡", running: "🔵", success: "✅", verified_success: "✅",
+    syntax_only: "⚠️", failed: "❌", timeout: "⏱️", stopped: "🛑",
+    stalled: "⏸️", awaiting_approval: "👁", rejected: "🚫", rolled_back: "↩",
+    applied_uncommitted: "⚠️",
+  }[status] || "⏸️";
+}
+
+function setPipelineStage(index = null, completed = false) {
+  state.pipelineStage = index;
+  document.querySelectorAll("#pipeline-steps .pipe-step").forEach((step, position) => {
+    step.classList.toggle("active", !completed && index === position);
+    step.classList.toggle("complete", completed ? position <= 3 : index !== null && position < index);
+  });
+}
+
+function showRunStatus(runId, status, { updateBadge = true, completed = false } = {}) {
+  if (!runId) return;
+  state.selectedRunId = runId;
+  state.selectedRunStatus = status || "running";
+  setText("mind-state", state.selectedRunStatus);
+  if (completed) setPipelineStage(3, true);
+  if (updateBadge) {
+    const runEl = $("activity-run");
+    if (runEl) {
+      runEl.innerHTML = `<span class="run-badge">${runStatusIcon(state.selectedRunStatus)} ${escapeHtml(state.selectedRunStatus)}</span> <span class="run-id">${escapeHtml(runId)}</span>`;
+    }
+  }
+}
+
+function applyRunEventToActivity(event) {
+  if (!event || event.run_id !== state.selectedRunId) return;
+  const stages = {
+    run_started: 0, run_resumed: 0, models: 0, context: 0, plan: 0,
+    act: 1, patch: 1, verify: 2,
+    quality_gate: 3, quality_gate_passed: 3, quality_gate_failed: 3,
+    memory: 3, commit: 3,
+  };
+  if (Object.hasOwn(stages, event.type)) setPipelineStage(stages[event.type]);
+  if (event.type === "run_finished") {
+    const status = event.data?.status || "failed";
+    showRunStatus(event.run_id, status, { completed: ["success", "verified_success", "awaiting_approval"].includes(status) });
+    loadRunLog(event.run_id).catch(() => {});
+    if (state.selectedProjectPath) renderActivityRail(state.selectedProjectPath).catch(() => {});
+    return;
+  }
+  showRunStatus(event.run_id, "running");
 }
 
 function renderProjects(payload) {
@@ -439,7 +496,7 @@ async function renderActivityRail(projectPath) {
     try {
       const lr = await fetchJson(`/api/project/last_run?${new URLSearchParams({ project_path: projectPath }).toString()}`, {});
       if (lr && lr.run_id) {
-        const icon = { success: "✅", verified_success: "✅", syntax_only: "⚠️", failed: "❌", timeout: "⏱️", stopped: "🛑", stalled: "⏸️", awaiting_approval: "👁", rejected: "🚫", rolled_back: "↩", applied_uncommitted: "⚠️", running: "🔵" }[lr.status] || "⏸️";
+        const icon = runStatusIcon(lr.status);
         const resumeBtn = lr.resumable
           ? ` <button class="run-resume-btn" data-resume-run="${escapeHtml(lr.run_id)}" title="Riprendi il run interrotto da dove era arrivato">▶ Riprendi</button>`
           : "";
@@ -450,6 +507,11 @@ async function renderActivityRail(projectPath) {
           ? ` <button class="run-decision-btn" data-change-action="rollback" data-change-run="${escapeHtml(lr.run_id)}">↩ Rollback</button>`
           : "";
         runEl.innerHTML = `<span class="run-badge">${icon} ${escapeHtml(lr.status || "?")}</span> <span class="run-id">${escapeHtml(lr.run_id)}</span>${resumeBtn}${reviewBtns}${rollbackBtn}`;
+        if (!state.selectedRunId || state.selectedRunId === lr.run_id) {
+          state.selectedRunStatus = lr.status || null;
+          setText("mind-state", lr.status || "ready");
+        }
+        if (!state.selectedRunId) selectRun(lr.run_id).catch(() => {});
         const btn = runEl.querySelector("[data-resume-run]");
         if (btn) btn.addEventListener("click", () => resumeRun(projectPath, btn.dataset.resumeRun));
         runEl.querySelectorAll("[data-change-action]").forEach((decision) => {
@@ -463,6 +525,7 @@ async function renderActivityRail(projectPath) {
         ));
       } else {
         runEl.textContent = "Nessun run recente in questo progetto.";
+        if (!state.selectedRunId) setText("mind-state", "ready");
       }
     } catch (_) {
       runEl.textContent = "Nessun run recente in questo progetto.";
@@ -471,6 +534,17 @@ async function renderActivityRail(projectPath) {
 }
 
 async function selectProject(projectPath) {
+  if (state.eventSource) {
+    state.eventSource.close();
+    state.eventSource = null;
+  }
+  state.selectedRunId = null;
+  state.selectedRunStatus = null;
+  state.lastEventSeq = -1;
+  setPipelineStage(null);
+  setText("mind-state", "ready");
+  renderTimeline([]);
+  renderRunLog(null);
   state.selectedProjectPath = projectPath || "";
   refreshActiveScope();
   state.selectedChatId = null;
@@ -619,7 +693,7 @@ function renderTimeline(events) {
 
   timeline.innerHTML = events
     .map((event) => `
-      <article class="timeline-item event-${escapeHtml(event.type)} level-${escapeHtml(event.level)}">
+      <article class="timeline-item event-${escapeHtml(event.type)} level-${escapeHtml(event.level)}" data-event-seq="${escapeHtml(event.seq)}">
         <span class="timeline-kind">${escapeHtml(event.type)}</span>
         <div>
           <h3>${escapeHtml(event.message || event.type)}</h3>
@@ -629,11 +703,13 @@ function renderTimeline(events) {
       </article>
     `)
     .join("");
+  applyRunEventToActivity(events[events.length - 1]);
 }
 
 function appendTimelineEvent(event) {
   if (!event || event.run_id !== state.selectedRunId) return;
   state.lastEventSeq = Math.max(state.lastEventSeq, Number(event.seq ?? state.lastEventSeq));
+  applyRunEventToActivity(event);
 
   const timeline = $("timeline");
   if (!timeline) return;
@@ -755,6 +831,8 @@ async function resumeRun(projectPath, runId) {
       return;
     }
     appendChatMessage("assistant", `Run ${result.run_id} ripreso dall'attempt ${Number(result.attempt ?? 0) + 1}. Seguo la timeline.`);
+    setPipelineStage(0);
+    showRunStatus(result.run_id, "starting");
     await selectRun(result.run_id);
   } catch (err) {
     console.error(err);
@@ -1013,6 +1091,8 @@ async function sendChatMessage(message) {
       if (payload.run_id && ["started", "queued", "running"].includes(payload.status)) {
         const mode = payload.mode === "scaffold" ? "scaffold" : "manutenzione";
         assistantNode.textContent = `Run ${payload.run_id} avviato in modalità ${mode}. Seguo la timeline.`;
+        setPipelineStage(0);
+        showRunStatus(payload.run_id, "starting");
         await selectRun(payload.run_id);
         if (state.selectedProjectPath) {
           renderActivityRail(state.selectedProjectPath).catch(() => {});
@@ -1522,7 +1602,7 @@ function diagnosticsUrl(section = "") {
 }
 
 async function refresh() {
-  setText("mind-state", "loading");
+  if (!state.selectedRunId) setText("mind-state", "loading");
 
   try {
     const [mind, workspace] = await Promise.all([
@@ -1538,7 +1618,7 @@ async function refresh() {
     }
   } catch (err) {
     console.error(err);
-    setText("mind-state", "error");
+    if (!state.selectedRunId) setText("mind-state", "error");
   }
 }
 

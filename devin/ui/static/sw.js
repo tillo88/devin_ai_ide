@@ -12,7 +12,7 @@
  * shell (HTML/CSS/JS/icone), altrimenti i client continuano a servire la
  * versione vecchia dalla cache. Vedi docs/CONTINUITY_2026-07-18.md.
  */
-const CACHE_VERSION = "devin-shell-v4";
+const CACHE_VERSION = "devin-shell-v5";
 const SHELL_URLS = [
   "/app",
   "/manifest.webmanifest",

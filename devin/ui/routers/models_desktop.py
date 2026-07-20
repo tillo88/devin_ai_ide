@@ -83,6 +83,7 @@ async def api_desktop_close_cleanup():
         _shutdown_known_local_model_servers,
         active_runs,
         runs_lock,
+        starting_runs,
     )
     enabled = os.getenv("DEVIN_DESKTOP_CLOSE_KILLS_LOCAL_MODELS", "1").strip().lower() not in {"0", "false", "no", "off"}
     if not enabled:
@@ -110,7 +111,7 @@ async def api_desktop_close_cleanup():
         stop_backend = os.getenv("DEVIN_DESKTOP_CLOSE_STOPS_BACKEND", "0").strip().lower() in {"1", "true", "yes", "on"}
         backend = "kept"
         with runs_lock:
-            busy = bool(active_runs)
+            busy = bool(active_runs or starting_runs)
         busy = busy or any(job.get("status") == "running" for job in _training_job_snapshot())
         if stop_backend and not _rig_self_hosted() and not busy:
             backend = "stopping"

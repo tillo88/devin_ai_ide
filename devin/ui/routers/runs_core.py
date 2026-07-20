@@ -29,6 +29,42 @@ from pydantic import BaseModel
 from devin.core.run_events import safe_run_id
 
 router = APIRouter()
+RunThread = threading.Thread
+
+
+def _save_starting_state(project_path: str, run_id: str, req: "RunRequest", mode: str) -> None:
+    """Expose an accepted run before model/Orchestrator startup completes."""
+    from devin.core.state_persistence import StatePersistence
+
+    StatePersistence(project_path, run_id).save({
+        "task": req.task,
+        "attempt": 0,
+        "max_retries": req.max_attempts,
+        "step": "starting",
+        "mode": mode,
+        "final_status": None,
+        "verified": False,
+        "applied": False,
+    })
+
+
+def _save_startup_failure(project_path: str, run_id: str, req: "RunRequest", error: Exception) -> None:
+    """Persist fatal startup errors instead of leaving the previous run visible."""
+    from devin.core.state_persistence import StatePersistence
+
+    persistence = StatePersistence(project_path, run_id)
+    state = persistence.load() or {}
+    state.update({
+        "task": state.get("task") or req.task,
+        "attempt": state.get("attempt", 0),
+        "max_retries": state.get("max_retries", req.max_attempts),
+        "step": "startup_failed",
+        "last_error": str(error),
+        "final_status": "failed",
+        "verified": False,
+        "applied": False,
+    })
+    persistence.save(state)
 
 
 class RunRequest(BaseModel):
@@ -46,6 +82,8 @@ async def api_run(req: RunRequest):
         ProjectSpace,
         _run_events,
         _validated_project_path,
+        runs_lock,
+        starting_runs,
     )
     if not req.path:
         return {"error": "missing path"}
@@ -67,6 +105,9 @@ async def api_run(req: RunRequest):
     log_path_init = LOG_DIR / f"{run_id}.log"
     log_path_init.write_text(f"Run started: {run_id}\nTask: {req.task}\n", encoding="utf-8")
     _run_events.start(run_id, mode="maintenance", task=req.task, project_path=req.path)
+    _save_starting_state(req.path, run_id, req, "maintenance")
+    with runs_lock:
+        starting_runs.add(run_id)
 
     def _bg():
         from devin.ui.fast_app import (  # lazy: risolti a thread-run time
@@ -77,6 +118,7 @@ async def api_run(req: RunRequest):
             _make_run_callback,
             active_runs,
             runs_lock,
+            starting_runs,
         )
         try:
             log_path = LOG_DIR / f"{run_id}.log"
@@ -89,6 +131,7 @@ async def api_run(req: RunRequest):
             ) as orch:
                 with runs_lock:
                     active_runs[run_id] = orch
+                    starting_runs.discard(run_id)
                 try:
                     result = orch.run(
                         task=req.task,
@@ -106,14 +149,18 @@ async def api_run(req: RunRequest):
                 finally:
                     with runs_lock:
                         active_runs.pop(run_id, None)
+                        starting_runs.discard(run_id)
         except Exception as e:
+            with runs_lock:
+                starting_runs.discard(run_id)
             log_path = LOG_DIR / f"{run_id}.log"
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[FATAL] {e}\n")
                 f.write("status: failed\n")
             _finish_run_events(run_id, "failed", mode="maintenance")
+            _save_startup_failure(req.path, run_id, req, e)
 
-    t = threading.Thread(target=_bg, daemon=True)
+    t = RunThread(target=_bg, daemon=True)
     t.start()
 
     return {"run_id": run_id, "status": "started"}
@@ -320,6 +367,7 @@ async def api_run_resume(req: ResumeRequest):
         _validated_project_path,
         active_runs,
         runs_lock,
+        starting_runs,
     )
     from devin.core.state_persistence import StatePersistence
 
@@ -335,7 +383,7 @@ async def api_run_resume(req: ResumeRequest):
         req.path = _validated_project_path(_work_dir, allow_general=False)
 
     with runs_lock:
-        if req.run_id in active_runs:
+        if req.run_id in active_runs or req.run_id in starting_runs:
             return {"error": "run already active"}
 
     sp = StatePersistence(req.path, req.run_id)
@@ -354,6 +402,8 @@ async def api_run_resume(req: ResumeRequest):
         message=f"run resumed by user (from attempt {resume_info.get('attempt', 0)})",
         data={"mode": "maintenance", "resumed": True},
     )
+    with runs_lock:
+        starting_runs.add(run_id)
 
     def _bg():
         from devin.ui.fast_app import (  # lazy: risolti a thread-run time
@@ -363,6 +413,7 @@ async def api_run_resume(req: ResumeRequest):
             _make_run_callback,
             active_runs,
             runs_lock,
+            starting_runs,
         )
         try:
             sse_callback = _make_run_callback(run_id, log_path)
@@ -373,6 +424,7 @@ async def api_run_resume(req: ResumeRequest):
             ) as orch:
                 with runs_lock:
                     active_runs[run_id] = orch
+                    starting_runs.discard(run_id)
                 try:
                     result = orch.run(
                         task=resume_info.get("task") or "",
@@ -385,13 +437,22 @@ async def api_run_resume(req: ResumeRequest):
                 finally:
                     with runs_lock:
                         active_runs.pop(run_id, None)
+                        starting_runs.discard(run_id)
         except Exception as e:
+            with runs_lock:
+                starting_runs.discard(run_id)
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[FATAL] {e}\n")
                 f.write("status: failed\n")
             _finish_run_events(run_id, "failed", mode="maintenance")
+            _save_startup_failure(req.path, run_id, RunRequest(
+                path=req.path,
+                task=resume_info.get("task") or "",
+                max_attempts=req.max_attempts,
+                max_seconds=req.max_seconds,
+            ), e)
 
-    t = threading.Thread(target=_bg, daemon=True)
+    t = RunThread(target=_bg, daemon=True)
     t.start()
 
     return {"run_id": run_id, "status": "resumed", "attempt": resume_info.get("attempt", 0)}
@@ -410,6 +471,8 @@ async def api_chat_scaffold(req: RunRequest):
         _make_run_callback,
         _run_events,
         _validated_project_path,
+        runs_lock,
+        starting_runs,
     )
     if not req.path:
         return {"error": "missing path"}
@@ -423,6 +486,9 @@ async def api_chat_scaffold(req: RunRequest):
     log_path = LOG_DIR / f"{run_id}.log"
     log_path.write_text(f"Scaffold started: {run_id}\nTask: {req.task}\n", encoding="utf-8")
     _run_events.start(run_id, mode="scaffold", task=req.task, project_path=req.path)
+    _save_starting_state(req.path, run_id, req, "scaffold")
+    with runs_lock:
+        starting_runs.add(run_id)
 
     sse_callback = _make_run_callback(run_id, log_path)
 
@@ -434,6 +500,7 @@ async def api_chat_scaffold(req: RunRequest):
             _scaffold_event_status,
             active_runs,
             runs_lock,
+            starting_runs,
         )
         try:
             with Orchestrator(
@@ -443,6 +510,7 @@ async def api_chat_scaffold(req: RunRequest):
             ) as orch:
                 with runs_lock:
                     active_runs[run_id] = orch
+                    starting_runs.discard(run_id)
                 try:
                     result = orch.run_scaffold(task=req.task, project_path=req.path, run_id=run_id)
                     scaffold_status = _scaffold_event_status(result)
@@ -453,13 +521,17 @@ async def api_chat_scaffold(req: RunRequest):
                 finally:
                     with runs_lock:
                         active_runs.pop(run_id, None)
+                        starting_runs.discard(run_id)
         except Exception as e:
+            with runs_lock:
+                starting_runs.discard(run_id)
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[FATAL] {e}\n")
                 f.write("status: failed\n")
             _finish_run_events(run_id, "failed", mode="scaffold")
+            _save_startup_failure(req.path, run_id, req, e)
 
-    t = threading.Thread(target=_bg, daemon=True)
+    t = RunThread(target=_bg, daemon=True)
     t.start()
 
     return {"run_id": run_id, "status": "started", "mode": "scaffold"}

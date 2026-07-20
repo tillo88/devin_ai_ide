@@ -175,7 +175,7 @@ async def api_project_knowledge_from_url(request: Request):
 async def api_project_last_run(project_path: str = ""):
     """Stato dell'ultimo run del progetto (badge nel pannello). Legge lo stato
     per-progetto (.devin_state via StatePersistence.load_latest)."""
-    from devin.ui.fast_app import active_runs, runs_lock  # lazy: run-core
+    from devin.ui.fast_app import active_runs, runs_lock, starting_runs  # lazy: run-core
     from devin.core.state_persistence import StatePersistence
     if not project_path:
         return {"has_run": False}
@@ -198,19 +198,22 @@ async def api_project_last_run(project_path: str = ""):
     # lo mostrava "interrotto" e persino riprendibile mentre stava girando.
     with runs_lock:
         is_active = run_id in active_runs
+        is_starting = run_id in starting_runs
     final_status = st.get("final_status")
     # resumable rispetta gli stessi limiti del resume endpoint: retry non esauriti
     resumable = (
         not final_status
         and not is_active
+        and not is_starting
         and st.get("attempt", 0) < st.get("max_retries", 3)
     )
     return {
         "has_run": True,
         "run_id": run_id,
-        "status": "running" if is_active else (final_status or "interrotto"),
+        "status": "running" if is_active else ("starting" if is_starting else (final_status or "interrotto")),
         "final": bool(final_status),
         "running": is_active,
+        "starting": is_starting,
         "resumable": resumable,
         "saved_at": st.get("_saved_at"),
         "task": (st.get("task") or "")[:200],
