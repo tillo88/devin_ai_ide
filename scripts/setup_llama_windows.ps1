@@ -27,6 +27,19 @@ function Step($msg) {
 $Dest = Join-Path $env:LOCALAPPDATA "DEVIN\llama.cpp"
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
+# Idempotente: se llama-server.exe c'e' gia' e risponde, non riscaricare.
+# Per forzare il re-download/aggiornamento: -Force.
+$ExistingExe = Join-Path $Dest "llama-server.exe"
+if ((Test-Path $ExistingExe) -and -not ($args -contains "-Force")) {
+    $v = & $ExistingExe --version 2>&1 | Select-Object -First 1
+    if ($LASTEXITCODE -eq 0) {
+        Step "Gia' installato: $ExistingExe ($v)"
+        Write-Host "Niente da fare. Usa -Force per aggiornare all'ultima release." -ForegroundColor Green
+        exit 0
+    }
+    Step "Presente ma non funzionante: procedo col re-download"
+}
+
 Step "Cerco l'ultima release di llama.cpp (GitHub API)"
 try {
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" -UseBasicParsing
