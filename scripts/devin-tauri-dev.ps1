@@ -1,3 +1,6 @@
+# Dal 2026-07-21 (migrazione nativa) il backend parte di DEFAULT dal venv
+# Windows .venv-win. Il percorso WSL resta come fallback esplicito (-UseWsl)
+# finche' il nativo non e' verificato a fondo, poi verra' rimosso.
 param(
     [string]$Distro = "Ubuntu",
     [string]$Repo = "/home/tillo/devin_ai_ide",
@@ -5,6 +8,7 @@ param(
     [string]$AppUrl = "http://127.0.0.1:5000/app",
     [switch]$BrowserFallback,
     [switch]$SkipTauri,
+    [switch]$UseWsl,
     [int]$TimeoutSeconds = 60
 )
 
@@ -62,20 +66,40 @@ function Test-BackendReady {
 }
 
 function Start-BackendHeadless {
-    Write-Host "[backend] starting headless in WSL distro $Distro"
-    Write-Host "[backend] repo: $Repo"
-    Write-Host "[backend] log: $Repo/logs/fast_app_headless.log"
-    $wsl = Join-Path $env:WINDIR "System32\wsl.exe"
-    if (-not (Test-Path -LiteralPath $wsl)) { $wsl = "wsl.exe" }
-    $proc = Start-Process -FilePath $wsl -ArgumentList @(
-        "-d", $Distro,
-        "--cd", $Repo,
-        "--exec", "bash", "scripts/start-fastapi-headless.sh"
-    ) -WindowStyle Hidden -PassThru
-    $proc.WaitForExit(5000) | Out-Null
-    if ($proc.HasExited -and $proc.ExitCode -ne 0) {
-        Write-Host "[warn] backend starter exited with code $($proc.ExitCode)" -ForegroundColor Yellow
+    if ($UseWsl) {
+        Write-Host "[backend] starting headless in WSL distro $Distro (fallback esplicito)"
+        Write-Host "[backend] repo: $Repo"
+        Write-Host "[backend] log: $Repo/logs/fast_app_headless.log"
+        $wsl = Join-Path $env:WINDIR "System32\wsl.exe"
+        if (-not (Test-Path -LiteralPath $wsl)) { $wsl = "wsl.exe" }
+        $proc = Start-Process -FilePath $wsl -ArgumentList @(
+            "-d", $Distro,
+            "--cd", $Repo,
+            "--exec", "bash", "scripts/start-fastapi-headless.sh"
+        ) -WindowStyle Hidden -PassThru
+        $proc.WaitForExit(5000) | Out-Null
+        if ($proc.HasExited -and $proc.ExitCode -ne 0) {
+            Write-Host "[warn] backend starter exited with code $($proc.ExitCode)" -ForegroundColor Yellow
+        }
+        return
     }
+
+    $venvPy = Join-Path $HostRepo ".venv-win\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $venvPy)) {
+        Write-Host "[error] venv Windows non trovato: $venvPy" -ForegroundColor Red
+        Write-Host "        Esegui prima: powershell -ExecutionPolicy Bypass -File scripts\setup_devin_windows.ps1" -ForegroundColor Yellow
+        Write-Host "        (oppure usa -UseWsl per il vecchio backend WSL)" -ForegroundColor Yellow
+        exit 1
+    }
+    $logDir = Join-Path $HostRepo "logs"
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $logFile = Join-Path $logDir "fast_app_native.log"
+    Write-Host "[backend] starting native Windows backend (.venv-win)"
+    Write-Host "[backend] repo: $HostRepo"
+    Write-Host "[backend] log: $logFile"
+    Start-Process -FilePath $venvPy -ArgumentList @("devin\ui\fast_app.py") `
+        -WorkingDirectory $HostRepo -WindowStyle Hidden `
+        -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err" | Out-Null
 }
 
 function Wait-Backend {
@@ -93,7 +117,7 @@ Initialize-DesktopToolPath
 Write-Host "DEVIN Desktop headless launcher"
 Write-Host "================================"
 Write-Host "[host repo] $HostRepo"
-Write-Host "[wsl repo] $Repo"
+if ($UseWsl) { Write-Host "[wsl repo] $Repo" } else { Write-Host "[mode] backend nativo Windows (.venv-win); usa -UseWsl per il fallback WSL" }
 Write-Host "[health] $HealthUrl"
 
 if (-not (Test-BackendReady $HealthUrl)) {
@@ -102,7 +126,11 @@ if (-not (Test-BackendReady $HealthUrl)) {
 
 if (-not (Wait-Backend -Url $HealthUrl -Timeout $TimeoutSeconds)) {
     Write-Host "[error] backend did not become ready within $TimeoutSeconds seconds" -ForegroundColor Red
-    Write-Host "        Check WSL log: $Repo/logs/fast_app_headless.log" -ForegroundColor Yellow
+    if ($UseWsl) {
+        Write-Host "        Check WSL log: $Repo/logs/fast_app_headless.log" -ForegroundColor Yellow
+    } else {
+        Write-Host "        Check log: $HostRepo\logs\fast_app_native.log (+ .err)" -ForegroundColor Yellow
+    }
     exit 1
 }
 
