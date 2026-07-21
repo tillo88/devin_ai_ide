@@ -99,10 +99,41 @@ fn spawn_local_backup() {
     }
 }
 
+fn desktop_config_path() -> Option<PathBuf> {
+    let base = std::env::var("APPDATA").ok()?;
+    Some(PathBuf::from(base).join("DEVIN").join("desktop.json"))
+}
+
+/// rig_url da %APPDATA%\DEVIN\desktop.json (pre-wizard FASE 3, 2026-07-21).
+/// Al primo avvio crea il file col default, cosi' l'utente lo puo' editare.
+fn load_rig_url_from_config() -> Option<String> {
+    let path = desktop_config_path()?;
+    if !path.is_file() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(
+            &path,
+            format!("{{\n  \"rig_url\": \"{DEFAULT_RIG_BACKEND}\"\n}}\n"),
+        );
+        return None;
+    }
+    let text = std::fs::read_to_string(&path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value
+        .get("rig_url")?
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Decide quale backend usare e ritorna l'URL /app da caricare nella finestra.
+/// Priorita' rig_url: env DEVIN_RIG_URL > desktop.json > default compilato.
 fn discover_backend_url() -> String {
     let rig = std::env::var("DEVIN_RIG_URL")
-        .unwrap_or_else(|_| DEFAULT_RIG_BACKEND.to_string());
+        .ok()
+        .or_else(load_rig_url_from_config)
+        .unwrap_or_else(|| DEFAULT_RIG_BACKEND.to_string());
     if host_reachable(&rig, 900) {
         println!("[backend] rig attivo ({rig}): uso il rig, niente processi locali");
         return format!("http://{rig}/app");
