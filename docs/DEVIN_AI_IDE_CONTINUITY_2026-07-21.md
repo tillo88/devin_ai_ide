@@ -54,24 +54,38 @@ lavoro; la roadmap prevedeva comunque l'approdo a Windows (packaging P9).
   WSL; usati solo dal launcher → irrilevanti nel profilo rig, da rendere
   per-OS quando si farà il profilo LOCALE.
 
+## MILESTONE RAGGIUNTA (2026-07-21, stessa giornata)
+
+**Suite verde su Windows nativo: 420 passed, 1 skipped, 0 failed**
+(Python 3.13.11, `.venv-win`, log: `logs/setup_windows.log`, exit code 0).
+
+Il primo run nativo aveva 10 rossi, tutti riprodotti e corretti con prova:
+
+- 9 test (patcher/orchestrator/stalled_guard): il binario GNU `patch` non
+  esiste sul PATH Windows → `FileNotFoundError`/WinError 2 abortiva
+  `apply_patch` PRIMA dei fallback Python. Fix `d2af042`:
+  `_patch_executable()` risolve da PATH o da Git for Windows `usr/bin`;
+  se assente ritorna None e si prosegue coi fallback Python.
+- 1 test (vector_store): `Path.rename` su cache esistente → WinError 183.
+  Fix `d2af042`: `Path.replace` (atomico e overwrite su entrambi gli OS).
+
+Fix precedente dello stesso giorno: lo script ps1 deve essere **ASCII puro**
+(`620ae03`) — PowerShell 5.1 legge i .ps1 senza BOM come ANSI e un em-dash
+in una stringa diventa una virgoletta curva che rompe il parsing.
+
+La suite Linux (sandbox, Python 3.10) resta verde a 420: le due piattaforme
+sono allineate. La copia WSL è ufficialmente archiviabile.
+
 ## Prossima ripresa: sequenza esatta
 
-1. Eseguire (owner, PowerShell dalla root):
-   `powershell -ExecutionPolicy Bypass -File scripts\setup_devin_windows.ps1`
-   → crea `.venv-win`, installa core requirements, lancia la suite, log in
-   `logs\setup_windows.log`.
-2. Obiettivo: **suite verde su Windows nativo** (Python 3.10+). Fallimenti
-   attesi possibili: path separator nei test, comportamenti `subprocess`.
-   Classificarli con prova, non mascherarli.
-3. A suite verde: push su GitHub (`origin main`, 3 commit locali) e archivio
-   della copia WSL.
-4. Avvio backend nativo: `.venv-win\Scripts\python devin\ui\fast_app.py` —
+1. Push su GitHub (`origin main`, 6 commit locali) se non già fatto.
+2. Avvio backend nativo: `.venv-win\Scripts\python devin\ui\fast_app.py` —
    verificare `/app`, pick_folder nativo, connessione rig (192.168.1.100).
-5. Aggiornare `scripts/devin-tauri-dev.ps1`: avviare il backend nativo invece
+3. Aggiornare `scripts/devin-tauri-dev.ps1`: avviare il backend nativo invece
    che via WSL (il launcher WSL resta finché non verificato l'equivalente).
-6. Verifica manuale browser di `Continue` (chat continuity) e Apply/Reject
+4. Verifica manuale browser di `Continue` (chat continuity) e Apply/Reject
    (punto 10 della sequenza del 2026-07-20, mai ancora fatto).
-7. Riprendere P0/P1 della roadmap 2026-07-20 (PR #1, default fail-open
+5. Riprendere P0/P1 della roadmap 2026-07-20 (PR #1, default fail-open
    `orchestrator.py:99` → `review`).
 
 ## Note per l'ambiente di lavoro Cowork
