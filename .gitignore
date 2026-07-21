@@ -9,6 +9,7 @@ __pycache__/
 venv/
 .venv/
 .venv-win/
+.venv-rig/
 env/
 
 # Local configuration and secrets
