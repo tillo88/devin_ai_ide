@@ -97,6 +97,33 @@ sono allineate. La copia WSL è ufficialmente archiviabile.
   RIG slim, add-data templates/static/config, collect tree_sitter pack,
   hidden-imports uvicorn). NON ancora eseguito dall'owner.
 
+## FASE 1 packaging: VERIFICATA (2026-07-21, sera)
+
+Primo run reale dell'exe + iterazione fix, tutto committato:
+
+- `d2af042` gia' incluso; poi dal primo avvio exe sono emersi e sono stati
+  chiusi: encoding utf-8 esplicito nella lettura config (charmap, `1e584ed`),
+  skip pulito modelli locali su Windows senza llama-server (`1e584ed`),
+  auto-open su `/app` invece della root legacy (`d79a9a2`), dati utente del
+  bundle in `%APPDATA%/DEVIN` con override `DEVIN_DATA_DIR` (`9893b9a`),
+  stop dell'exe in esecuzione prima del rebuild (`4161fe3`).
+- Verifica end-to-end via computer-use sulla finestra Tauri: creazione
+  progetto dalla UI -> creato in
+  `C:\Users\tillo\AppData\Roaming\DEVIN\workspace\test-appdata`. Bundle
+  ~350 MB, exe serve `/app` senza WSL. FASE 1: done.
+- Modalita' operative chiarite: sviluppo = `devin-tauri-dev.ps1` (backend
+  nativo dal repo, vede i progetti in `workspace/` del repo); prodotto =
+  exe sidecar con workspace utente separato in APPDATA.
+- Nota UI (review SPA): rendere parlante il badge `SOURCE: UNAVAILABLE`
+  (stato rig/locale + azione), base URL backend configurabile nella shell
+  Tauri (stesso exe puntabile al rig multi-boot), empty-state progetti con
+  CTA "Collega cartella". Il pulsante "Nuovo progetto" del command center
+  prepara solo un prompt chat (richiede modello attivo): valutare se
+  affiancare la creazione diretta.
+- La verifica manuale di Continue e Apply/Reject resta da fare col rig
+  acceso (il flusso review e' attivo e i bottoni Diff/Applica/Rifiuta sono
+  presenti in UI).
+
 ## Prossima ripresa: sequenza esatta
 
 1. Push su GitHub se ci sono commit locali non pubblicati.
