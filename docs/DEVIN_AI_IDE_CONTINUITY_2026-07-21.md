@@ -76,17 +76,42 @@ in una stringa diventa una virgoletta curva che rompe il parsing.
 La suite Linux (sandbox, Python 3.10) resta verde a 420: le due piattaforme
 sono allineate. La copia WSL è ufficialmente archiviabile.
 
+## Sessione estesa 2026-07-21 (sera): altri task chiusi
+
+- **Obiettivo finale dichiarato dall'owner**: app Windows installabile
+  `.exe/.msi` (PACKAGING-ROADMAP FASE 1-4). Tutto il lavoro converge lì.
+- **Fail-open P0 chiuso** (`77ae2e2`): `change_application_mode` default
+  `review`; config assente/corrotta/valore ignoto non riattiva più
+  auto-sync+auto-commit; legacy solo esplicito con warning loggato; i test
+  del percorso legacy lo dichiarano nel config; regression test dedicato.
+  Suite: **421 passed**.
+- **Launcher Tauri aggiornato** (`3000762`): `devin-tauri-dev.ps1` avvia di
+  default il backend nativo `.venv-win` (log `logs/fast_app_native.log`);
+  WSL solo con `-UseWsl`, da rimuovere a verifica completata.
+- **Backend reale smoke-testato via HTTP** (sandbox Linux): avvio pulito,
+  `/api/health`, `/app`, `/api/desktop/readiness` tutti 200; fallback
+  corretto "Rig non disponibile" senza rig raggiungibile.
+- **FASE 1 packaging avviata** (`ee06120`): `scripts/backend_entry.py`
+  (entry che importa fast_app come modulo: ROOT=parents[2] resta valido nel
+  bundle) + `scripts/build_backend_sidecar.ps1` (PyInstaller onedir, profilo
+  RIG slim, add-data templates/static/config, collect tree_sitter pack,
+  hidden-imports uvicorn). NON ancora eseguito dall'owner.
+
 ## Prossima ripresa: sequenza esatta
 
-1. Push su GitHub (`origin main`, 6 commit locali) se non già fatto.
-2. Avvio backend nativo: `.venv-win\Scripts\python devin\ui\fast_app.py` —
-   verificare `/app`, pick_folder nativo, connessione rig (192.168.1.100).
-3. Aggiornare `scripts/devin-tauri-dev.ps1`: avviare il backend nativo invece
-   che via WSL (il launcher WSL resta finché non verificato l'equivalente).
-4. Verifica manuale browser di `Continue` (chat continuity) e Apply/Reject
+1. Push su GitHub se ci sono commit locali non pubblicati.
+2. Build sidecar (owner):
+   `powershell -ExecutionPolicy Bypass -File scripts\build_backend_sidecar.ps1`
+   poi verifica FASE 1: `dist\devin-backend\devin-backend.exe` parte senza
+   WSL e serve `http://localhost:5000/app`. Iterare sui probabili missing
+   module/hidden import leggendo `logs/build_sidecar.log`.
+3. Verifica manuale browser di `Continue` (chat continuity) e Apply/Reject
    (punto 10 della sequenza del 2026-07-20, mai ancora fatto).
-5. Riprendere P0/P1 della roadmap 2026-07-20 (PR #1, default fail-open
-   `orchestrator.py:99` → `review`).
+4. FASE 2: registrare `devin-backend.exe` come sidecar Tauri (externalBin),
+   avvio/stop con l'app; rimuovere dipendenza WSL per l'uso installato.
+5. FASE 3 wizard (config in `%APPDATA%\DEVIN`) e FASE 4 `tauri build`
+   (.msi/.exe installer, test su macchina pulita).
+6. Riprendere P1+ roadmap 2026-07-20 (PR #1 da riallineare, trust boundary).
 
 ## Note per l'ambiente di lavoro Cowork
 
