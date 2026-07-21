@@ -861,6 +861,12 @@ def run_server():
     URL = "http://localhost:5000/app"
 
     def open_browser():
+        # FASE 2 packaging: quando il backend gira come sidecar dell'app
+        # desktop Tauri, il browser NON deve aprirsi (la UI e' la finestra
+        # Tauri). Il launcher/sidecar imposta DEVIN_NO_BROWSER=1.
+        if os.environ.get("DEVIN_NO_BROWSER"):
+            print("-- DEVIN_NO_BROWSER attivo: nessuna apertura browser (modalita' sidecar)")
+            return
         time.sleep(2)
         if _is_wsl():
             # L'interop WSL->Windows per aprire il browser (via rundll32.exe) e'
