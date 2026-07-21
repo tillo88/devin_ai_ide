@@ -94,15 +94,23 @@ class Orchestrator:
         with open(config_path, "r") as f:
             self.config = json.load(f)
 
+        # Default fail-safe (P0 2026-07-21): config assente, corrotta o senza
+        # chiave NON deve riattivare silenziosamente auto-sync + auto-commit
+        # nel progetto reale. Il legacy resta disponibile solo se richiesto
+        # esplicitamente, e viene loggato.
         requested_application_mode = str(
             self.config.get("execution", {}).get(
-                "change_application_mode", "legacy_auto_apply"
+                "change_application_mode", "review"
             )
         ).strip().lower()
         if requested_application_mode not in {"legacy_auto_apply", "review"}:
             # Un valore sconosciuto non deve mai degradare silenziosamente verso
             # scritture automatiche nel progetto reale.
             requested_application_mode = "review"
+        if requested_application_mode == "legacy_auto_apply":
+            print("[Orchestrator] WARNING: change_application_mode=legacy_auto_apply "
+                  "(esplicito in config): le modifiche verranno applicate e "
+                  "committate automaticamente nel progetto reale.")
         self.change_application_mode = requested_application_mode
 
         # FASE 1: Configurazione serializzazione VRAM

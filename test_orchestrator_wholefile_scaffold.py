@@ -82,6 +82,9 @@ FAILING_TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) 
 def _make_orchestrator(project: Path, mock_local, coder_cfg=None):
     config = {
         "context": {"max_chars": 100000, "semantic_search_enabled": False},
+        # Percorso legacy sotto test ESPLICITAMENTE: dal 2026-07-21 il default
+        # senza questa chiave e' "review" (fix fail-open P0).
+        "execution": {"change_application_mode": "legacy_auto_apply"},
         "coder": coder_cfg if coder_cfg is not None else {"whole_file_enabled": False},
         "models": {
             "local_models_dir": str(project / "models"),

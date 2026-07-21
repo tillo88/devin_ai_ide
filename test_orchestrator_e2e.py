@@ -96,6 +96,9 @@ def test_orchestrator_e2e_mock():
         # Config temporaneo minimale
         config = {
             "context": {"max_chars": 100000, "semantic_search_enabled": False},
+        # Percorso legacy sotto test ESPLICITAMENTE: dal 2026-07-21 il default
+        # senza questa chiave e' "review" (fix fail-open P0).
+        "execution": {"change_application_mode": "legacy_auto_apply"},
             "coder": {"whole_file_enabled": False},
             "models": {
                 "local_models_dir": str(project / "models"),

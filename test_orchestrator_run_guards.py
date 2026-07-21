@@ -73,6 +73,9 @@ def _noop_main_patch(n: int) -> str:
 def _make_orchestrator(project: Path, mock_local):
     config = {
         "context": {"max_chars": 100000, "semantic_search_enabled": False},
+        # Percorso legacy sotto test ESPLICITAMENTE: dal 2026-07-21 il default
+        # senza questa chiave e' "review" (fix fail-open P0).
+        "execution": {"change_application_mode": "legacy_auto_apply"},
         "coder": {"whole_file_enabled": False},
         "models": {
             "local_models_dir": str(project / "models"),
@@ -333,3 +336,39 @@ if __name__ == "__main__":
     test_runner_failure_critic_feedback_retry_success()
     test_critic_offline_loop_bounded()
     print("\n🎉 Tutti i test passati!")
+
+
+def test_change_application_mode_defaults_to_review_fail_safe():
+    """Regression P0 2026-07-21: config senza execution.change_application_mode
+    (o con valore sconosciuto) NON deve degradare verso legacy_auto_apply
+    (auto-sync + auto-commit silenziosi nel progetto reale). Legacy solo se
+    richiesto esplicitamente."""
+    from devin.core.orchestrator import Orchestrator
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project = _make_project(tmpdir)
+        mock_local = MagicMock()
+        orch, lp, ap = _make_orchestrator(project, mock_local)
+        try:
+            # L'helper configura legacy ESPLICITO: va rispettato.
+            assert orch.change_application_mode == "legacy_auto_apply"
+
+            config_path = project / "config.json"
+            cfg = json.loads(config_path.read_text())
+
+            # Chiave assente -> review (il vecchio default era legacy: fail-open).
+            del cfg["execution"]
+            config_path.write_text(json.dumps(cfg))
+            orch_default = Orchestrator(
+                config_path=str(config_path), project_path=str(project))
+            assert orch_default.change_application_mode == "review"
+
+            # Valore sconosciuto -> review.
+            cfg["execution"] = {"change_application_mode": "boh_inventato"}
+            config_path.write_text(json.dumps(cfg))
+            orch_unknown = Orchestrator(
+                config_path=str(config_path), project_path=str(project))
+            assert orch_unknown.change_application_mode == "review"
+        finally:
+            lp.stop()
+            ap.stop()
