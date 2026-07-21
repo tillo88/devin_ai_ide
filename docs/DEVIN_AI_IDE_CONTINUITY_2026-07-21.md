@@ -168,11 +168,19 @@ mai spento dalla GUI. NON ancora compilato/provato: prima `tauri dev`
 compilera' il Rust nuovo (possibile aggiustamento su
 `WebviewWindow::navigate` a seconda della minor di Tauri 2 in uso).
 
+**MILESTONE (stessa notte): primi installer prodotti.** `npm run
+desktop:build` con icona registrata (`8289bfb`) genera
+`bundle/msi/DEVIN AI IDE_0.1.0_x64_en-US.msi` e
+`bundle/nsis/DEVIN AI IDE_0.1.0_x64-setup.exe`. Il Rust nuovo
+(discovery rig-first + sidecar) compila pulito. Gli installer contengono
+SOLO il frontend: il backend bundle (350 MB) non e' ancora incluso.
+
 Da fare per completare la visione: deploy backend sul rig come servizio
 (ruolo DEVIN gia' previsto in ai-rig-iso-build, `deploy-devin-webapp.sh`
 + systemd, porta 5000), wizard FASE 3 con rig URL configurabile in
-`%APPDATA%\DEVIN` al posto dell'env var, installer FASE 4 con backend
-bundle accanto all'app.
+`%APPDATA%\DEVIN` al posto dell'env var, FASE 4 completa: backend bundle
+dentro l'installer (resources accanto all'app), test su macchina pulita,
+firma (FASE 5).
 
 ## Prossima ripresa: sequenza esatta
 
