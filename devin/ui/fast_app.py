@@ -516,7 +516,28 @@ def _project_space_for(project_path: str) -> ProjectSpace:
     return _project_spaces[key]
 
 
-WORKSPACE_DIR = ROOT / "workspace"
+def _user_data_root() -> Path:
+    """Radice dei dati utente (workspace progetti).
+
+    Nel bundle PyInstaller (sys.frozen) i dati NON possono vivere in _internal:
+    verrebbero persi a ogni rebuild e il bundle deve restare immutabile. Si usa
+    %APPDATA%/DEVIN su Windows (fallback ~/.devin_data). In sviluppo resta la
+    radice del repo, comportamento invariato. Override esplicito: DEVIN_DATA_DIR.
+    (Fix "progetti spariti" nel primo run del sidecar, 2026-07-21.)
+    """
+    env_override = os.environ.get("DEVIN_DATA_DIR")
+    if env_override:
+        return Path(env_override)
+    if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / "DEVIN"
+        return Path.home() / ".devin_data"
+    return ROOT
+
+
+WORKSPACE_DIR = _user_data_root() / "workspace"
+WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 # === SICUREZZA (#8 audit) — path traversal su /api/explore e /api/file ===
 # Senza guardia, ?path=/etc/passwd (o ?path=../../..) legge file arbitrari del

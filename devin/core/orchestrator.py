@@ -56,7 +56,21 @@ from devin.memory.vector_store import VectorStore
 from devin.memory.taxonomy import build_memory_tags
 from devin.memory.eval_recorder import _existing_memory_keys, _memory_key
 
-LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+def _default_log_dir() -> Path:
+    """Log e run history. Nel bundle PyInstaller vanno in %APPDATA%/DEVIN/logs
+    (dato utente, non deve sparire a ogni rebuild); in sviluppo restano nel
+    repo. Override: DEVIN_DATA_DIR (2026-07-21)."""
+    env_override = os.environ.get("DEVIN_DATA_DIR")
+    if env_override:
+        return Path(env_override) / "logs"
+    if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) / "DEVIN" if appdata else Path.home() / ".devin_data"
+        return base / "logs"
+    return Path(__file__).resolve().parents[2] / "logs"
+
+
+LOG_DIR = _default_log_dir()
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Stesso principio di client.py: default ancorato alla posizione del file, non alla CWD.
