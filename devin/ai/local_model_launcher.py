@@ -27,6 +27,60 @@ import requests
 LLAMA_SERVER_BIN = Path.home() / "llama.cpp/build/bin/llama-server"
 MODELS_DIR = Path.home() / "devin_ai_ide/devin/devin_models"
 
+
+def _apply_models_config(models_cfg, platform_name=None):
+    """Applica llama_server_path/local_models_dir da settings.json (per-OS).
+
+    Profilo LOCALE Windows (2026-07-21): su nt hanno precedenza le chiavi
+    `llama_server_path_windows` / `local_models_dir_windows`, cosi' le chiavi
+    base restano i path WSL/rig e nessuna piattaforma rompe l'altra.
+    Solo path ESISTENTI sovrascrivono i default: una chiave sbagliata non
+    deve mai spegnere una configurazione funzionante. Se cambia la dir dei
+    modelli, coder/planner vengono ri-selezionati (primario o fallback) in
+    base ai file realmente presenti.
+    """
+    global LLAMA_SERVER_BIN, MODELS_DIR
+
+    plat = platform_name if platform_name is not None else os.name
+    if plat == "nt":
+        server_keys = ("llama_server_path_windows", "llama_server_path")
+        dir_keys = ("local_models_dir_windows", "local_models_dir")
+    else:
+        server_keys = ("llama_server_path",)
+        dir_keys = ("local_models_dir",)
+
+    for key in server_keys:
+        raw = models_cfg.get(key)
+        if raw:
+            candidate = Path(raw).expanduser()
+            if candidate.is_file():
+                LLAMA_SERVER_BIN = candidate
+                print("[CONFIG] llama-server: {} (da settings '{}')".format(candidate, key))
+                break
+
+    for key in dir_keys:
+        raw = models_cfg.get(key)
+        if not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if not candidate.is_dir():
+            continue
+        MODELS_DIR = candidate
+        if "coder" in MODELS:
+            ornith = candidate / CODER_ORNITH.name
+            qwen = candidate / CODER_QWEN_FALLBACK.name
+            if ornith.exists() or qwen.exists():
+                chosen = ornith if ornith.exists() else qwen
+                MODELS["coder"]["file"] = chosen
+                MODELS["coder"]["jinja"] = chosen == ornith
+        if "planner" in MODELS:
+            moe = candidate / PLANNER_MOE.name
+            fallback = candidate / PLANNER_FALLBACK.name
+            if moe.exists() or fallback.exists():
+                MODELS["planner"]["file"] = moe if moe.exists() else fallback
+        print("[CONFIG] modelli locali: {} (da settings '{}')".format(candidate, key))
+        break
+
 # === MODELLI (filename allineati ai file REALI presenti in devin_models/) ===
 # Coder locale = Ornith-1.0-9B-Q8 (deepreinforce): piu' capace del vecchio
 # Qwen2.5-Coder-7B, addestrato RL self-scaffolding.
@@ -276,26 +330,58 @@ def start_llama_server(config):
     else:
         env["LD_LIBRARY_PATH"] = cuda_lib
 
-    log_dir = Path.home() / "devin_ai_ide/logs"
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        log_dir = (Path(appdata) / "DEVIN" / "logs") if appdata else (Path.home() / ".devin_data" / "logs")
+    else:
+        log_dir = Path.home() / "devin_ai_ide/logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "llama-server-{}.log".format(alias)
 
     fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
     _log_fds[alias] = fd
 
+    popen_kwargs = {}
+    if os.name == "nt":
+        # start_new_session e' POSIX-only; su Windows il gruppo separato si
+        # ottiene con CREATE_NEW_PROCESS_GROUP (stesso pattern di runner.py).
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
     return subprocess.Popen(
         cmd,
         stdout=fd,
         stderr=subprocess.STDOUT,
         env=env,
-        start_new_session=True,
+        **popen_kwargs,
     )
 
 
 def kill_server_on_port(port):
     if os.name == "nt":
-        # lsof non esiste su Windows; nel profilo rig non ci sono server
-        # locali da uccidere. No-op silenzioso (2026-07-21).
+        # Profilo LOCALE Windows (2026-07-21): niente lsof; si usa
+        # netstat per trovare il PID in LISTENING sulla porta + taskkill.
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "TCP"],
+                capture_output=True, text=True, timeout=15
+            )
+            pids = set()
+            for line in (result.stdout or "").splitlines():
+                parts = line.split()
+                if (len(parts) >= 5 and parts[0] == "TCP"
+                        and parts[1].endswith(":{}".format(port))
+                        and parts[3] == "LISTENING"):
+                    pids.add(parts[4])
+            for pid in pids:
+                subprocess.run(["taskkill", "/PID", pid, "/F"],
+                               capture_output=True, timeout=15)
+                print("[KILL] Terminato PID {} su porta {}".format(pid, port))
+            if pids:
+                time.sleep(2)
+        except Exception as e:
+            print("[WARN] Errore kill porta {}: {}".format(port, e))
         return
     try:
         result = subprocess.run(
@@ -534,6 +620,7 @@ class LocalModelLauncher:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 models_cfg = json.load(f).get("models", {})
+            _apply_models_config(models_cfg)
             if models_cfg.get("local_test_mode") and "planner" not in instance.auto_start_aliases:
                 instance.auto_start_aliases.append("planner")
                 print("[TEST MODE] local_test_mode=true — avvio anche 'planner' in locale "
