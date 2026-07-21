@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 import subprocess
@@ -127,12 +128,37 @@ def _try_git_apply(tmp_path, target_dir):
     return None
 
 
+def _patch_executable():
+    """Trova GNU patch in modo portabile (migrazione Windows 2026-07-21).
+
+    Su Windows `patch` non e' sul PATH, ma Git for Windows lo distribuisce in
+    `usr/bin` accanto a git. Ritorna None se assente: apply_patch prosegue
+    coi fallback Python invece di esplodere con FileNotFoundError/WinError 2.
+    """
+    exe = shutil.which("patch")
+    if exe:
+        return exe
+    if os.name == "nt":
+        git = shutil.which("git")
+        if git:
+            root = Path(git).resolve().parent.parent
+            for candidate in (root / "usr" / "bin" / "patch.exe",
+                              root.parent / "usr" / "bin" / "patch.exe"):
+                if candidate.exists():
+                    return str(candidate)
+    return None
+
+
 def _try_patch(tmp_path, target_dir):
+    patch_exe = _patch_executable()
+    if patch_exe is None:
+        return None  # nessun GNU patch: si passa ai fallback Python
+
     results = []
 
     for strip_level in (1, 0, 2, 3, 4):
         check = subprocess.run(
-            ["patch", f"-p{strip_level}", "--fuzz=10", "--batch", "--forward",
+            [patch_exe, f"-p{strip_level}", "--fuzz=10", "--batch", "--forward",
              "--dry-run", "-i", tmp_path],
             cwd=str(target_dir),
             text=True,
@@ -144,7 +170,7 @@ def _try_patch(tmp_path, target_dir):
             continue
 
         result = subprocess.run(
-            ["patch", f"-p{strip_level}", "--fuzz=10", "--batch", "--forward",
+            [patch_exe, f"-p{strip_level}", "--fuzz=10", "--batch", "--forward",
              "-i", tmp_path],
             cwd=str(target_dir), text=True, capture_output=True, input=""
         )

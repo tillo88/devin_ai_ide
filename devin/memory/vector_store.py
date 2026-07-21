@@ -345,7 +345,10 @@ class VectorStore:
             tmp_path = cache_path.with_suffix(".tmp")
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
-            tmp_path.rename(cache_path)
+            # replace, non rename: su Windows rename fallisce (WinError 183)
+            # se il target esiste; replace e' atomico e sovrascrive su entrambi
+            # gli OS (migrazione nativa 2026-07-21).
+            tmp_path.replace(cache_path)
 
             print(f"[VectorStore] Cache salvata: {cache_path}")
         except Exception as e:
