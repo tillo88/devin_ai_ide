@@ -3,6 +3,12 @@
     "max_chars": 100000,
     "semantic_search_enabled": true
   },
+  "time": {
+    "storage_timezone": "UTC",
+    "display_timezone": "Europe/Rome",
+    "naive_timestamp_policy": "mark_unknown",
+    "note": "Persistenza canonica UTC; UI, agenti e notifiche mostrano Europe/Rome tramite timezone IANA. I timestamp storici privi di offset non vengono reinterpretati automaticamente. Override opzionale: DEVIN_DISPLAY_TIMEZONE."
+  },
   "coder": {
     "whole_file_enabled": true,
     "whole_file_max_lines": 300
