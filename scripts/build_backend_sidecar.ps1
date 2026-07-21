@@ -33,6 +33,15 @@ if (-not (Test-Path $VenvPy)) {
     exit 1
 }
 
+# L'exe in esecuzione blocca i file del bundle: PyInstaller fallirebbe con
+# PermissionError/WinError 5 nel pulire dist\ (successo nel primo rebuild).
+$Running = Get-Process -Name "devin-backend" -ErrorAction SilentlyContinue
+if ($Running) {
+    Step "devin-backend.exe e' in esecuzione: lo chiudo prima della build"
+    $Running | Stop-Process -Force
+    Start-Sleep -Seconds 2
+}
+
 Step "Installo/aggiorno PyInstaller in .venv-win"
 & $VenvPy -m pip install -q -U pyinstaller 2>&1 | Add-Content $Log
 
