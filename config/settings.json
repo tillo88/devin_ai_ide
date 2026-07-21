@@ -46,6 +46,8 @@
 
     "local_models_dir": "/home/tillo/devin_ai_ide/devin/devin_models",
     "llama_server_path": "/home/tillo/.unsloth/llama.cpp/build/bin/llama-server",
+    "local_models_dir_windows": "D:\\devin_ai_ide\\devin\\devin_models",
+    "llama_server_path_windows": "C:\\Users\\tillo\\AppData\\Local\\DEVIN\\llama.cpp\\llama-server.exe",
     "auto_start_local": true,
     "local_models": {
       "coder": {
