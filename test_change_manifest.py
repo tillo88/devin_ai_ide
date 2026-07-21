@@ -140,3 +140,23 @@ def test_manifest_rejects_changed_files_over_promotion_limit(tmp_path):
         build_change_manifest(
             project, sandbox, "run_large", max_file_bytes=64
         )
+
+
+def test_decision_lock_blocks_concurrent_decisions_portably(tmp_path):
+    """Regression migrazione Windows 2026-07-21: il lock decisionale deve
+    funzionare sull'OS corrente (msvcrt su nt, fcntl altrove) e respingere
+    una seconda decisione concorrente con errore pulito, senza import fcntl
+    a livello modulo."""
+    from devin.core import change_manifest as cm
+
+    project, sandbox = _trees(tmp_path)
+    build_change_manifest(project, sandbox, "run_test")
+
+    with cm._decision_lock(project, "run_test"):
+        with pytest.raises(ChangeManifestError, match="already in progress"):
+            with cm._decision_lock(project, "run_test"):
+                pass  # pragma: no cover
+
+    # Rilasciato il lock, una decisione reale deve procedere.
+    applied = apply_change_manifest(project, "run_test")
+    assert applied["status"] == "applied"

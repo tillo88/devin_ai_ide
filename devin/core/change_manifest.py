@@ -142,20 +142,42 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 @contextmanager
 def _decision_lock(project: Path, run_id: str):
-    """Serialize apply/reject/rollback across processes; kernel releases on crash."""
-    import fcntl
+    """Serialize apply/reject/rollback across processes; kernel releases on crash.
 
+    Portabile Windows/POSIX (migrazione nativa 2026-07-21): msvcrt.locking su
+    Windows, fcntl.flock altrove. In entrambi i casi l'OS rilascia il lock alla
+    chiusura dell'handle, anche su crash del processo.
+    """
     path = _manifest_dir(project, run_id) / "decision.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as handle:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ChangeManifestError("another decision is already in progress") from exc
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise ChangeManifestError("another decision is already in progress") from exc
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                except OSError:
+                    pass  # handle close rilascia comunque
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ChangeManifestError("another decision is already in progress") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def build_change_manifest(

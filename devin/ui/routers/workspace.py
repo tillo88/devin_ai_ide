@@ -24,14 +24,22 @@ router = APIRouter()
 
 def _pick_folder_windows() -> dict:
     """Apre il dialog nativo di Windows "Sfoglia cartelle" (FolderBrowserDialog)
-    via powershell.exe — possibile perche' il server gira in WSL sulla STESSA
-    macchina del browser. Il path Windows scelto viene convertito in path WSL
-    con wslpath. Bloccante finche' l'utente non chiude il dialog (chiamare via
-    asyncio.to_thread). Se non siamo su WSL (es. deploy sul rig), errore pulito."""
+    via powershell.exe. Funziona in due contesti (migrazione nativa 2026-07-21):
+    - backend nativo Windows: powershell.exe sul PATH, il path scelto e' gia'
+      utilizzabile cosi' com'e' (nessuna conversione);
+    - backend in WSL sulla stessa macchina: interop powershell.exe + conversione
+      del path Windows in path WSL con wslpath.
+    Bloccante finche' l'utente non chiude il dialog (chiamare via
+    asyncio.to_thread). Se non siamo ne' su Windows ne' su WSL (es. deploy sul
+    rig), errore pulito."""
+    import os as _os
     import shutil as _shutil
     import subprocess as _sp
 
-    ps = _shutil.which("powershell.exe") or "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    if _os.name == "nt":
+        ps = _shutil.which("powershell.exe") or r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    else:
+        ps = _shutil.which("powershell.exe") or "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
     if not Path(ps).exists():
         return {"error": "Dialog disponibile solo quando il server gira in WSL sulla stessa macchina "
                           "(powershell.exe non trovato). Inserisci il path a mano."}
@@ -64,6 +72,9 @@ def _pick_folder_windows() -> dict:
         win_path = (out.stdout or "").strip().splitlines()[-1].strip() if (out.stdout or "").strip() else ""
         if not win_path:
             return {"cancelled": True}
+        if _os.name == "nt":
+            # Backend nativo Windows: nessuna conversione necessaria.
+            return {"path": win_path, "windows_path": win_path}
         wsl = _sp.run(["wslpath", "-u", win_path], capture_output=True, text=True, timeout=10)
         linux_path = (wsl.stdout or "").strip()
         if not linux_path:
