@@ -1,25 +1,38 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// Visione finale (owner, 2026-07-21):
+// - backend principale SUL RIG (Linux, sempre attivo col ruolo DEVIN);
+// - questo exe e' il frontend desktop: all'avvio cerca il backend del rig,
+//   se c'e' lo usa (zero processi locali), altrimenti avvia il backup
+//   locale (devin-backend.exe sidecar, invisibile);
+// - la web app resta servita dal rig per l'accesso esterno.
+
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use tauri::Manager;
+
+const LOCAL_BACKEND: &str = "127.0.0.1:5000";
+const DEFAULT_RIG_BACKEND: &str = "192.168.1.100:5000";
+
 static CLOSE_CLEANUP_SENT: AtomicBool = AtomicBool::new(false);
-// FASE 2 packaging (2026-07-21): backend avviato come sidecar dall'app.
-// Se lo abbiamo avviato noi, alla chiusura va spento; se era gia' attivo
-// (dev con devin-tauri-dev.ps1, o backend gia' in esecuzione) non lo tocchiamo.
+// Se il backend locale lo abbiamo avviato noi, alla chiusura va spento;
+// un backend preesistente (dev o rig) non si tocca mai.
 static SPAWNED_BACKEND: Mutex<Option<Child>> = Mutex::new(None);
 
-fn backend_reachable() -> bool {
-    let address: SocketAddr = match "127.0.0.1:5000".parse() {
-        Ok(value) => value,
-        Err(_) => return false,
+fn host_reachable(host_port: &str, timeout_ms: u64) -> bool {
+    let Ok(mut addrs) = host_port.to_socket_addrs() else {
+        return false;
     };
-    TcpStream::connect_timeout(&address, Duration::from_millis(400)).is_ok()
+    let Some(address) = addrs.next() else {
+        return false;
+    };
+    TcpStream::connect_timeout(&address, Duration::from_millis(timeout_ms)).is_ok()
 }
 
 fn find_backend_exe() -> Option<PathBuf> {
@@ -46,22 +59,18 @@ fn find_backend_exe() -> Option<PathBuf> {
     None
 }
 
-fn spawn_backend_if_needed() {
-    if backend_reachable() {
-        println!("[sidecar] backend gia' attivo su 127.0.0.1:5000: non avvio nulla");
-        return;
-    }
+fn spawn_local_backup() {
     let exe = match find_backend_exe() {
         Some(value) => value,
         None => {
             eprintln!(
-                "[sidecar] devin-backend.exe non trovato (DEVIN_BACKEND_EXE o accanto \
-                 all'app): avvia il backend manualmente o usa il launcher dev"
+                "[backend] backup locale non trovato (DEVIN_BACKEND_EXE o accanto \
+                 all'app) e rig non raggiungibile: la UI restera' in attesa"
             );
             return;
         }
     };
-    println!("[sidecar] avvio backend: {}", exe.display());
+    println!("[backend] rig giu': avvio backup locale {}", exe.display());
     let mut command = Command::new(&exe);
     command.env("DEVIN_NO_BROWSER", "1");
     if let Some(dir) = exe.parent() {
@@ -76,19 +85,34 @@ fn spawn_backend_if_needed() {
     match command.spawn() {
         Ok(child) => {
             *SPAWNED_BACKEND.lock().unwrap() = Some(child);
-            // Cold start PyInstaller: anche 10-20s. Aspettiamo (max 40s) per
-            // far arrivare la finestra su una UI gia' viva.
+            // Cold start PyInstaller: anche 10-20s.
             for _ in 0..80 {
-                if backend_reachable() {
-                    println!("[sidecar] backend pronto");
+                if host_reachable(LOCAL_BACKEND, 400) {
+                    println!("[backend] backup locale pronto");
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(500));
             }
-            eprintln!("[sidecar] backend non pronto entro 40s: la UI ritentera' da sola");
+            eprintln!("[backend] backup locale non pronto entro 40s: la UI ritentera' da sola");
         }
-        Err(err) => eprintln!("[sidecar] avvio backend fallito: {err}"),
+        Err(err) => eprintln!("[backend] avvio backup locale fallito: {err}"),
     }
+}
+
+/// Decide quale backend usare e ritorna l'URL /app da caricare nella finestra.
+fn discover_backend_url() -> String {
+    let rig = std::env::var("DEVIN_RIG_URL")
+        .unwrap_or_else(|_| DEFAULT_RIG_BACKEND.to_string());
+    if host_reachable(&rig, 900) {
+        println!("[backend] rig attivo ({rig}): uso il rig, niente processi locali");
+        return format!("http://{rig}/app");
+    }
+    if host_reachable(LOCAL_BACKEND, 400) {
+        println!("[backend] backend locale gia' attivo: lo uso");
+        return format!("http://{LOCAL_BACKEND}/app");
+    }
+    spawn_local_backup();
+    format!("http://{LOCAL_BACKEND}/app")
 }
 
 fn stop_spawned_backend() {
@@ -99,7 +123,9 @@ fn stop_spawned_backend() {
 }
 
 fn post_desktop_close_cleanup() {
-    let address: SocketAddr = match "127.0.0.1:5000".parse() {
+    // Il cleanup di chiusura riguarda solo il backend LOCALE (modelli in
+    // VRAM del PC): il rig e' always-on e non va spento dalla GUI.
+    let address: SocketAddr = match LOCAL_BACKEND.parse() {
         Ok(value) => value,
         Err(_) => return,
     };
@@ -126,8 +152,16 @@ fn post_desktop_close_cleanup() {
 }
 
 fn main() {
-    spawn_backend_if_needed();
+    let target_url = discover_backend_url();
     tauri::Builder::default()
+        .setup(move |app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(url) = tauri::Url::parse(&target_url) {
+                    let _ = window.navigate(url);
+                }
+            }
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if !CLOSE_CLEANUP_SENT.swap(true, Ordering::SeqCst) {
