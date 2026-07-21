@@ -149,6 +149,31 @@ Primo run reale dell'exe + iterazione fix, tutto committato:
 - Da verificare alla prossima sessione: avvio backend con rig giu' ->
   Ornith locale carica davvero; poi il solito giro diff->Applica.
 
+## Architettura finale dichiarata dall'owner (2026-07-21, notte)
+
+**Backend principale SUL RIG** (Linux, always-on col ruolo DEVIN: server +
+web app online quando il rig e' online, accesso esterno senza VPN via
+TeamViewer/Raspberry). **Il PC principale usa solo l'exe desktop**: frontend
+pulito che all'avvio cerca il backend — rig raggiungibile? si usa quello,
+niente processi locali; rig giu'? parte il backup locale (sidecar +
+llama-server locale). `fast_app` resta Linux-first per il deploy sul rig;
+il bundle Windows e' SOLO il fallback d'emergenza.
+
+Implementato in `src-tauri/src/main.rs` (`e0328b1` + `4990a15`): discovery
+rig-first (env `DEVIN_RIG_URL`, default `192.168.1.100:5000`, formato
+host:porta senza schema), navigate della finestra sul backend scelto,
+spawn invisibile del backup locale con `DEVIN_NO_BROWSER=1` (`05b51b2`),
+stop alla chiusura solo del backend avviato dall'app — il rig non viene
+mai spento dalla GUI. NON ancora compilato/provato: prima `tauri dev`
+compilera' il Rust nuovo (possibile aggiustamento su
+`WebviewWindow::navigate` a seconda della minor di Tauri 2 in uso).
+
+Da fare per completare la visione: deploy backend sul rig come servizio
+(ruolo DEVIN gia' previsto in ai-rig-iso-build, `deploy-devin-webapp.sh`
++ systemd, porta 5000), wizard FASE 3 con rig URL configurabile in
+`%APPDATA%\DEVIN` al posto dell'env var, installer FASE 4 con backend
+bundle accanto all'app.
+
 ## Prossima ripresa: sequenza esatta
 
 1. Push su GitHub se ci sono commit locali non pubblicati.
