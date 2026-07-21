@@ -377,11 +377,14 @@ function renderProjects(payload) {
       </button>
     `,
     ...projects.map((project) => `
-      <button class="project-card ${project.path === state.selectedProjectPath ? "active" : ""}" data-project-path="${escapeHtml(project.path)}">
-        <strong>${escapeHtml(project.name)}</strong>
-        <span>${project.linked ? "linked · " : ""}${escapeHtml(project.chats ?? 0)} chat - ${escapeHtml(project.knowledge ?? 0)} knowledge</span>
-        ${project.work_dir ? `<span class="project-workdir" title="${escapeHtml(project.work_dir)}">📁 ${escapeHtml(project.work_dir.split(/[\\/]/).pop())}</span>` : ""}
-      </button>
+      <div class="chat-card-row ${project.path === state.selectedProjectPath ? "active" : ""}">
+        <button class="project-card ${project.path === state.selectedProjectPath ? "active" : ""}" data-project-path="${escapeHtml(project.path)}">
+          <strong>${escapeHtml(project.name)}</strong>
+          <span>${project.linked ? "linked · " : ""}${escapeHtml(project.chats ?? 0)} chat - ${escapeHtml(project.knowledge ?? 0)} knowledge</span>
+          ${project.work_dir ? `<span class="project-workdir" title="${escapeHtml(project.work_dir)}">📁 ${escapeHtml(project.work_dir.split(/[\\/]/).pop())}</span>` : ""}
+        </button>
+        <button class="chat-delete-button" data-remove-project-path="${escapeHtml(project.path)}" data-remove-project-linked="${project.linked ? "1" : ""}" title="${project.linked ? "Scollega progetto (i file restano)" : "Sposta il progetto nel cestino"}">×</button>
+      </div>
     `),
   ];
 
@@ -389,6 +392,30 @@ function renderProjects(payload) {
   list.querySelectorAll("[data-project-path]").forEach((button) => {
     button.addEventListener("click", () => selectProject(button.dataset.projectPath ?? ""));
   });
+  list.querySelectorAll("[data-remove-project-path]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      removeProject(button.dataset.removeProjectPath, button.dataset.removeProjectLinked === "1");
+    });
+  });
+}
+
+async function removeProject(projectPath, linked) {
+  if (!projectPath) return;
+  const name = projectPath.split(/[\\/]/).pop();
+  const message = linked
+    ? `Scollegare il progetto "${name}"? I file restano al loro posto, sparisce solo dalla sidebar.`
+    : `Spostare il progetto "${name}" nel cestino (workspace/_trash)? Recuperabile a mano, nessuna cancellazione permanente.`;
+  if (!window.confirm(message)) return;
+  try {
+    const result = await postJson("/api/workspace/projects/remove", { path: projectPath });
+    if (result?.error) throw new Error(result.error);
+    if (state.selectedProjectPath === projectPath) await selectProject("");
+    await refresh();
+  } catch (err) {
+    console.error(err);
+    window.alert(`Rimozione fallita: ${err.message || err}`);
+  }
 }
 
 function renderChatList(chats = []) {

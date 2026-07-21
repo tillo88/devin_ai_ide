@@ -13,6 +13,8 @@ top-level — circolo fatale se il router e' importato per primo):
 """
 
 import asyncio
+import shutil
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -156,3 +158,44 @@ async def api_workspace_projects_new(request: Request):
     target = WORKSPACE_DIR / name
     target.mkdir(parents=True, exist_ok=True)
     return {"name": name, "path": str(target), "created": True}
+
+
+@router.post("/api/workspace/projects/remove")
+async def api_workspace_projects_remove(request: Request):
+    """Rimuove un progetto dalla sidebar (2026-07-21).
+
+    - progetto INTERNO (sottocartella diretta di workspace/): spostato in
+      workspace/_trash/<nome>-<timestamp> — recuperabile a mano, mai delete
+      permanente (filosofia del progetto: nessuna distruzione irreversibile);
+    - progetto COLLEGATO (cartella esterna): solo scollegato dal registro,
+      i file dell'utente non vengono toccati.
+    """
+    from devin.ui import fast_app as _fa  # lazy: no import circolare
+
+    data = await request.json()
+    raw = str(data.get("path", "")).strip()
+    if not raw:
+        return {"error": "path mancante"}
+    target = Path(raw).expanduser().resolve()
+    workspace_root = _fa.WORKSPACE_DIR.resolve()
+
+    # Collegato: unlink dal registro, file intatti.
+    if target in _fa._LINKED_PROJECT_ROOTS:
+        _fa._LINKED_PROJECT_ROOTS[:] = [
+            p for p in _fa._LINKED_PROJECT_ROOTS if p != target
+        ]
+        _fa._ALLOWED_ROOTS.discard(target)
+        return {"status": "unlinked", "path": str(target)}
+
+    # Interno: solo sottocartelle DIRETTE di workspace/, mai riservate/trash
+    # (il confronto sul parent risolto blocca anche i path traversal).
+    if target.parent != workspace_root or target.name.startswith(("_", ".")):
+        return {"error": "path non rimovibile: non e' un progetto del workspace"}
+    if not target.is_dir():
+        return {"error": "progetto inesistente"}
+
+    trash_dir = workspace_root / "_trash"
+    trash_dir.mkdir(parents=True, exist_ok=True)
+    destination = trash_dir / "{}-{}".format(target.name, time.strftime("%Y%m%d-%H%M%S"))
+    await asyncio.to_thread(shutil.move, str(target), str(destination))
+    return {"status": "trashed", "path": str(target), "trash_path": str(destination)}
