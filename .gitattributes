@@ -1,0 +1,25 @@
+# Normalizzazione line endings (migrazione Windows nativa, 2026-07-21).
+# Il repo mantiene LF; Python/Node/Tauri non ne risentono su Windows.
+# Evita il rumore CRLF nei diff tra checkout su OS diversi.
+* text=auto eol=lf
+
+# Script Windows: CRLF obbligatorio/consigliato per cmd e batch.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binari: mai toccare.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.gguf binary
+*.bin binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
