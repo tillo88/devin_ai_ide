@@ -91,7 +91,9 @@ class Orchestrator:
         self._state_persistence = None
         self._degraded_mode = False  # True se il rig (primario) è down e giriamo su locale
 
-        with open(config_path, "r") as f:
+        # encoding esplicito: su Windows il default e' cp1252 ('charmap') e
+        # settings.json contiene UTF-8 (bug emerso col sidecar, 2026-07-21)
+        with open(config_path, "r", encoding="utf-8") as f:
             self.config = json.load(f)
 
         # Default fail-safe (P0 2026-07-21): config assente, corrotta o senza

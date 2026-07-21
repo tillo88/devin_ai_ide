@@ -293,6 +293,10 @@ def start_llama_server(config):
 
 
 def kill_server_on_port(port):
+    if os.name == "nt":
+        # lsof non esiste su Windows; nel profilo rig non ci sono server
+        # locali da uccidere. No-op silenzioso (2026-07-21).
+        return
     try:
         result = subprocess.run(
             ["lsof", "-ti", ":{}".format(port)],
@@ -318,6 +322,16 @@ def ensure_model_running(alias, config, max_retries=2):
     if loaded:
         print("[OK] '{}' gia caricato - {}".format(alias, reason))
         return True
+
+    # Windows nativo (2026-07-21): senza llama-server locale il ciclo
+    # kill/retry e' inutile e rumoroso (il binario e i modelli stanno in
+    # WSL/rig). Fallimento pulito e immediato: la potenza sta sul rig;
+    # il supporto locale Windows arrivera' col "profilo LOCALE" del packaging.
+    if os.name == "nt" and not LLAMA_SERVER_BIN.exists():
+        print("[SKIP] '{}': llama-server locale non disponibile su Windows "
+              "({}) - modelli locali disabilitati, usare il rig.".format(
+                  alias, LLAMA_SERVER_BIN))
+        return False
 
     print("[INFO] '{}' non caricato - {}".format(alias, reason))
     kill_server_on_port(port)
@@ -518,7 +532,7 @@ class LocalModelLauncher:
         instance = cls()
 
         try:
-            with open(config_path, "r") as f:
+            with open(config_path, "r", encoding="utf-8") as f:
                 models_cfg = json.load(f).get("models", {})
             if models_cfg.get("local_test_mode") and "planner" not in instance.auto_start_aliases:
                 instance.auto_start_aliases.append("planner")
