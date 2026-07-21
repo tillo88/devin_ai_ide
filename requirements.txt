@@ -6,6 +6,9 @@ fastapi
 uvicorn
 python-multipart
 
+# IANA timezone database, required on Windows for ZoneInfo("Europe/Rome").
+tzdata
+
 # Estrazione testo da documenti allegati in chat (devin/ai/document_extract.py), 2026-07-09
 pypdf
 python-docx
