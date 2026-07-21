@@ -358,6 +358,25 @@ def start_llama_server(config):
     )
 
 
+def _rig_is_healthy(models_cfg, timeout=3):
+    """Probe rapido del rig primario (llama-server /health).
+
+    Policy owner (2026-07-21): "Rig up? niente locale. Rig down? apri locale."
+    Il locale e' il fallback d'emergenza, non un doppione che occupa VRAM
+    mentre il rig serve gia' i modelli.
+    """
+    host = models_cfg.get("rig_host")
+    port = models_cfg.get("rig_port", 8080)
+    if not host:
+        return False
+    try:
+        response = requests.get(
+            "http://{}:{}/health".format(host, port), timeout=timeout)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
 def kill_server_on_port(port):
     if os.name == "nt":
         # Profilo LOCALE Windows (2026-07-21): niente lsof; si usa
@@ -603,6 +622,9 @@ class LocalModelLauncher:
         self.status = "stopped"
         # Copia per-istanza: from_config() puo' estenderla con "planner" se local_test_mode=true
         self.auto_start_aliases = list(AUTO_START_ALIASES)
+        # Config models di settings.json, salvata da from_config: serve al
+        # gate rig-first di ensure_models (policy 2026-07-21).
+        self._models_cfg = {}
 
     @classmethod
     def from_config(cls, config_path, sse_callback=None):
@@ -620,6 +642,7 @@ class LocalModelLauncher:
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 models_cfg = json.load(f).get("models", {})
+            instance._models_cfg = models_cfg
             _apply_models_config(models_cfg)
             if models_cfg.get("local_test_mode") and "planner" not in instance.auto_start_aliases:
                 instance.auto_start_aliases.append("planner")
@@ -627,6 +650,17 @@ class LocalModelLauncher:
                       "(rig non ancora disponibile). VRAM: coder+planner ~10-15GB su 16GB, ok.")
         except Exception as e:
             print(f"[WARN] Impossibile leggere local_test_mode da {config_path}: {e}")
+
+        # Policy rig-first (2026-07-21): se il rig primario e' sano, i modelli
+        # locali NON partono — il locale e' solo fallback d'emergenza.
+        if instance._models_cfg.get("rig_primary") and _rig_is_healthy(instance._models_cfg):
+            print("[RIG] Rig primario attivo ({}:{}): modelli locali non avviati "
+                  "(rig up -> niente locale; fallback locale solo a rig giu').".format(
+                      instance._models_cfg.get("rig_host"),
+                      instance._models_cfg.get("rig_port", 8080)))
+            instance.status = "rig"
+            start_vram_watchdog()
+            return instance
 
         for alias in instance.auto_start_aliases:
             config = MODELS[alias]
@@ -639,6 +673,17 @@ class LocalModelLauncher:
 
     def ensure_models(self):
         """Verifica/avvia gli alias di auto-start per questa istanza (rispetta local_test_mode)."""
+        # Policy rig-first (2026-07-21): rig sano -> nessun avvio locale,
+        # status onesto "rig" (la UI puo' mostrare la sorgente reale).
+        cfg = self._models_cfg or {}
+        if cfg.get("rig_primary") and _rig_is_healthy(cfg):
+            self.status = "rig"
+            return LauncherStatus(
+                rig_available=True,
+                rig_host=str(cfg.get("rig_host", "")),
+                rig_ports=[int(cfg.get("rig_port", 8080))],
+                local_running={}, model_source="rig", errors=[],
+            )
         running = {}
         for alias in self.auto_start_aliases:
             config = MODELS[alias]
