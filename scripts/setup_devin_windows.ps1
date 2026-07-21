@@ -1,5 +1,6 @@
-# setup_devin_windows.ps1 — Setup ambiente DEVIN AI IDE su Windows nativo
-# (migrazione da WSL, 2026-07-21)
+# setup_devin_windows.ps1 - Setup ambiente DEVIN AI IDE su Windows nativo
+# (migrazione da WSL, 2026-07-21). Solo caratteri ASCII: PowerShell 5.1 legge
+# i .ps1 senza BOM come ANSI e i caratteri non-ASCII corrompono il parsing.
 #
 # Uso (PowerShell, dalla root del repo):
 #   powershell -ExecutionPolicy Bypass -File scripts\setup_devin_windows.ps1
@@ -34,7 +35,7 @@ foreach ($candidate in @("py -3.13", "py -3.12", "py -3.11", "py -3.10", "py -3"
     try {
         $parts = $candidate.Split(" ")
         $v = & $parts[0] $parts[1..($parts.Length-1)] --version 2>&1
-        if ($v -match "Python 3\.(\d+)") {
+        if ("$v" -match "Python 3\.(\d+)") {
             $minor = [int]$Matches[1]
             if ($minor -ge 10) { $PyCmd = $candidate; "Trovato: $candidate -> $v" | Add-Content $Log; break }
         }
@@ -56,7 +57,9 @@ if (-not (Test-Path $VenvPy)) {
     $parts = $PyCmd.Split(" ")
     & $parts[0] $parts[1..($parts.Length-1)] -m venv $VenvDir 2>&1 | Add-Content $Log
     if (-not (Test-Path $VenvPy)) {
-        "ERRORE: creazione venv fallita, vedi log." | Tee-Object -Append $Log
+        $msg = "ERRORE: creazione venv fallita, vedi log."
+        Write-Host $msg -ForegroundColor Red
+        $msg | Add-Content $Log
         exit 1
     }
 } else {
@@ -80,7 +83,7 @@ $CorePkgs = @(
 )
 & $VenvPy -m pip install $CorePkgs 2>&1 | Add-Content $Log
 if ($LASTEXITCODE -ne 0) {
-    Step "ATTENZIONE: pip install ha segnalato errori (exit $LASTEXITCODE) — continuo comunque con la suite"
+    Step "ATTENZIONE: pip install ha segnalato errori (exit $LASTEXITCODE) - continuo comunque con la suite"
 }
 
 # --- 4. Suite pytest ---
