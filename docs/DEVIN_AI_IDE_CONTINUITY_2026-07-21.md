@@ -175,12 +175,23 @@ desktop:build` con icona registrata (`8289bfb`) genera
 (discovery rig-first + sidecar) compila pulito. Gli installer contengono
 SOLO il frontend: il backend bundle (350 MB) non e' ancora incluso.
 
-Da fare per completare la visione: deploy backend sul rig come servizio
-(ruolo DEVIN gia' previsto in ai-rig-iso-build, `deploy-devin-webapp.sh`
-+ systemd, porta 5000), wizard FASE 3 con rig URL configurabile in
-`%APPDATA%\DEVIN` al posto dell'env var, FASE 4 completa: backend bundle
-dentro l'installer (resources accanto all'app), test su macchina pulita,
-firma (FASE 5).
+Avanzamento successivo (stessa notte, `79c7b40`..`27c8feb`):
+
+- **deploy rig pronto**: `scripts/rig/install_devin_backend.sh` (Ubuntu
+  24.04) — .venv-rig + requirements core, `rig_self_hosted=true`, unit
+  systemd `devin-backend` al boot con restart. Da eseguire sul rig quando
+  l'owner avra' chiuso i test modello/contesto/cache;
+- **rig_url configurabile**: `%APPDATA%\DEVIN\desktop.json` (creato col
+  default al primo avvio; priorita' env > file > default). Pre-wizard;
+  la UI grafica del wizard resta FASE 3;
+- **installer autosufficiente**: bundle.resources copia `dist/devin-backend`
+  accanto all'app — prerequisito: `build_backend_sidecar.ps1` prima di
+  `npm run desktop:build`. NON ancora ricompilato/testato: prima build
+  verifica serde_json + navigate + resources; poi test dell'installer su
+  macchina pulita e firma (FASE 5).
+
+App release gia' verificata dall'owner: parte da sola col backup locale,
+solo finestra, zero browser ("yeeees partita subito").
 
 ## Prossima ripresa: sequenza esatta
 
