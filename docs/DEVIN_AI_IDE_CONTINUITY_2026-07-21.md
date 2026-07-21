@@ -124,6 +124,31 @@ Primo run reale dell'exe + iterazione fix, tutto committato:
   acceso (il flusso review e' attivo e i bottoni Diff/Applica/Rifiuta sono
   presenti in UI).
 
+## Sessione estesa 2026-07-21 (notte): profilo LOCALE + rimozione progetti
+
+- **Rimozione progetti** (`9338fea`): `/api/workspace/projects/remove` —
+  interni nel cestino `workspace/_trash` (mai delete permanente), collegati
+  solo scollegati; UI con x e conferme differenziate; 3 regression test.
+- **Profilo LOCALE Windows completo**: launcher config-aware con chiavi
+  per-OS `llama_server_path_windows`/`local_models_dir_windows`
+  (settings gia' puntate), kill porta netstat/taskkill, log in APPDATA
+  (`f0...`/`6009650`); llama.cpp **b10075** CUDA 13.3 installato e
+  verificato in `%LOCALAPPDATA%\DEVIN\llama.cpp` (pin in version.txt,
+  script idempotente, aggiornamenti solo deliberati con -Force/-Tag);
+  i GGUF (24 GB: Ornith 9B Q8, Qwen coder, planner MoE) gia' su
+  `D:\devin_ai_ide\devin\devin_models`.
+- **Policy rig-first del launcher** (owner): "Rig up? niente locale.
+  Rig down? apri locale." — probe `/health` del rig a startup e a ogni
+  run; rig sano -> nessun modello locale (VRAM libera, source='rig');
+  rig giu' -> fallback locale automatico. Il locale caricato NON viene
+  scaricato da solo quando il rig torna (release manuale). 2 test.
+- Suite: **429 passed**.
+- Training modello piccolo: confermato che passa SOLO dal percorso P6
+  (training store -> review -> SFT export verificato), mai dalla memoria
+  grezza AutoMem. Fine-tuning sul rig; QLoRA locale come piano B.
+- Da verificare alla prossima sessione: avvio backend con rig giu' ->
+  Ornith locale carica davvero; poi il solito giro diff->Applica.
+
 ## Prossima ripresa: sequenza esatta
 
 1. Push su GitHub se ci sono commit locali non pubblicati.
