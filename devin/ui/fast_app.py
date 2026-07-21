@@ -835,7 +835,9 @@ def run_server():
     """
     import uvicorn
 
-    URL = "http://localhost:5000"
+    # /app e' la SPA prodotto (codex_app); la root resta superficie legacy di
+    # fallback. Il browser auto-open deve atterrare sul prodotto (2026-07-21).
+    URL = "http://localhost:5000/app"
 
     def open_browser():
         time.sleep(2)
