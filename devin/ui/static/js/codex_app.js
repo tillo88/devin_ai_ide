@@ -76,6 +76,39 @@ async function postJson(url, body) {
   });
 }
 
+// Modale interno all'app (Tauri non supporta window.prompt/confirm/dialog
+// nativi). Ritorna una Promise col testo, o null se annullato. 2026-07-22.
+function promptModal(message, { placeholder = "", value = "", okLabel = "OK" } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "app-modal-overlay";
+    overlay.innerHTML = `
+      <div class="app-modal" role="dialog" aria-modal="true">
+        <p class="app-modal-msg"></p>
+        <input type="text" class="app-modal-input" />
+        <div class="app-modal-actions">
+          <button type="button" class="tiny-button app-modal-cancel">Annulla</button>
+          <button type="button" class="primary-mini-button app-modal-ok"></button>
+        </div>
+      </div>`;
+    overlay.querySelector(".app-modal-msg").textContent = message;
+    const input = overlay.querySelector(".app-modal-input");
+    input.placeholder = placeholder;
+    input.value = value;
+    overlay.querySelector(".app-modal-ok").textContent = okLabel;
+    document.body.appendChild(overlay);
+    setTimeout(() => input.focus(), 20);
+    const close = (val) => { overlay.remove(); resolve(val); };
+    overlay.querySelector(".app-modal-ok").addEventListener("click", () => close(input.value.trim() || null));
+    overlay.querySelector(".app-modal-cancel").addEventListener("click", () => close(null));
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(null); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); close(input.value.trim() || null); }
+      if (e.key === "Escape") { e.preventDefault(); close(null); }
+    });
+  });
+}
+
 function selectedChatFiles() {
   return Array.from($("chat-file")?.files ?? []);
 }
@@ -678,20 +711,25 @@ async function createProjectChat(continueCurrent = false) {
 
 
 async function linkWorkspaceFolder() {
-  appendChatMessage("assistant", "Apro il picker cartelle Windows: scegli la cartella progetto da collegare.");
-  const result = await postJson("/api/workspace/pick_folder", {});
-  if (result.error) throw new Error(result.error);
-  if (!result.path) {
-    appendChatMessage("assistant", "Nessuna cartella collegata.");
-    return;
+  // Prima prova il picker nativo (funziona solo se il backend gira sulla
+  // stessa macchina con display, es. dev su Windows). Se non disponibile
+  // (app Tauri o backend headless sul rig), chiede il path e lo registra.
+  let result = await postJson("/api/workspace/pick_folder", {}).catch(() => ({ error: "picker non disponibile" }));
+  if (result.error || !result.path) {
+    const path = await promptModal(
+      "Incolla il percorso della cartella (sulla macchina del backend)",
+      { placeholder: "/home/tillo/progetti/mio-progetto", okLabel: "Collega" });
+    if (!path) return;
+    result = await postJson("/api/workspace/link_path", { path });
+    if (result.error) throw new Error(result.error);
   }
   await refresh();
   await selectProject(result.path);
-  appendChatMessage("assistant", `Cartella collegata e autorizzata: ${result.path}. Ora crawl/sandbox possono usarla in sicurezza.`);
+  appendChatMessage("assistant", `Cartella collegata e autorizzata: ${result.path}.`);
 }
 
 async function createWorkspaceProject() {
-  const name = window.prompt("Nome del nuovo progetto DEVIN:");
+  const name = await promptModal("Nome del nuovo progetto DEVIN", { placeholder: "es. calcolatrice", okLabel: "Crea" });
   if (!name || !name.trim()) return;
   const result = await postJson("/api/workspace/projects/new", { name: name.trim() });
   if (result.error) throw new Error(result.error);

@@ -160,6 +160,27 @@ async def api_workspace_projects_new(request: Request):
     return {"name": name, "path": str(target), "created": True}
 
 
+@router.post("/api/workspace/link_path")
+async def api_workspace_link_path(request: Request):
+    """Collega una cartella per PATH esplicito. Fallback al dialog nativo per
+    l'app desktop (Tauri) e per il backend headless sul rig, dove il picker
+    grafico non e' disponibile: l'utente incolla il path (della macchina del
+    backend) e viene registrato nella allowlist. 2026-07-22."""
+    from devin.ui.fast_app import _register_allowed_root  # lazy: no circolo
+    data = await request.json()
+    raw = str(data.get("path", "")).strip()
+    if not raw:
+        return {"error": "path mancante"}
+    p = Path(raw).expanduser()
+    if not p.is_dir():
+        return {"error": f"cartella inesistente sul backend: {raw}"}
+    resolved = str(p.resolve())
+    if _register_allowed_root(resolved):
+        return {"path": resolved,
+                "project": {"name": p.name, "path": resolved, "linked": True}}
+    return {"error": "cartella non registrabile (inesistente o non accessibile)"}
+
+
 @router.post("/api/workspace/projects/remove")
 async def api_workspace_projects_remove(request: Request):
     """Rimuove un progetto dalla sidebar (2026-07-21).

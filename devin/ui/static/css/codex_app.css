@@ -2798,3 +2798,52 @@ a.quick-link {
   transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 a.quick-link:hover { border-color: rgba(99,102,241,0.5); color: var(--text); }
+
+/* =====================================================================
+   MODALE INTERNO (2026-07-22) — sostituisce window.prompt (non supportato
+   in Tauri). Usato per Nuovo progetto e Collega cartella (path).
+   ===================================================================== */
+.app-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 8, 20, 0.62);
+  backdrop-filter: blur(2px);
+}
+.app-modal {
+  width: min(440px, 92vw);
+  background: var(--panel, #131a2b);
+  border: 1px solid var(--border-strong, rgba(167,139,250,0.38));
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 30px 90px rgba(2,6,20,0.6);
+}
+.app-modal-msg {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--text);
+}
+.app-modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2, rgba(255,255,255,0.03));
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+.app-modal-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.18);
+}
+.app-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
