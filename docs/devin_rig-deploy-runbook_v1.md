@@ -51,6 +51,26 @@ Sul **rig** (via SSH `tillo@192.168.1.100`), nella root del clone:
      `bash scripts/rig/install_devin_backend.sh`
 5. Verifica: `curl -s http://127.0.0.1:5000/api/health`
 
+### Intoppo ricorrente: `config/settings.json` blocca il `git pull`
+`config/settings.json` e' **tracciato** in git ma sul rig viene modificato in
+locale (`rig_self_hosted=true`, `ui.host=0.0.0.0` messi dall'install script).
+Quando un commit in arrivo tocca lo stesso file, `git pull` si ferma con
+"Your local changes would be overwritten by merge".
+
+Via pulita, con backup (sul rig, root del clone):
+```bash
+cp config/settings.json ~/settings.rig.bak      # backup
+git checkout -- config/settings.json            # scarta la modifica locale
+git pull
+bash scripts/rig/install_devin_backend.sh       # ri-mette rig_self_hosted/host + restart
+diff ~/settings.rig.bak config/settings.json     # controllo: altre personalizzazioni perse?
+```
+Fix definitivo (da fare bene, prossimo giro): **smettere di tracciare**
+`config/settings.json`, metterlo in `.gitignore` e tenere un
+`config/settings.example.json` come template. Cosi' la config per-macchina non
+va mai in conflitto ai pull. (`git update-index --skip-worktree` NON basta: se
+upstream modifica il file, il pull si blocca comunque.)
+
 ### Quando serve toccare il venv `.venv-rig`
 Solo se il commit introduce **nuove dipendenze pip**. In quel caso, sul rig:
 `./.venv-rig/bin/pip install <nuova-dip>` (o rilancia `install_devin_backend.sh`,
