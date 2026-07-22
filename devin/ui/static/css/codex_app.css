@@ -2712,3 +2712,28 @@ button:active, .tiny-button:active, .icon-button:active,
   text-overflow: ellipsis;
   max-width: 100%;
 }
+
+/* =====================================================================
+   RESTYLE PASS 2 (2026-07-22) — palette "riteflow": navy profondo,
+   accento indaco + ciano, hairline viola tenue. Ridefinisce le variabili
+   di tema: essendo l'ultimo :root vince nel cascade e ri-veste tutta la UI.
+   Colori estratti da riteflow.webflow.io (:root reale del template).
+   ===================================================================== */
+:root {
+  --bg: #0e1422;
+  --panel: rgba(19, 26, 43, 0.92);
+  --panel-2: rgba(26, 35, 54, 0.85);
+  --panel-3: rgba(11, 16, 28, 0.72);
+  --panel-soft: rgba(167, 139, 250, 0.06);
+  --border: rgba(167, 139, 250, 0.20);
+  --border-strong: rgba(167, 139, 250, 0.38);
+  --text: #fbfbfb;
+  --muted: rgba(255, 255, 255, 0.62);
+  --muted-2: rgba(255, 255, 255, 0.42);
+  --accent: #6366f1;
+  --accent-2: #22d3ee;
+  --danger: #fb7185;
+  --success: #2dd4bf;
+  --shadow: 0 24px 70px rgba(2, 6, 20, 0.55);
+  --soft-glow: 0 0 0 1px rgba(167,139,250,0.06), 0 20px 80px rgba(2,6,20,0.45);
+}
