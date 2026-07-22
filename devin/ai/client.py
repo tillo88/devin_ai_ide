@@ -55,6 +55,12 @@ class AIClient:
         self.remote_coder_url = f"http://{self.remote_host}:{rig_port}/v1/chat/completions"
         self.remote_reasoning_url = self.remote_coder_url  # stesso endpoint, stesso modello
 
+        # Token opzionale per il model server del rig (llama.cpp --api-key).
+        # Se presente (env DEVIN_RIG_API_KEY > settings models.rig_api_key), viene
+        # inviato come Authorization: Bearer alle richieste REMOTE. Assente = niente
+        # header (comportamento precedente). Parte della routing robusta 2026-07-22.
+        self.rig_api_key = (os.getenv("DEVIN_RIG_API_KEY") or models_cfg.get("rig_api_key", "") or "").strip()
+
         # WOL config
         self.rig_mac = models_cfg.get("rig_mac", self.WOL_MAC_FALLBACK)
         self.wol_enabled = models_cfg.get("wol_enabled", True)
@@ -327,7 +333,7 @@ class AIClient:
         """Ping rapido (2s) a /v1/models."""
         try:
             base = url.replace("/v1/chat/completions", "")
-            r = requests.get(f"{base}/v1/models", timeout=2)
+            r = requests.get(f"{base}/v1/models", timeout=2, headers=self._auth_headers(url))
             return r.status_code == 200
         except Exception:
             return False
@@ -348,8 +354,27 @@ class AIClient:
             }
         }
 
+    def _auth_headers(self, url):
+        """Authorization Bearer per l'endpoint del modello del rig, se il token
+        e' configurato e l'URL e' remoto. Le richieste locali non lo ricevono."""
+        if self.rig_api_key and self.remote_host in url:
+            return {"Authorization": f"Bearer {self.rig_api_key}"}
+        return {}
+
     def _get_endpoints(self, mode="reasoning"):
-        """Seleziona URL e modello in base a disponibilita rig."""
+        """Seleziona URL e modello in base a disponibilita rig.
+
+        Routing robusto (2026-07-22): quando DEVIN gira SUL rig
+        (rig_self_hosted=true) il modello E' quello remoto (Ornith su 8080) —
+        non esiste un modello locale separato. In quel caso si usa SEMPRE
+        l'endpoint remoto: niente fallback silenzioso su un eventuale
+        localhost:8000 (che sarebbe il modello sbagliato). Se Ornith e' giu',
+        la richiesta fallisce in modo esplicito invece di rispondere col
+        modello sbagliato."""
+        if self.rig_self_hosted:
+            if mode == "reasoning":
+                return self.remote_reasoning_url, self.remote_reasoning_model
+            return self.remote_coder_url, self.remote_coder_model
         if mode == "reasoning":
             if self.remote_reasoning_ok:
                 return self.remote_reasoning_url, self.remote_reasoning_model
@@ -404,7 +429,8 @@ class AIClient:
                         "messages": messages,
                         "temperature": 0.2
                     },
-                    timeout=timeout
+                    timeout=timeout,
+                    headers=self._auth_headers(url)
                 )
                 r.raise_for_status()
                 data = r.json()
@@ -496,7 +522,8 @@ class AIClient:
                     "temperature": temperature,
                     "max_tokens": max_tokens
                 },
-                timeout=60
+                timeout=60,
+                headers=self._auth_headers(url)
             )
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
@@ -523,7 +550,8 @@ class AIClient:
                         "stream": True
                     },
                     timeout=120,
-                    stream=True
+                    stream=True,
+                    headers=self._auth_headers(url)
                 ) as r:
                     # 4xx = richiesta RIFIUTATA da un server RAGGIUNGIBILE: ritentare
                     # identico (o svegliare il rig) non serve. Causa tipica: contesto

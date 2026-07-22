@@ -62,6 +62,8 @@
     "rig_ctx_size": 12288,
     "rig_engine_note": "Motore: beellama (fork llama.cpp con KV cache TurboQuant, vedi ai-rig-iso-build/config/rig.env) o mainline — intercambiabili via swap-llama-flavor.sh sul rig, trasparente per DEVIN (stessa API OpenAI-compatible). --jinja richiesto per il chat template di Ornith.",
 
+    "rig_api_key": "",
+    "rig_api_key_note": "Token opzionale per il model server del rig (llama.cpp avviato con --api-key). Se valorizzato (o via env DEVIN_RIG_API_KEY), DEVIN lo invia come 'Authorization: Bearer' alle richieste verso il modello. Vuoto = nessun header (rete fidata). Parte del routing robusto 2026-07-22.",
     "local_models_dir": "/home/tillo/devin_ai_ide/devin/devin_models",
     "llama_server_path": "/home/tillo/.unsloth/llama.cpp/build/bin/llama-server",
     "local_models_dir_windows": "D:\\devin_ai_ide\\devin\\devin_models",
