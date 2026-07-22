@@ -1020,6 +1020,13 @@ async function decideRunChanges(projectPath, runId, action) {
       return;
     }
     appendChatMessage("assistant", `Run ${runId}: ${result.status}.`);
+    // Decisione presa: sblocco il pannello diff manuale e lo ripulisco, cosi'
+    // non resta la diff del run a invitare un apply manuale.
+    state.reviewingManifest = false;
+    state.reviewedChangeRunId = null;
+    const applyBtn = $("diff-apply-button");
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.title = ""; }
+    if ($("diff-input")) $("diff-input").value = "";
     await renderActivityRail(projectPath);
     await loadRunLog(runId);
   } catch (err) {
@@ -1047,6 +1054,15 @@ async function reviewRunChanges(projectPath, runId) {
     setText("diff-preview-status", "verified manifest");
     state.diffPreviewOk = false;
     state.reviewedChangeRunId = runId;
+    // Questa e' la diff VERIFICATA del run: va applicata dal banner (change
+    // manifest), NON con l'apply manuale del pannello (che scrive i file a mano
+    // e fa fallire l'approvazione con "source changed after verification").
+    state.reviewingManifest = true;
+    const applyBtn = $("diff-apply-button");
+    if (applyBtn) {
+      applyBtn.disabled = true;
+      applyBtn.title = "Usa ✓ Applica nel banner in alto per applicare le modifiche verificate del run";
+    }
     panel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (err) {
     appendChatMessage("assistant", `Preview non disponibile: ${err.message || err}`);
@@ -1363,6 +1379,10 @@ async function previewDiff() {
 
 
 async function applyDiffWithConfirmation() {
+  if (state.reviewingManifest) {
+    renderDiffPreview({ message: "Queste sono le modifiche verificate del run. Applicale con ✓ Applica nel banner in alto (approvazione), non con l'apply manuale." });
+    return;
+  }
   const patchText = $("diff-input")?.value.trim() ?? "";
   if (!patchText) {
     renderDiffPreview({ error: "Incolla una unified diff prima di applicarla." });
@@ -1743,6 +1763,15 @@ function setupChatComposer() {
     });
   });
 
+
+  // Se l'utente scrive/incolla una sua diff, non stiamo piu' rivedendo il
+  // manifest del run: riabilito l'apply manuale.
+  $("diff-input")?.addEventListener("input", () => {
+    if (!state.reviewingManifest) return;
+    state.reviewingManifest = false;
+    const applyBtn = $("diff-apply-button");
+    if (applyBtn) { applyBtn.disabled = false; applyBtn.title = ""; }
+  });
 
   $("diff-preview-button")?.addEventListener("click", () => {
     previewDiff().catch((err) => {

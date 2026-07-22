@@ -711,17 +711,6 @@ function setupDiagnosticsTabs() {
   });
 }
 
-// App nativa: la SPA e' bundlata (origin locale) e questa pagina e' aperta sul
-// backend via location.href. Un href="/app" caricherebbe la copia Jinja del
-// backend, uscendo dal bundle. Se c'e' storia di navigazione torniamo indietro,
-// cosi' rientriamo nella SPA del bundle; altrimenti fallback all'href normale.
-document.getElementById("diag-back-workspace")?.addEventListener("click", (event) => {
-  if (window.history.length > 1) {
-    event.preventDefault();
-    window.history.back();
-  }
-});
-
 wireActions();
 setupDiagnosticsTabs();
 loadDiagnostics();

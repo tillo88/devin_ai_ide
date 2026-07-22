@@ -3158,11 +3158,10 @@ body.right-collapsed .mind-panel {
 /* Pulsanti a scomparsa per riaprire un pannello compresso */
 .rail-reopen {
   position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 92px;
   z-index: 60;
   width: 26px;
-  height: 64px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
