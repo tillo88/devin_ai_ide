@@ -1557,14 +1557,8 @@ function commandActions() {
       group: "Diagnostics",
       run: () => { window.location.href = diagnosticsUrl("memory"); },
     },
-    {
-      id: "dashboard",
-      title: "Legacy dashboard",
-      description: "Fallback tecnico della vecchia dashboard",
-      icon: "↗",
-      group: "Navigation",
-      run: () => { window.location.href = "/"; },
-    },
+    // Legacy dashboard: route "/" ancora viva (magazzino Monaco/explorer) ma
+    // link nascosto dalla UI nuova finche' la Fase 2 non assorbe editor+explorer.
     ...state.projects.slice(0, 12).map((project) => ({
       id: `project:${project.path}`,
       title: `Progetto: ${project.name}`,
