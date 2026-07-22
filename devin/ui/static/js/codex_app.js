@@ -1667,7 +1667,9 @@ function diagnosticsUrl(section = "") {
   const params = new URLSearchParams();
   if (state.selectedProjectPath) params.set("project_path", state.selectedProjectPath);
   const query = params.toString();
-  return `/app/diagnostics${query ? `?${query}` : ""}${section ? `#${section}` : ""}`;
+  // App nativa: la pagina diagnostics e' servita dal BACKEND (non e' nel bundle
+  // locale), quindi va aperta sull'URL del backend scoperto (rig o locale).
+  return apiUrl(`/app/diagnostics${query ? `?${query}` : ""}${section ? `#${section}` : ""}`);
 }
 
 async function renderSteward() {
@@ -1693,7 +1695,9 @@ async function renderSteward() {
 }
 
 async function refresh() {
-  if (!state.selectedRunId) setText("mind-state", "loading");
+  // Solo al PRIMO caricamento mostra "loading": sui poll periodici (ogni 15s)
+  // aggiorna i dati in silenzio, senza il flicker da pagina web (2026-07-22).
+  if (!state.selectedRunId && !state.mindLoaded) setText("mind-state", "loading");
 
   try {
     const [mind, workspace] = await Promise.all([
@@ -1701,6 +1705,7 @@ async function refresh() {
       fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
     ]);
 
+    state.mindLoaded = true;
     renderMind(mind);
     renderProjects(workspace);
     renderSteward();  // fail-soft, non blocca il refresh
