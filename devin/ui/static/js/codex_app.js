@@ -408,6 +408,11 @@ function applyRunEventToActivity(event) {
     showRunStatus(event.run_id, status, { completed: ["success", "verified_success", "awaiting_approval"].includes(status) });
     loadRunLog(event.run_id).catch(() => {});
     if (state.selectedProjectPath) renderActivityRail(state.selectedProjectPath).catch(() => {});
+    // A fine run ricarico l'overview del progetto: e' li' che vengono
+    // renderizzati i bottoni decisione (Diff / Applica / Rifiuta) quando lo
+    // stato e' awaiting_approval. showRunStatus() sopra scrive solo il badge in
+    // #activity-run, quindi senza questo refresh l'utente vede solo testo.
+    loadProjectOverview().catch(() => {});
     return;
   }
   showRunStatus(event.run_id, "running");
