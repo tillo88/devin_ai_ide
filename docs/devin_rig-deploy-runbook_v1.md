@@ -1,0 +1,112 @@
+# DEVIN — Runbook deploy sul rig + architettura backend (v1)
+
+Istruzioni operative da NON dimenticare. Ricostruite dal repo (`scripts/rig/
+install_devin_backend.sh`, `scripts/deploy-devin-webapp.sh`, `src-tauri/src/
+main.rs`). Se un dettaglio marcato "DA CONFERMARE" e' sbagliato, correggilo qui.
+
+---
+
+## ⚠️ Regola d'oro
+
+**Le modifiche al codice NON sono sul rig finche' non fai: commit → push su
+GitHub → `git pull` sul rig → restart del servizio.**
+
+Il rig NON tira in automatico. Riavviare il servizio senza aver fatto pull
+ricarica lo STESSO codice di prima. (Errore gia' fatto una volta: non ripeterlo.)
+
+---
+
+## Architettura backend (due backend distinti)
+
+1. **Backend sul RIG — sempre attivo.** Servizio systemd `devin-backend.service`.
+   - Gira da un **clone git** del repo sul rig (`WorkingDirectory` = root del
+     clone, es. `/home/tillo/devin_ai_ide` — DA CONFERMARE il path esatto).
+   - Comando: `.venv-rig/bin/python devin/ui/fast_app.py`.
+   - Bind `0.0.0.0:5000` (raggiungibile dal PC sulla LAN a `192.168.1.100:5000`).
+   - `config/settings.json`: `models.rig_self_hosted=true`, `ui.host=0.0.0.0`.
+   - Parte al boot. Log: `journalctl -u devin-backend -f`.
+
+2. **Backend LOCALE sul PC — on-demand.** Lo spawna l'app desktop Tauri quando
+   il rig e' offline (`127.0.0.1:5000`). Legge i file del PC. Non e' un servizio.
+
+L'app desktop usa il frontend bundlato e parla a uno di questi backend. L'inferenza
+va al modello del rig; il backend locale e' backup.
+
+---
+
+## Aggiornare il rig (il metodo che usiamo: git pull)
+
+Dal **PC** (questa cartella `D:\devin_ai_ide`):
+
+1. Commit delle modifiche (gia' fatto man mano).
+2. **Push su GitHub**: `git push origin main`
+   (repo: `github.com/tillo88/devin_ai_ide`).
+
+Sul **rig** (via SSH `tillo@192.168.1.100`), nella root del clone:
+
+3. `git pull`
+4. Restart del servizio. Due modi equivalenti:
+   - rapido: `sudo systemctl restart devin-backend.service`
+   - oppure lo script idempotente (aggiorna anche config, poi restart):
+     `bash scripts/rig/install_devin_backend.sh`
+5. Verifica: `curl -s http://127.0.0.1:5000/api/health`
+
+### Quando serve toccare il venv `.venv-rig`
+Solo se il commit introduce **nuove dipendenze pip**. In quel caso, sul rig:
+`./.venv-rig/bin/pip install <nuova-dip>` (o rilancia `install_devin_backend.sh`,
+che reinstalla la lista core). Le dipendenze core gia' installate includono:
+openai, requests, numpy, scikit-learn, fastapi, uvicorn, python-multipart, pypdf,
+python-docx, openpyxl, python-pptx, python-dotenv, instructor, tree-sitter,
+tree-sitter-language-pack, bandit, youtube-transcript-api.
+
+---
+
+## Metodo alternativo (NON quello che usiamo): rsync → devin-webapp.service
+
+Esiste `scripts/deploy-devin-webapp.sh`: fa **rsync** da PC a `/opt/devin-ai-ide`
+sul rig e riavvia `devin-webapp.service`. E' un secondo percorso storico. **Non e'
+quello in uso** (noi facciamo git pull su `devin-backend.service`). Annotato solo
+per non confonderli: sono servizi e cartelle diversi.
+
+---
+
+## Frontend desktop (Tauri)
+
+Modifiche a UI/JS/CSS: il bundle `src-tauri/frontend` va rigenerato con
+`python scripts/build_frontend_bundle.py`, poi l'app Tauri va **ricompilata** per
+vederle nella finestra desktop. Per test veloci in browser basta la tab servita
+dal backend + Ctrl+F5 (JS live). Il backend serve la pagina Diagnostics: se giri
+l'exe vecchio, serve codice vecchio.
+
+---
+
+## Goal Mode — come lanciarla (backend sempre attivo)
+
+Endpoint (dopo che il rig ha il codice aggiornato):
+- `POST /api/goal/run` — body: `{project_path, objective, acceptance[], mode,
+  approval_policy, budget_steps, budget_seconds}`. `acceptance` accetta stringhe
+  DSL (`tests_pass`, `file_exists:PATH`, `contains:PATH:TESTO`, `absence:REGEX`,
+  `command:...`) o dict `{type, params}`. Ritorna `{goal_run_id, status}`.
+- `GET /api/goal/{goal_run_id}` — stato + attempts (polling).
+- `GET /api/goal` — lista.
+
+Trigger di test (PowerShell dal PC, verso il rig):
+```powershell
+$body = @{ project_path="workspace/goaltest_prime";
+  objective="crea is_prime.py con is_prime(n) e test_is_prime.py, test verdi";
+  mode="scaffold"; acceptance=@("tests_pass","file_exists:is_prime.py") } | ConvertTo-Json
+$r = Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/run" -Method Post -ContentType "application/json" -Body $body
+Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$($r.goal_run_id)" | ConvertTo-Json -Depth 6
+```
+CLI equivalente (se mai servisse a mano): `python scripts/run_goal.py --project ...`.
+
+---
+
+## Stato Goal Mode (per continuita')
+- Fatto: `goal_mode.py` (Goal + valutatore checklist), `goal_runner.py` (loop),
+  `goal_executors.py` (ruolo Scaffolder + auto-apply in scaffold), router
+  `/api/goal/*`, CLI. 43 test offline verdi.
+- Decisioni bloccate: vedi `docs/devin_roadmap_skills-goalmode_v2.md` (D1 checklist
+  a macchina, D2 cambia strategia sul blocco, D3 mini-swarm locale, D4 scaffold
+  loop / maintenance checkpoint).
+- Prossimo: provare lo Scaffolder reale sul rig; poi ruolo Tester; poi UI Goal.
