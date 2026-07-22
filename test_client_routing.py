@@ -44,3 +44,29 @@ def test_rig_api_key_only_on_remote(tmp_path):
 def test_no_key_no_header(tmp_path):
     c = _client(tmp_path, rig_self_hosted=True)
     assert c._auth_headers(c.remote_coder_url) == {}
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._payload = payload
+    def json(self):
+        return self._payload
+
+
+def test_model_discovery_openai_and_ollama_shapes(tmp_path):
+    c = _client(tmp_path)
+    # OpenAI shape: data[].id
+    assert c._parse_served_model(_Resp({"data": [{"id": "Ornith-1.0-35B.gguf"}]})) == "Ornith-1.0-35B.gguf"
+    # Ollama-ish shape: models[].name
+    assert c._parse_served_model(_Resp({"models": [{"name": "new-model.gguf"}]})) == "new-model.gguf"
+    assert c._parse_served_model(_Resp({})) is None
+
+
+def test_discovered_model_overrides_hardcoded(tmp_path):
+    c = _client(tmp_path, rig_self_hosted=True)
+    # Nothing discovered yet -> uses config hint.
+    assert c._get_endpoints("coder")[1] == "Ornith-test"
+    # Simulate discovery of a DIFFERENT model on the rig.
+    c.remote_model_actual = "some-other-model.gguf"
+    assert c._get_endpoints("coder")[1] == "some-other-model.gguf"
+    assert c._get_endpoints("reasoning")[1] == "some-other-model.gguf"

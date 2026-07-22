@@ -116,6 +116,12 @@ class AIClient:
         if self.use_openai and OpenAI:
             self.openai = OpenAI()
 
+        # Modello REALE servito dal rig, scoperto da /v1/models (future-proof
+        # 2026-07-22): NON hardcodare Ornith. Se sul rig cambia il modello,
+        # DEVIN usa quello effettivamente caricato senza toccare il config.
+        # Il nome in config (rig_models.unified) resta solo come fallback/hint.
+        self.remote_model_actual = None
+
         # Stato connessioni
         self.remote_coder_ok = False
         self.remote_reasoning_ok = False
@@ -334,9 +340,39 @@ class AIClient:
         try:
             base = url.replace("/v1/chat/completions", "")
             r = requests.get(f"{base}/v1/models", timeout=2, headers=self._auth_headers(url))
-            return r.status_code == 200
+            if r.status_code != 200:
+                return False
+            # Scopri il modello realmente servito (future-proof: model-agnostic).
+            if self.remote_host in url:
+                self.remote_model_actual = self._parse_served_model(r) or self.remote_model_actual
+            return True
         except Exception:
             return False
+
+    @staticmethod
+    def _parse_served_model(response):
+        """Estrae il nome del modello servito da /v1/models (formato OpenAI
+        `data[].id`, con fallback allo stile ollama `models[].name`)."""
+        try:
+            payload = response.json()
+        except Exception:
+            return None
+        data = payload.get("data")
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            mid = data[0].get("id")
+            if mid:
+                return str(mid)
+        models = payload.get("models")
+        if isinstance(models, list) and models and isinstance(models[0], dict):
+            name = models[0].get("name") or models[0].get("model")
+            if name:
+                return str(name)
+        return None
+
+    def _remote_model_name(self, fallback):
+        """Nome modello da usare verso il rig: quello scoperto se disponibile,
+        altrimenti il valore di config (hint)."""
+        return self.remote_model_actual or fallback
 
     def health(self):
         """Restituisce stato salute connessioni."""
@@ -373,15 +409,15 @@ class AIClient:
         modello sbagliato."""
         if self.rig_self_hosted:
             if mode == "reasoning":
-                return self.remote_reasoning_url, self.remote_reasoning_model
-            return self.remote_coder_url, self.remote_coder_model
+                return self.remote_reasoning_url, self._remote_model_name(self.remote_reasoning_model)
+            return self.remote_coder_url, self._remote_model_name(self.remote_coder_model)
         if mode == "reasoning":
             if self.remote_reasoning_ok:
-                return self.remote_reasoning_url, self.remote_reasoning_model
+                return self.remote_reasoning_url, self._remote_model_name(self.remote_reasoning_model)
             return self.local_reasoning_url, self.local_reasoning_model
         else:
             if self.remote_coder_ok:
-                return self.remote_coder_url, self.remote_coder_model
+                return self.remote_coder_url, self._remote_model_name(self.remote_coder_model)
             return self.local_coder_url, self.local_coder_model
 
     # ============================================================
