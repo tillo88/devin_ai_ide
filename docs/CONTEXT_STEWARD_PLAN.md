@@ -110,3 +110,17 @@ lavorare sul checkpoint operativo senza toccarle.
 CS0 -> CS1 -> CS2 -> CS3 -> CS4 -> CS5. CS0 e CS1 danno gia' valore da soli
 (sessioni lunghe senza trascinare token grezzi, con evidenza su disco). CS4
 (l'unico pezzo che consuma inferenza) arriva quando il resto e' solido.
+
+## 7. Stato realizzazione (2026-07-22)
+
+- CS0 FATTO: `devin/core/context_steward.py` (11 test).
+- CS1 FATTO: `devin/core/evidence_archive.py` (7 test).
+- CS2 FATTO: `devin/core/evidence_retriever.py` (5 test).
+- Coordinatore FATTO: `devin/core/steward_coordinator.py` - snapshot derivato
+  (6 test).
+- CS3 FATTO: `GET /api/steward/status` (read-only, derivato dal core) + badge
+  pannello fail-soft "contesto NN% · stato" (e2e test).
+- CS4 (compattazione LLM a confine) e CS5 (stabilita' prefisso KV): DA FARE,
+  richiedono il modello vivo (rig o llama locale) e osservazione dell'owner.
+  Vanno wired nel chat loop dove oggi gira `chat_continuity` (chat.py ~L435).
+  Suite complessiva: 466 passed.

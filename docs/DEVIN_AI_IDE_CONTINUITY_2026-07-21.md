@@ -225,6 +225,28 @@ solo finestra, zero browser ("yeeees partita subito").
   semantico su VectorStore esistente), CS3 pannello osservabile, CS4
   compattazione LLM a confine (unico pezzo con inferenza), CS5 stabilita' KV.
 
+## Sessione 2026-07-22: Context Steward CS2/CS3 + pulizia repo
+
+- **CS2** (`12f3365`... in realta' assorbito): `evidence_retriever.py` -
+  retrieval ibrido (lookup esatto/strutturato/keyword), fragment() bounded
+  mai file interi. 5 test.
+- **Coordinatore** + **CS3** (`f0693d3`, `04b676c`): `steward_coordinator.py`
+  (snapshot derivato, 6 test) + `GET /api/steward/status` read-only + badge
+  pannello fail-soft. e2e test. Suite **466 passed**.
+- **NOTA REPO IMPORTANTE**: un commit esterno bulk `c688186 "DEVIN WINDOWS"`
+  (GitHub Desktop) ha aggiunto ~5174 file di build-cache Rust
+  (`src-tauri/target/`) al repo E ha assorbito i miei file CS0/CS1/CS2. Ho
+  aggiunto `src-tauri/target/` e `src-tauri/gen/` a `.gitignore` e li ho
+  untrackati (`Cargo.lock` resta). ATTENZIONE: `git rm -r --cached` sul mount
+  D: e' patologicamente lento (espansione 5174 pathspec, minuti e crash);
+  la via veloce e' `git ls-files -z <dir> | git update-index -z
+  --force-remove --stdin` (0.05s). La build-cache resta comunque nella STORIA
+  (commit c688186): se serve ripulire la history, usare git-filter-repo da
+  Windows nativo (non dal mount). Non urgente.
+- CS4 (compattazione LLM) e CS5 (stabilita' KV) restano: richiedono il modello
+  vivo (rig/llama locale) e osservazione owner. Da wire nel chat loop dove gira
+  gia' chat_continuity (chat.py ~L435).
+
 ## Prossima ripresa: sequenza esatta
 
 1. Push su GitHub se ci sono commit locali non pubblicati.
