@@ -2,6 +2,16 @@ import sys
 import os
 from pathlib import Path
 
+# UTF-8 su stdout/stderr (2026-07-22): su Windows lo stream di default e' cp1252
+# e stampare caratteri Unicode (es. ✓ ✗ nei log dell'orchestratore) crashava con
+# 'charmap codec can't encode' — causa reale del fallimento scaffold. Da fare
+# PRIMA di qualsiasi print. errors='replace' come rete di sicurezza.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
