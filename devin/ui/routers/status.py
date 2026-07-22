@@ -80,6 +80,47 @@ async def api_mind_status():
     return _build_mind_status()
 
 
+@router.get("/api/steward/status")
+async def api_steward_status(project_path: str = "", chat_id: str = ""):
+    """Context Steward CS3 - read-only snapshot derived from the deterministic
+    core over the CURRENT chat history. No own state, no side effects: the panel
+    reflects the core, never drives it (docs/CONTEXT_STEWARD_PLAN.md CS3)."""
+    from devin.core.chat_persistence import ChatPersistence
+    from devin.core.steward_coordinator import StewardCoordinator
+    from devin.ui.fast_app import CONFIG_PATH
+
+    import json as _json
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+            config = _json.load(fh)
+    except Exception:
+        config = {}
+
+    # Senza progetto (general chat) non c'e' persistenza per-progetto: history
+    # vuota, stato IDLE. Con progetto, si legge la conversazione reale.
+    history = []
+    has_checkpoint = False
+    if project_path:
+        persistence = ChatPersistence(project_path, chat_id=chat_id or None)
+        history = persistence.load()
+        has_checkpoint = bool(persistence.get_continuity())
+
+    local_cfgs = config.get("models", {}).get("local_models", {})
+    contexts = [int(c.get("ctx_size")) for c in local_cfgs.values()
+                if isinstance(c, dict) and str(c.get("ctx_size", "")).isdigit()]
+    context_size = min(contexts) if contexts else 8192
+
+    coordinator = StewardCoordinator(task_id=chat_id or "general", settings=config)
+    coordinator.observe_history(history, context_size=context_size)
+    # A persisted continuity checkpoint means a compaction already happened.
+    if has_checkpoint:
+        coordinator.note_action("checkpoint di continuita' presente")
+    snapshot = coordinator.snapshot()
+    snapshot["context_size"] = context_size
+    snapshot["history_messages"] = len(history)
+    return snapshot
+
+
 @router.get("/api/models/info")
 async def api_models_info():
     from devin.ui.fast_app import (  # lazy: condivisi con chat/pages

@@ -1658,6 +1658,28 @@ function diagnosticsUrl(section = "") {
   return `/app/diagnostics${query ? `?${query}` : ""}${section ? `#${section}` : ""}`;
 }
 
+async function renderSteward() {
+  const el = $("steward-line");
+  if (!el) return;
+  try {
+    const params = new URLSearchParams();
+    if (state.selectedProjectPath) params.set("project_path", state.selectedProjectPath);
+    if (state.selectedChatId) params.set("chat_id", state.selectedChatId);
+    const q = params.toString();
+    const snap = await fetchJson(`/api/steward/status${q ? `?${q}` : ""}`);
+    const stateLabels = {
+      IDLE: "riposo", WATCHING: "osserva", PREPARING: "prepara checkpoint",
+      COMPACTING: "compatta", CHECKPOINT_REQUIRED: "checkpoint richiesto",
+      CONTROLLED_CONTINUATION: "nuovo slot",
+    };
+    const label = stateLabels[snap.state] ?? snap.state;
+    const pct = snap.pressure_pct ?? 0;
+    el.innerHTML = `<span class="steward-badge steward-${(snap.state || "IDLE").toLowerCase()}">🧭 contesto ${pct}% · ${escapeHtml(label)}</span>`;
+  } catch (err) {
+    el.innerHTML = "";  // fail-soft: niente Steward, nessun impatto sulla UI
+  }
+}
+
 async function refresh() {
   if (!state.selectedRunId) setText("mind-state", "loading");
 
@@ -1669,6 +1691,7 @@ async function refresh() {
 
     renderMind(mind);
     renderProjects(workspace);
+    renderSteward();  // fail-soft, non blocca il refresh
     if (!state.chatLoaded) {
       state.chatLoaded = true;
       await loadProjectOverview(state.selectedProjectPath);
