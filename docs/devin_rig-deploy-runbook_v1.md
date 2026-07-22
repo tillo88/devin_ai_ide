@@ -20,7 +20,8 @@ ricarica lo STESSO codice di prima. (Errore gia' fatto una volta: non ripeterlo.
 
 1. **Backend sul RIG — sempre attivo.** Servizio systemd `devin-backend.service`.
    - Gira da un **clone git** del repo sul rig (`WorkingDirectory` = root del
-     clone, es. `/home/tillo/devin_ai_ide` — DA CONFERMARE il path esatto).
+     clone: **`/home/tillo/devin_ai_ide`** in WSL distro `Ubuntu` (confermato da
+     AGENTS.md).
    - Comando: `.venv-rig/bin/python devin/ui/fast_app.py`.
    - Bind `0.0.0.0:5000` (raggiungibile dal PC sulla LAN a `192.168.1.100:5000`).
    - `config/settings.json`: `models.rig_self_hosted=true`, `ui.host=0.0.0.0`.

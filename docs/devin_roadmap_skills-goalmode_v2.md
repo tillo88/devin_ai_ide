@@ -127,6 +127,38 @@ coerente con D2 (più prove = più memoria).
 
 ---
 
+## Fonti canoniche gia' nel repo (leggere PRIMA di ri-derivare)
+
+Questa roadmap NON e' la fonte primaria. Il progetto ha gia' documentazione ricca:
+non re-inventarla, allinearsi.
+
+- **`docs/INDEX.md`** — mappa di tutti i doc; i `CONTINUITY_*` sono la verita'
+  operativa giorno-per-giorno.
+- **`docs/TRAINING.md`** — pipeline anti-contaminazione, quality gate, dataset/
+  benchmark, teacher packet. Doc canonico per training/eval.
+- **`docs/NUOVA IDEA PER TESTING-TRAINING-E POSSIBILE DEBUG.txt`** — la visione
+  dell'owner su validazione e training. Contiene:
+  - **P6 (10 debiti di training/eval)**: gold test aggirabili via `conftest.py`,
+    detector mock permissivi, crash validator -> `auto_success`, `runner_error`
+    non deve contare come tentativo, quality gate INDIPENDENTE dal codice del
+    modello, dataset SFT solo con provenance. Punti 1 e 5 = security-critical.
+  - **Validazione = ragionamento, non soluzione** (il "3+3=5" = non hai capito
+    il concetto). Verificare la logica, non l'output.
+  - **Consenso multi-agente coi "fratelloni"** (Produttore -> critici A/B ->
+    Giudice/MoA): usare i modelli grossi come ISPETTORI di logica.
+- **`AGENTS.md`** — regole operative del repo (path WSL reale, quoting, verifica,
+  anti-contaminazione memoria). Da rispettare.
+
+Come si lega a quel che abbiamo costruito: il **Tester adversariale** (verifica
+la logica, cerca di rompere) e' il **primo seme locale** di quella validazione
+concettuale. Le estensioni previste dalla visione:
+- da singolo verificatore a **consenso multi-modello** (piu' verificatori che si
+  confrontano; giudice che emette il verdetto) = il "consensus/Red Team" di D3;
+- validazione **concettuale** (spiega la regola astratta, poi controlla se la
+  soluzione la applica o bara con hardcoding/mock) sopra il semplice `tests_pass`;
+- aggancio duro a **P6**: gli attempt promossi a dataset SFT solo con provenance
+  e verifica reale (coerente con D2: piu' prove -> piu' memoria, ma SOLO verificate).
+
 ## Due livelli: agenti interni vs mini-swarm (NON confonderli)
 
 DEVIN ha GIA' un layer ad agenti dentro l'orchestrator (`devin/agents/`):
