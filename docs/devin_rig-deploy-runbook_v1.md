@@ -110,6 +110,15 @@ Endpoint (dopo che il rig ha il codice aggiornato):
 - `GET /api/goal/{goal_run_id}` — stato + attempts (polling).
 - `GET /api/goal` — lista.
 
+### Fatti confermati sul rig (da struttura ad albero, 2026-07-23)
+- Python del venv: **3.12** (`.pyc` cpython-312 in tutto `devin/`).
+- venv: `.venv-rig` (fastapi 0.139, bandit, ecc. gia' presenti).
+- Goal Mode **deployata**: `devin/core/goal_mode.py|goal_runner.py|goal_executors.py`
+  e `devin/ui/routers/goal.py` presenti e compilati.
+- Layout repo: `config/ devin/ docs/ requirements/ scripts/ src-tauri/ tests/`
+  + molti `test_*.py` a root. Esiste `devin/agents/` (planner/coder/critic):
+  e' l'inner loop dell'orchestrator, vedi roadmap v2.
+
 ### ⚠️ Ambiente del PC dell'utente (Alessandro)
 - **Cartella Download su `G:\Downloads`** (NON `$HOME\Downloads`). Usare sempre
   `G:\Downloads` nei comandi che salvano/scaricano file sul PC.

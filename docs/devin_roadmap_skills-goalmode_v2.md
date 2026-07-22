@@ -127,6 +127,32 @@ coerente con D2 (più prove = più memoria).
 
 ---
 
+## Due livelli: agenti interni vs mini-swarm (NON confonderli)
+
+DEVIN ha GIA' un layer ad agenti dentro l'orchestrator (`devin/agents/`):
+**Planner -> Coder -> Patcher -> Runner -> Critic**, con self-heal via Critic.
+Questi sono l'**inner loop di UN singolo run**: come una run produce e ripara il
+codice.
+
+Il mini-swarm della Goal Mode e' l'**outer loop**: ogni RUOLO (Scaffolder,
+Tester, Debugger) *e'* una run dell'orchestrator con una missione; il Goal loop +
+cancello di verifica li coordina. I due livelli **si compongono**:
+
+```
+Goal Mode (outer)  : Scaffolder -> Tester(verify) -> Debugger -> ...
+   ogni ruolo =
+Orchestrator run (inner) : Planner -> Coder -> Patcher -> Runner -> Critic
+```
+
+Implicazioni da ricordare:
+- **Non reimplementare** Planner/Coder/Critic nei ruoli: i ruoli li usano gia'
+  via `orchestrator.run` / `run_scaffold`.
+- Il **Critic** interno fa gia' self-heal sugli errori di tool di una run. Il
+  futuro ruolo **Debugger** (outer) interviene su cio' che l'inner loop NON e'
+  riuscito a sanare — non duplica il Critic, lo sovrasta.
+- Il nostro **Tester/Red Team** e' verifica adversariale *tra* run, diversa dal
+  Critic (che reagisce agli errori dentro una run).
+
 ## Piano di implementazione (fasi, rivisto)
 
 1. **Goal object + valutatore checklist** (backend, offline-testable). Traduce
