@@ -1704,6 +1704,61 @@ function setupChatComposer() {
       renderDiffPreview({ error: err.message });
     });
   });
+
+  // Link Diagnostics/Knowledge: gli <a href="/app/diagnostics"> sono relativi e
+  // nell'app nativa (bundle su origin locale) punterebbero dentro il bundle, dove
+  // la pagina non esiste. Li instradiamo sull'URL del BACKEND via diagnosticsUrl().
+  document.querySelectorAll("[data-diag-link]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      window.location.href = diagnosticsUrl(link.dataset.diagLink || "");
+    });
+  });
+
+  // Menu "+" del composer: skill/preset di prompt, modalità e allegati.
+  const plusBtn = $("composer-plus-btn");
+  const plusMenu = $("plus-menu");
+  const closePlusMenu = () => {
+    if (!plusMenu) return;
+    plusMenu.hidden = true;
+    plusBtn?.setAttribute("aria-expanded", "false");
+  };
+  const openPlusMenu = () => {
+    if (!plusMenu) return;
+    plusMenu.hidden = false;
+    plusBtn?.setAttribute("aria-expanded", "true");
+  };
+  plusBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (plusMenu?.hidden) openPlusMenu();
+    else closePlusMenu();
+  });
+  plusMenu?.addEventListener("click", (event) => {
+    const item = event.target.closest(".plus-item");
+    if (!item) return;
+    const prompt = item.dataset.plusPrompt;
+    const action = item.dataset.plus;
+    if (prompt) {
+      const input = $("chat-input");
+      if (input) {
+        input.value = input.value ? `${input.value.replace(/\s+$/, "")} ${prompt}` : prompt;
+        input.focus();
+      }
+    } else if (action === "attach") {
+      $("chat-file")?.click();
+    } else if (action === "link-folder") {
+      linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+    } else if (action === "new-project") {
+      createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+    }
+    closePlusMenu();
+  });
+  document.addEventListener("click", (event) => {
+    if (plusMenu && !plusMenu.hidden && !event.target.closest(".composer-plus")) closePlusMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closePlusMenu();
+  });
 }
 
 function diagnosticsUrl(section = "") {

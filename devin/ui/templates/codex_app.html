@@ -33,7 +33,7 @@
       <span class="status-pill" id="memory-count">memory: ...</span>
       <span class="status-pill" id="vram-pill">vram: ...</span>
       <button class="ghost-link command-open-button" id="open-command-palette" type="button" title="Command palette Ctrl+K">⌘K</button>
-      <a class="ghost-link" href="/app/diagnostics">Diagnostics</a>
+      <a class="ghost-link" href="/app/diagnostics" data-diag-link="">Diagnostics</a>
     </div>
   </header>
 
@@ -84,13 +84,31 @@
       <form class="chat-composer" id="chat-form">
         <textarea id="chat-input" rows="2" placeholder="Chiedi a DEVIN..."></textarea>
         <div class="composer-actions">
+          <div class="composer-plus">
+            <button type="button" id="composer-plus-btn" class="plus-button" title="Aggiungi: skill, modalità, allegati" aria-haspopup="true" aria-expanded="false">+</button>
+            <div class="plus-menu" id="plus-menu" role="menu" hidden>
+              <button type="button" class="plus-item" data-plus="attach" role="menuitem">📎 Allega file</button>
+              <button type="button" class="plus-item" data-plus="link-folder" role="menuitem">📁 Collega cartella</button>
+              <div class="plus-sep"></div>
+              <div class="plus-group-label">Modalità</div>
+              <button type="button" class="plus-item" data-plus-prompt="Fai il punto del progetto: struttura, stato attuale e prossimi passi consigliati." role="menuitem">📋 Punto del progetto</button>
+              <button type="button" class="plus-item" data-plus="new-project" role="menuitem">✨ Nuovo progetto</button>
+              <button type="button" class="plus-item" data-plus-prompt="Analizza il progetto selezionato e trova eventuali bug o fragilità, poi proponi i fix." role="menuitem">🐛 Caccia ai bug</button>
+              <div class="plus-sep"></div>
+              <div class="plus-group-label">Skills</div>
+              <button type="button" class="plus-item" data-plus-prompt="Scrivi test unitari completi per il codice indicato, coprendo i casi limite. I test devono passare." role="menuitem">🧪 Scrivi i test</button>
+              <button type="button" class="plus-item" data-plus-prompt="Fai il refactor del codice indicato mantenendo il comportamento invariato: migliora leggibilità, nomi e struttura." role="menuitem">🔧 Refactor</button>
+              <button type="button" class="plus-item" data-plus-prompt="Spiega passo per passo cosa fa il codice indicato e dove sono i punti critici." role="menuitem">📖 Spiega il codice</button>
+              <button type="button" class="plus-item" data-plus-prompt="Scrivi/aggiorna la documentazione (README e docstring) per il modulo indicato." role="menuitem">📝 Documenta</button>
+            </div>
+          </div>
           <select id="chat-mode" title="Model mode">
             <option value="auto">auto</option>
             <option value="chat">chat</option>
             <option value="reasoning">reasoning</option>
           </select>
           <label class="toggle-label"><input type="checkbox" id="chat-web"> web</label>
-          <label class="attach-button" title="Attach one or more files">Files<input type="file" id="chat-file" multiple></label>
+          <input type="file" id="chat-file" multiple hidden>
           <span class="mini-label" id="chat-file-label" title="No files attached">no files</span>
           <button type="submit" id="chat-send">Invia</button>
         </div>
@@ -161,8 +179,8 @@
       </section>
 
       <section class="panel-section rail-footer">
-        <a class="quick-link" href="/app/diagnostics">Diagnostics</a>
-        <a class="quick-link" href="/app/diagnostics#knowledge">Knowledge</a>
+        <a class="quick-link" href="/app/diagnostics" data-diag-link="">Diagnostics</a>
+        <a class="quick-link" href="/app/diagnostics#knowledge" data-diag-link="knowledge">Knowledge</a>
       </section>
     </aside>
   </main>
