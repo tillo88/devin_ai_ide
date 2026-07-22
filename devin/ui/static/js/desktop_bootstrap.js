@@ -1,16 +1,19 @@
 // Desktop bootstrap (app nativa 2026-07-22).
 //
-// La UI e' bundlata nell'app: prima di avviarla, questo bootstrap SCOPRE il
-// backend rig-first e solo dopo carica il resto dell'app. Se nessun backend
-// risponde, mostra il prompt "Rig esterno non presente, vuoi procedere in
-// locale?": Si' avvia il backup locale (comando Tauri), No non avvia nulla e
-// invita a controllare il rig. Nessun avvio automatico.
+// L'app desktop usa SEMPRE il backend LOCALE sul PC: e' quello che legge i TUOI
+// file (un programma vede solo il disco della macchina su cui gira). L'inferenza
+// va poi al modello del rig (Ornith su 8080), gestita DENTRO il backend con
+// fallback al modello locale. Il backend sul rig (:5000) e' un'altra cosa: la
+// web app raggiungibile da fuori per i progetti che stanno sul rig.
+//
+// Quindi qui: prova il backend locale; se non e' su, avvialo (leggero, niente
+// VRAM). La scelta rig-vs-locale riguarda il MODELLO, non il backend, e vive
+// nel backend stesso.
 //
 // Usato SOLO nel bundle desktop (lo inietta scripts/build_frontend_bundle.py).
 // La versione web resta servita dal backend, same-origin, senza bootstrap.
 
-const RIG_BASE = "http://192.168.1.100:5000";   // backend sul rig (quando attivo)
-const LOCAL_BASE = "http://127.0.0.1:5000";     // backup locale sul PC
+const LOCAL_BASE = "http://127.0.0.1:5000";
 
 async function probe(base, ms = 1500) {
   try {
@@ -29,12 +32,6 @@ function tauriInvoke(cmd, args) {
   if (t && t.core && typeof t.core.invoke === "function") return t.core.invoke(cmd, args);
   if (t && typeof t.invoke === "function") return t.invoke(cmd, args);
   return Promise.reject(new Error("API Tauri non disponibile"));
-}
-
-async function loadApp(base) {
-  window.__DEVIN_API_BASE__ = base;
-  removeOverlay();
-  await import("/static/js/codex_app.js");
 }
 
 function removeOverlay() {
@@ -56,46 +53,28 @@ function overlay(innerHtml) {
   return div;
 }
 
-function showConnecting() {
+async function loadApp(base) {
+  window.__DEVIN_API_BASE__ = base;
+  removeOverlay();
+  await import("/static/js/codex_app.js");
+}
+
+async function boot() {
   overlay('<div style="font-size:15px;">Connessione al backend DEVIN…</div>');
-}
+  if (await probe(LOCAL_BASE)) { await loadApp(LOCAL_BASE); return; }
 
-function showRigPrompt() {
-  const div = overlay(
-    '<div style="font-size:16px;margin-bottom:6px;">Rig esterno non presente</div>' +
-    '<div style="font-size:13px;color:#94a3b8;margin-bottom:20px;">Vuoi procedere in locale?' +
-    " Verranno avviati il backend e il modello di backup sul PC.</div>" +
-    '<button id="devin-boot-yes" style="margin:0 6px;padding:8px 18px;border-radius:999px;border:1px solid #22d3ee;background:#0891b2;color:#fff;cursor:pointer;">Sì, in locale</button>' +
-    '<button id="devin-boot-no" style="margin:0 6px;padding:8px 18px;border-radius:999px;border:1px solid #334155;background:transparent;color:#e5e7eb;cursor:pointer;">No</button>'
-  );
-  div.querySelector("#devin-boot-yes").addEventListener("click", startLocal);
-  div.querySelector("#devin-boot-no").addEventListener("click", () => {
-    overlay(
-      '<div style="font-size:15px;margin-bottom:8px;">Backend non avviato.</div>' +
-      '<div style="font-size:13px;color:#94a3b8;">Accendi il rig esterno e riapri DEVIN,' +
-      " oppure riavvia scegliendo la modalità locale.</div>"
-    );
-  });
-}
-
-async function startLocal() {
-  overlay('<div style="font-size:15px;">Avvio backend locale… (può richiedere qualche secondo)</div>');
+  // Backend locale non attivo: avvialo (e' leggero, legge i file; il modello
+  // locale parte solo come fallback se il rig e' giu').
+  overlay('<div style="font-size:15px;">Avvio del backend locale… (qualche secondo)</div>');
   try {
     const base = await tauriInvoke("start_local_backend");
     await loadApp(base || LOCAL_BASE);
   } catch (err) {
     overlay(
-      '<div style="font-size:15px;margin-bottom:8px;">Avvio locale fallito.</div>' +
-      '<div style="font-size:13px;color:#94a3b8;">' + String(err && err.message || err) + "</div>"
+      '<div style="font-size:15px;margin-bottom:8px;">Impossibile avviare il backend locale.</div>' +
+      '<div style="font-size:13px;color:#94a3b8;">' + String((err && err.message) || err) + "</div>"
     );
   }
-}
-
-async function boot() {
-  showConnecting();
-  if (await probe(RIG_BASE)) { await loadApp(RIG_BASE); return; }
-  if (await probe(LOCAL_BASE)) { await loadApp(LOCAL_BASE); return; }
-  showRigPrompt();
 }
 
 boot();

@@ -1,13 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// App nativa (owner, 2026-07-22):
-// - la UI e' BUNDLATA nell'app (frontendDist locale), non piu' una pagina
-//   servita dal backend: e' una vera app desktop;
-// - il frontend bundlato fa discovery rig-first (rig 192.168.1.100:5000, poi
-//   backup locale 127.0.0.1:5000) e, se nessun backend risponde, mostra il
-//   prompt "procedere in locale?"; il Si' chiama il comando start_local_backend
-//   qui sotto. Nessun avvio automatico del backend locale.
-// - il backend principale gira SUL RIG; il PC e' solo il backup d'emergenza.
+// App nativa (owner, 2026-07-22, architettura chiarita):
+// - la UI e' BUNDLATA nell'app (frontendDist locale): e' una vera app desktop;
+// - l'app usa SEMPRE il backend LOCALE sul PC (127.0.0.1:5000): e' quello che
+//   legge i FILE del PC (un processo vede solo il disco della sua macchina).
+//   Il bootstrap del frontend prova il backend locale e, se non e' attivo,
+//   chiama start_local_backend qui sotto per avviarlo (leggero, niente VRAM);
+// - l'inferenza va al modello del rig (Ornith), gestita DENTRO il backend con
+//   fallback al modello locale: la scelta rig-vs-locale riguarda il MODELLO,
+//   non il backend;
+// - il backend sul rig (:5000) e' un'altra cosa: la web app da fuori per i
+//   progetti che stanno sul rig.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
