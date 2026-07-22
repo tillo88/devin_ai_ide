@@ -36,7 +36,11 @@ class GoalRunRequest(BaseModel):
     approval_policy: str = "auto"
     budget_steps: int = 20
     budget_seconds: int = 3600
+    role: str = "scaffolder"        # ruolo del mini-swarm: scaffolder | tester
     goal: Optional[dict] = None     # alternativa: intero goal_v1
+
+
+VALID_ROLES = {"scaffolder", "tester"}
 
 
 def _now() -> str:
@@ -93,17 +97,21 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor) 
             rec["finished_at"] = _now()
 
 
-def _build_scaffolder_executor():
-    """Esecutore di PRODUZIONE (Orchestrator + apply reale). Lazy import: carica
-    l'orchestrator solo quando serve davvero."""
+def _build_executor(role: str):
+    """Esecutore di PRODUZIONE per il ruolo scelto (Orchestrator + apply reale).
+    Lazy import: carica l'orchestrator solo quando serve davvero."""
     from devin.ui.fast_app import CONFIG_PATH  # lazy: costante condivisa
     from devin.core.goal_executors import (
         build_orchestrator_scaffold_runner,
+        build_orchestrator_tester_runner,
         default_apply_fn,
         scaffolder_executor,
+        tester_executor,
     )
-    run_scaffold_fn = build_orchestrator_scaffold_runner(CONFIG_PATH)
-    return scaffolder_executor(run_scaffold_fn, apply_fn=default_apply_fn())
+    apply_fn = default_apply_fn()
+    if role == "tester":
+        return tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn)
+    return scaffolder_executor(build_orchestrator_scaffold_runner(CONFIG_PATH), apply_fn=apply_fn)
 
 
 @router.post("/api/goal/run")
@@ -112,6 +120,8 @@ async def api_goal_run(req: GoalRunRequest):
         goal = goal_from_request(req)
     except (GoalError, ValueError, KeyError) as exc:
         return {"error": f"goal non valido: {exc}"}
+
+    role = req.role if req.role in VALID_ROLES else "scaffolder"
 
     # Risolvi SEMPRE a path assoluto: un project_path relativo verrebbe risolto
     # rispetto alla CWD del servizio (imprevedibile) e non sapremmo dove sono
@@ -128,6 +138,7 @@ async def api_goal_run(req: GoalRunRequest):
             "reason": "",
             "objective": goal.objective,
             "mode": goal.mode,
+            "role": role,
             "approval_policy": goal.approval_policy,
             "requires_checkpoint": goal.requires_checkpoint(),
             "project_path": project,
@@ -138,7 +149,7 @@ async def api_goal_run(req: GoalRunRequest):
         }
 
     try:
-        executor = _build_scaffolder_executor()
+        executor = _build_executor(role)
     except Exception as exc:
         with _lock:
             _goal_runs[goal_run_id]["status"] = "error"

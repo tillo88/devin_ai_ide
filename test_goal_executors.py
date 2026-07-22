@@ -17,8 +17,11 @@ from devin.core.goal_mode import (
     Goal,
 )
 from devin.core.goal_executors import (
+    TESTER_TASK,
+    outcome_from_run_result,
     outcome_from_scaffold_result,
     scaffolder_executor,
+    tester_executor as make_tester_executor,
 )
 from devin.core.goal_runner import (
     RESULT_NEEDS_APPROVAL,
@@ -127,6 +130,56 @@ def test_loop_scaffold_completo(tmp_path: Path):
     assert res.status == RESULT_SUCCESS
     assert (tmp_path / "main.py").exists()
     assert len(res.attempts) == 1
+
+
+# --- ruolo Tester ---------------------------------------------------------
+
+def test_tester_prompt_contiene_obiettivo():
+    prompt = TESTER_TASK.format(objective="una funzione is_prime")
+    assert "is_prime" in prompt
+    assert "ROMPERLO" in prompt  # e' adversariale, non confermativo
+
+
+def test_tester_executor_etichetta_strategy(tmp_path: Path):
+    applied = []
+    goal = _goal(mode=MODE_SCAFFOLD, path="test_x.py")
+
+    def fake_run_tester(task, project_path, run_id):
+        return {"status": "awaiting_approval"}
+
+    def fake_apply(p, r):
+        applied.append((p, r))
+
+    executor = make_tester_executor(fake_run_tester, apply_fn=fake_apply, run_id_factory=lambda: "run_t")
+    out = executor(goal, tmp_path, _ctx())
+    assert out.status == STEP_CHANGED
+    assert out.strategy == "tester"
+    assert applied == [(str(tmp_path), "run_t")]
+
+
+def test_outcome_from_run_result_strategy_param(tmp_path: Path):
+    out = outcome_from_run_result(
+        _goal(), tmp_path, "run_1",
+        {"success": False, "error": "boom"}, None, strategy="tester",
+    )
+    assert out.status == STEP_FAILED
+    assert out.strategy == "tester"
+
+
+def test_loop_tester_valida_con_test_generati(tmp_path: Path):
+    # Il Tester "scrive" un test file (via apply) che soddisfa file_exists.
+    goal = _goal(mode=MODE_SCAFFOLD, path="test_hardened.py")
+
+    def fake_run_tester(task, project_path, run_id):
+        return {"status": "awaiting_approval"}
+
+    def fake_apply(project_path, run_id):
+        (Path(project_path) / "test_hardened.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+
+    executor = make_tester_executor(fake_run_tester, apply_fn=fake_apply, run_id_factory=lambda: "run_t")
+    res = run_goal(goal, tmp_path, executor)
+    assert res.status == RESULT_SUCCESS
+    assert res.attempts[0].strategy == "tester"
 
 
 def test_loop_maintenance_manuale_va_in_attesa(tmp_path: Path):

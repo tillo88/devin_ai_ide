@@ -61,14 +61,18 @@ def failure_signature(result: dict) -> str:
     return f"status:{result.get('status') or 'unknown'}"
 
 
-def outcome_from_scaffold_result(
+def outcome_from_run_result(
     goal: Goal,
     project_root: Path,
     run_id: str,
     result: dict,
     apply_fn: ApplyFn | None,
+    *,
+    strategy: str,
 ) -> StepOutcome:
-    """Mappa il risultato di run_scaffold in uno StepOutcome per il loop.
+    """Mappa il risultato di un run (scaffold o maintenance) in uno StepOutcome.
+
+    Logica comune a tutti i ruoli; `strategy` etichetta il ruolo che ha agito.
 
     - awaiting_approval + non serve checkpoint (scaffold/auto): applica il
       manifest ORA (auto-apply) -> changed.
@@ -85,32 +89,39 @@ def outcome_from_scaffold_result(
                 apply_fn(str(project_root), run_id)
             except Exception as exc:  # apply fallito: trattalo come step fallito ritentabile
                 return StepOutcome(
-                    STEP_FAILED, strategy="scaffolder",
+                    STEP_FAILED, strategy=strategy,
                     detail=f"apply manifest fallito: {type(exc).__name__}: {exc}",
                     failure_signature=f"apply-error:{type(exc).__name__}",
                 )
             return StepOutcome(
-                STEP_CHANGED, strategy="scaffolder", produced_changes=True,
+                STEP_CHANGED, strategy=strategy, produced_changes=True,
                 detail=f"manifest applicato (run {run_id})",
             )
         # Checkpoint umano richiesto: lascia il manifest in attesa.
         return StepOutcome(
-            STEP_CHANGED, strategy="scaffolder", produced_changes=True,
+            STEP_CHANGED, strategy=strategy, produced_changes=True,
             detail=f"manifest in attesa di approvazione (run {run_id})",
         )
 
     if result.get("success"):
         return StepOutcome(
-            STEP_CHANGED, strategy="scaffolder",
+            STEP_CHANGED, strategy=strategy,
             produced_changes=bool(result.get("files_written")),
             detail=str(status or "ok"),
         )
 
     return StepOutcome(
-        STEP_FAILED, strategy="scaffolder",
-        detail=(result.get("error") or "scaffold fallito")[:200],
+        STEP_FAILED, strategy=strategy,
+        detail=(result.get("error") or "run fallito")[:200],
         failure_signature=failure_signature(result),
     )
+
+
+def outcome_from_scaffold_result(
+    goal: Goal, project_root: Path, run_id: str, result: dict, apply_fn: ApplyFn | None,
+) -> StepOutcome:
+    """Compat: mapping per il ruolo Scaffolder."""
+    return outcome_from_run_result(goal, project_root, run_id, result, apply_fn, strategy="scaffolder")
 
 
 def scaffolder_executor(
@@ -133,6 +144,47 @@ def scaffolder_executor(
     return executor
 
 
+# --- Ruolo Tester: verificatore adversariale --------------------------------
+
+# Il Tester non "conferma" il codice: cerca di ROMPERLO. Questo prompt e' il suo
+# cervello. Va al modello avvolgendo l'obiettivo originale del progetto.
+TESTER_TASK = (
+    "Agisci come VERIFICATORE ADVERSARIALE del progetto. Il tuo compito NON e' "
+    "confermare che il codice funziona, ma cercare di ROMPERLO con test rigorosi.\n"
+    "Obiettivo originale del progetto: {objective}\n\n"
+    "Scrivi (o rafforza) una suite di test che:\n"
+    "- copra casi limite e valori di confine, input vuoti/nulli/zero/negativi;\n"
+    "- includa casi che distinguono un'implementazione CORRETTA da una plausibile "
+    "ma SBAGLIATA (esempi per una primalita': 1, 2, 9, 25, quadrati di primi, "
+    "primi grandi, numeri pari; adatta il ragionamento al dominio reale del "
+    "progetto);\n"
+    "- abbia assert chiari e specifici, un test per caso, nomi parlanti;\n"
+    "- passi SOLO se l'implementazione e' davvero corretta.\n\n"
+    "NON modificare la logica di produzione: scrivi soltanto test. Se i test "
+    "rivelano un bug, lasciali fallire: e' esattamente il segnale che serve."
+)
+
+
+def tester_executor(
+    run_tester_fn: RunScaffoldFn,
+    *,
+    apply_fn: ApplyFn | None = None,
+    run_id_factory: Callable[[], str] = _new_run_id,
+) -> StepExecutor:
+    """Costruisce lo StepExecutor del ruolo Tester.
+
+    `run_tester_fn(task, project_path, run_id) -> result` in produzione avvolge
+    `orchestrator.run` (manutenzione) col prompt adversariale; nei test e' uno
+    stub. Il mapping del risultato e' comune agli altri ruoli.
+    """
+    def executor(goal: Goal, project_root: Path, ctx: StepContext) -> StepOutcome:
+        run_id = run_id_factory()
+        result = run_tester_fn(task=goal.objective, project_path=str(project_root), run_id=run_id)
+        return outcome_from_run_result(goal, Path(project_root), run_id, result or {}, apply_fn, strategy="tester")
+
+    return executor
+
+
 # --- cablaggio di produzione (non unit-testato: richiede modelli/rig) ---------
 
 def build_orchestrator_scaffold_runner(config_path: str, *, sse_callback=None) -> RunScaffoldFn:
@@ -148,6 +200,22 @@ def build_orchestrator_scaffold_runner(config_path: str, *, sse_callback=None) -
             return orch.run_scaffold(task=task, project_path=project_path, run_id=run_id)
 
     return run_scaffold_fn
+
+
+def build_orchestrator_tester_runner(config_path: str, *, sse_callback=None) -> RunScaffoldFn:
+    """run_tester_fn di produzione: usa orchestrator.run (manutenzione) col prompt
+    adversariale del Tester per rafforzare i test di un progetto esistente.
+
+    Da usare sul rig: qui non e' testato perche' carica i modelli.
+    """
+    from devin.core.orchestrator import Orchestrator
+
+    def run_tester_fn(task: str, project_path: str, run_id: str) -> dict:
+        full_task = TESTER_TASK.format(objective=task)
+        with Orchestrator(config_path=config_path, project_path=project_path, sse_callback=sse_callback) as orch:
+            return orch.run(task=full_task, project_path=project_path, run_id=run_id)
+
+    return run_tester_fn
 
 
 def default_apply_fn() -> ApplyFn:
