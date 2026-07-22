@@ -75,6 +75,24 @@ PYEOF
 # --- 3. unit systemd ---------------------------------------------------------
 SERVICE_USER="${SUDO_USER:-$USER}"
 UNIT_PATH=/etc/systemd/system/devin-backend.service
+
+# Non sovrascrivere una unit gia' personalizzata dall'owner (es. ExecStartPre
+# con health-check del rig, ordering, dipendenze dai mount): un rerun dopo
+# git pull non deve cancellare quel lavoro. Per rigenerarla: FORCE_UNIT=1.
+if [ -f "$UNIT_PATH" ] && [ "${FORCE_UNIT:-0}" != "1" ]; then
+    echo ">> Unit systemd gia' presente: la lascio invariata (FORCE_UNIT=1 per rigenerarla)."
+    echo ">> Riavvio il servizio per applicare le modifiche al config."
+    sudo systemctl restart devin-backend.service || true
+    sleep 2
+    sudo systemctl status devin-backend.service --no-pager -l | head -12 || true
+    echo ""
+    echo ">> Verifica: curl -s http://127.0.0.1:5000/api/health"
+    curl -s --max-time 5 http://127.0.0.1:5000/api/health || echo "(non ancora pronto)"
+    echo ""
+    echo "Fatto (config aggiornato, unit invariata)."
+    exit 0
+fi
+
 echo ">> Installo unit systemd ($UNIT_PATH, user=$SERVICE_USER)"
 sudo tee "$UNIT_PATH" > /dev/null <<UNITEOF
 [Unit]
