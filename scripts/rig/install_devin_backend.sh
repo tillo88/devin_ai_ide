@@ -38,22 +38,38 @@ echo ">> Installo requirements core (playwright/crawl4ai opzionali, dopo)"
     tree-sitter "tree-sitter-language-pack==0.13.0" \
     bandit youtube-transcript-api
 
-# --- 2. config: rig_self_hosted=true ---------------------------------------
-echo ">> Imposto models.rig_self_hosted=true in config/settings.json"
+# --- 2. config: rig_self_hosted=true + bind LAN -----------------------------
+echo ">> Imposto models.rig_self_hosted=true e ui.host=0.0.0.0 in config/settings.json"
 ./.venv-rig/bin/python - <<'PYEOF'
 import json
 from pathlib import Path
 
 path = Path("config/settings.json")
 config = json.loads(path.read_text(encoding="utf-8"))
+changed = False
+
 models = config.setdefault("models", {})
 if models.get("rig_self_hosted") is not True:
     models["rig_self_hosted"] = True
-    path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
+    changed = True
     print("   rig_self_hosted: true (aggiornato)")
 else:
     print("   rig_self_hosted: gia' true")
+
+# Il backend sul rig deve essere raggiungibile dal PC (desktop app) sulla LAN,
+# non solo da localhost: bind 0.0.0.0. NB: LAN aperta senza token; per limitare
+# l'accesso impostare DEVIN_API_TOKEN (vedi devin/ui/token_gate.py).
+ui = config.setdefault("ui", {})
+if ui.get("host") != "0.0.0.0":
+    ui["host"] = "0.0.0.0"
+    changed = True
+    print("   ui.host: 0.0.0.0 (backend esposto sulla LAN per il PC)")
+else:
+    print("   ui.host: gia' 0.0.0.0")
+
+if changed:
+    path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
 PYEOF
 
 # --- 3. unit systemd ---------------------------------------------------------
