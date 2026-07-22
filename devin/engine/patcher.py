@@ -553,9 +553,22 @@ class Patcher:
 
         sandbox_path = create_sandbox(project_path, sandbox_root=sandbox_root)
         sandbox_root = sandbox_path.resolve()
+        project_root = Path(project_path).resolve()
         written = []
         for rel_path, content in files.items():
-            target = (sandbox_path / rel_path).resolve()
+            # I modelli spesso emettono path ASSOLUTI verso il progetto
+            # (es. D:\...\progetto\file.py) invece che relativi. Con un path
+            # assoluto, `sandbox / path` IGNORA la sandbox e ritorna il path
+            # assoluto -> falso "fuori dal sandbox". Normalizza: se e' assoluto
+            # e sotto il progetto, rendilo relativo; se e' fuori dal progetto,
+            # rifiuta (vera guardia). 2026-07-22.
+            candidate = Path(rel_path)
+            if candidate.is_absolute():
+                try:
+                    candidate = candidate.resolve().relative_to(project_root)
+                except ValueError:
+                    raise RuntimeError(f"Whole-file: percorso assoluto fuori dal progetto: {rel_path!r}")
+            target = (sandbox_path / candidate).resolve()
             # deve restare dentro il sandbox
             if sandbox_root != target and sandbox_root not in target.parents:
                 raise RuntimeError(f"Whole-file: percorso non sicuro fuori dal sandbox: {rel_path!r}")
