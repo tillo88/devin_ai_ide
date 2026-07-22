@@ -44,9 +44,21 @@ function renderKeyValues(container, rows) {
     .join("");
 }
 
+// App nativa (2026-07-22): il frontend e' disaccoppiato dal backend. In modalita'
+// web/rig la UI e' servita dallo stesso origin (API_BASE = ""). Nell'app desktop
+// la UI e' bundlata come file locali e la shell Rust inietta window.__DEVIN_API_BASE__
+// con l'URL del backend scoperto (rig se up, altrimenti backup locale).
+const API_BASE = (typeof window !== "undefined" && window.__DEVIN_API_BASE__) || "";
+
+function apiUrl(path) {
+  if (typeof path !== "string") return path;
+  if (/^https?:\/\//i.test(path)) return path;  // gia' assoluto
+  return API_BASE + path;
+}
+
 async function fetchJson(url, options = {}) {
   const headers = { Accept: "application/json", ...(options.headers ?? {}) };
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(apiUrl(url), { ...options, headers });
   if (!res.ok) {
     const err = new Error(`${url}: ${res.status}`);
     err.status = res.status;
@@ -805,7 +817,7 @@ function startEventStream(runId) {
   if (!window.EventSource || !runId) return;
 
   const url = `/api/run/${encodeURIComponent(runId)}/events/stream?after_seq=${state.lastEventSeq}`;
-  const source = new EventSource(url);
+  const source = new EventSource(apiUrl(url));
   state.eventSource = source;
 
   source.onmessage = (message) => {
@@ -1121,13 +1133,13 @@ async function sendChatMessage(message) {
       formData.append("project_path", state.selectedProjectPath || "");
       formData.append("chat_id", state.selectedChatId || "");
       selectedFiles.forEach((file) => formData.append("files", file));
-      response = await fetch("/api/chat/document", {
+      response = await fetch(apiUrl("/api/chat/document"), {
         method: "POST",
         body: formData,
         signal: state.chatAbort.signal,
       });
     } else {
-      response = await fetch("/api/chat", {
+      response = await fetch(apiUrl("/api/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
