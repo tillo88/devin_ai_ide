@@ -3188,3 +3188,65 @@ body.right-collapsed .mind-panel {
   border-right: 0;
   border-radius: 10px 0 0 10px;
 }
+
+/* === Command center in alto (stato run + pipeline + ultimo run) === */
+.command-center {
+  height: auto;
+  min-height: 54px;
+  padding: 9px 16px;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+.command-center .cc-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.command-center .cc-state {
+  text-transform: capitalize;
+  font-weight: 600;
+  color: var(--text);
+}
+.command-center .cc-pipeline {
+  flex: 0 0 auto;
+  margin: 0;
+}
+.command-center .cc-run {
+  margin-left: auto;
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-weight: 500;
+}
+@media (max-width: 1120px) {
+  .command-center .cc-run { flex-basis: 100%; justify-content: flex-start; }
+}
+
+/* Sezione collassabile del pannello destro (Timeline) */
+.collapsible-section > summary.section-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.collapsible-section > summary.section-summary::-webkit-details-marker { display: none; }
+.collapsible-section > summary.section-summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+.collapsible-section[open] > summary.section-summary::before { transform: rotate(90deg); }
+.collapsible-section > summary.section-summary h2 { margin: 0; }

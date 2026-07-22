@@ -72,9 +72,18 @@
     </aside>
 
     <section class="panel workstream-panel">
-      <div class="panel-header">
-        <span>DEVIN Command Center</span>
-        <span class="status-dot" id="agent-dot"></span>
+      <div class="panel-header command-center">
+        <div class="cc-status">
+          <span class="status-dot" id="agent-dot"></span>
+          <span class="cc-state mini-label" id="mind-state">ready</span>
+        </div>
+        <div class="pipeline-steps cc-pipeline" id="pipeline-steps">
+          <span class="pipe-step">Plan</span>
+          <span class="pipe-step">Code</span>
+          <span class="pipe-step">Test</span>
+          <span class="pipe-step">Gate</span>
+        </div>
+        <div class="activity-run cc-run" id="activity-run">Nessun run recente in questo progetto.</div>
       </div>
       <div class="chat-thread" id="chat-thread" aria-live="polite">
         <div class="chat-hero">
@@ -164,26 +173,14 @@
 
     <aside class="panel mind-panel focus-panel">
       <div class="panel-header">
-        <span>Attività</span>
+        <span>Attività &amp; File</span>
         <span class="panel-header-actions">
-          <span class="mini-label" id="mind-state">loading</span>
-          <button class="icon-button collapse-btn" data-collapse="right" title="Comprimi il pannello Attività" aria-label="Comprimi Attività">&#10095;</button>
+          <button class="icon-button collapse-btn" data-collapse="right" title="Comprimi il pannello" aria-label="Comprimi pannello">&#10095;</button>
         </span>
       </div>
 
-      <section class="panel-section">
-        <h2>Avanzamento</h2>
-        <div class="pipeline-steps" id="pipeline-steps">
-          <span class="pipe-step">Plan</span>
-          <span class="pipe-step">Code</span>
-          <span class="pipe-step">Test</span>
-          <span class="pipe-step">Gate</span>
-        </div>
-        <div class="activity-run" id="activity-run">Nessun run recente in questo progetto.</div>
-      </section>
-
-      <section class="panel-section activity-feed-section">
-        <h2>Timeline live</h2>
+      <details class="panel-section activity-feed-section collapsible-section" open>
+        <summary class="section-summary"><h2>Timeline live</h2></summary>
         <div class="timeline activity-timeline" id="timeline" aria-live="polite">
           <article class="timeline-item timeline-empty">
             <span class="timeline-kind">idle</span>
@@ -194,7 +191,7 @@
           <summary>Log tecnico</summary>
           <pre id="run-log-output">Nessun run selezionato.</pre>
         </details>
-      </section>
+      </details>
 
       <section class="panel-section">
         <div class="section-title-row">
