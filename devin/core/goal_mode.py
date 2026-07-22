@@ -299,9 +299,19 @@ def _check_tests_pass(criterion: Criterion, root: Path, execute: bool) -> Criter
     if not execute:
         return CriterionResult(criterion, False, "non eseguito (execute=False)")
     timeout = int(criterion.params.get("timeout", 180))
+    # Ignora le dir rumorose (soprattutto il sandbox annidato `workspace/`, che
+    # contiene COPIE dei file di test): due `test_x.py` con lo stesso nome fanno
+    # fallire pytest con "import file mismatch". `--import-mode=importlib` elimina
+    # anche la collisione di basename.
+    ignores: list[str] = []
+    for name in _SKIP_DIRS:
+        d = root / name
+        if d.is_dir():
+            ignores += ["--ignore", str(d)]
     # Stesso approccio del quality gate dell'orchestrator: pytest, fallback unittest.
     for argv in (
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--maxfail=20"],
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "--import-mode=importlib", "--maxfail=20", *ignores],
         [sys.executable, "-m", "unittest", "discover", "-v"],
     ):
         proc = _run(argv, root, timeout)

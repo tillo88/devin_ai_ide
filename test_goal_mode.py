@@ -107,6 +107,17 @@ def test_execute_false_salta_i_comandi(tmp_path: Path):
     assert "execute=False" in ev.results[0].detail
 
 
+def test_tests_pass_ignora_sandbox_annidata(tmp_path: Path):
+    # Copia del test dentro workspace/sandboxes/ (come lo scaffold): senza ignore
+    # farebbe fallire pytest con "import file mismatch" per basename identico.
+    (tmp_path / "test_a.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    sandbox = tmp_path / "workspace" / "sandboxes" / "run1"
+    sandbox.mkdir(parents=True)
+    (sandbox / "test_a.py").write_text("def test_a():\n    assert False\n", encoding="utf-8")
+    ev = evaluate_goal(_goal([Criterion("tests_pass", {"timeout": 60})]), tmp_path)
+    assert ev.satisfied  # solo il test reale in root viene eseguito, e passa
+
+
 def test_tests_pass_verde_e_rosso(tmp_path: Path):
     green = tmp_path / "green"
     green.mkdir()
