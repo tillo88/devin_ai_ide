@@ -103,6 +103,7 @@ def run_goal(
     *,
     max_identical_failures: int = 3,
     clock: Callable[[], float] = time.monotonic,
+    on_attempt: Callable[[Attempt], None] | None = None,
 ) -> GoalRunResult:
     """Esegue il loop della Goal Mode fino a successo / blocco / budget / pausa.
 
@@ -134,7 +135,13 @@ def run_goal(
 
         # Rivaluta lo stato reale dopo lo step (la verita' e' sul filesystem).
         ev = evaluate_goal(goal, root)
-        attempts.append(Attempt(step, outcome.strategy, outcome.status, outcome.detail, ev.to_dict()))
+        attempt = Attempt(step, outcome.strategy, outcome.status, outcome.detail, ev.to_dict())
+        attempts.append(attempt)
+        if on_attempt is not None:
+            try:
+                on_attempt(attempt)
+            except Exception:
+                pass  # un observer non deve mai far cadere il loop
 
         if ev.satisfied:
             return GoalRunResult(RESULT_SUCCESS, "criteri soddisfatti", attempts, ev.to_dict())
