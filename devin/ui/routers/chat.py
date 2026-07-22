@@ -480,11 +480,12 @@ async def api_chat(req: ChatRequest):
         messages.extend(persisted_history[-history_limit:])
     messages.append({"role": "user", "content": content})
 
-    model_name = (
-        ai.local_reasoning_model
-        if selected_mode == "reasoning"
-        else ai.local_coder_model
-    )
+    # Il label deve riflettere il modello REALMENTE usato da ai.stream()
+    # (_get_endpoints sceglie rig Ornith vs locale in base a rig_self_hosted /
+    # disponibilita'), non sempre il coder locale. Fix 2026-07-22: prima
+    # etichettava sempre il modello locale -> la chat sembrava girare su qwen
+    # anche quando rispondeva Ornith sul rig.
+    _endpoint_url, model_name = ai._get_endpoints(selected_mode)
 
     config_key = "reasoning" if selected_mode == "reasoning" else "coder"
     model_cfg = ai.config.get("models", {}).get("local_models", {}).get(config_key, {})
