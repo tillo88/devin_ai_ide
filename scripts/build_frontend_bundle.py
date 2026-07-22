@@ -33,6 +33,16 @@ def build() -> Path:
         print("[warn] '{{ shell_version }}' non trovato nel template")
     html = html.replace("{{ shell_version }}", stamp)
 
+    # Desktop: la UI viene caricata DOPO la discovery del backend. Sostituisci
+    # il caricamento diretto di codex_app.js con il bootstrap, che scopre il
+    # backend (rig-first), gestisce il prompt e poi importa l'app.
+    main_script = f'<script type="module" src="/static/js/codex_app.js?v={stamp}"></script>'
+    boot_script = f'<script type="module" src="/static/js/desktop_bootstrap.js?v={stamp}"></script>'
+    if main_script in html:
+        html = html.replace(main_script, boot_script)
+    else:
+        print("[warn] tag di caricamento codex_app.js non trovato: bootstrap non iniettato")
+
     # Clean and recreate the bundle dir.
     if OUT_DIR.exists():
         shutil.rmtree(OUT_DIR)
