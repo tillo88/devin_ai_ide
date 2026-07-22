@@ -44,6 +44,9 @@ build/
 dist/
 *.spec
 node_modules/
+# Rust/Tauri build output and generated files (Cargo.lock IS tracked on purpose)
+src-tauri/target/
+src-tauri/gen/
 .idea/
 .vscode/
 .DS_Store
