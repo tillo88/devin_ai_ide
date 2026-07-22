@@ -502,6 +502,26 @@ body.codex-shell {
   border-color: rgba(34, 211, 238, 0.45);
 }
 
+.project-empty {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.project-empty p {
+  margin: 0 0 8px;
+}
+
+.project-empty-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
 .chat-list {
   display: grid;
   gap: 8px;

@@ -394,9 +394,29 @@ function renderProjects(payload) {
     `),
   ];
 
+  // Empty-state: nessun progetto ancora -> guida l'utente con CTA dirette
+  // (funzionano SENZA modello attivo, a differenza dei prompt in chat).
+  if (projects.length === 0) {
+    cards.push(`
+      <div class="project-empty">
+        <p>Nessun progetto ancora.</p>
+        <div class="project-empty-actions">
+          <button type="button" class="tiny-button" data-empty-new>+ Crea progetto</button>
+          <button type="button" class="tiny-button" data-empty-link>📁 Collega cartella</button>
+        </div>
+      </div>
+    `);
+  }
+
   list.innerHTML = cards.join("");
   list.querySelectorAll("[data-project-path]").forEach((button) => {
     button.addEventListener("click", () => selectProject(button.dataset.projectPath ?? ""));
+  });
+  list.querySelector("[data-empty-new]")?.addEventListener("click", () => {
+    createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+  });
+  list.querySelector("[data-empty-link]")?.addEventListener("click", () => {
+    linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
   });
   list.querySelectorAll("[data-remove-project-path]").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -972,7 +992,7 @@ function renderChatHistory(history = []) {
         <p class="chat-hero-sub"></p>
         <div class="chat-hero-suggestions">
           <button type="button" class="hero-chip" data-hero-prompt="Fai il punto del progetto: struttura, stato attuale e prossimi passi consigliati.">📋 Punto del progetto</button>
-          <button type="button" class="hero-chip" data-hero-prompt="Voglio creare un nuovo progetto da zero: fammi le domande che ti servono per impostarlo bene.">✨ Nuovo progetto</button>
+          <button type="button" class="hero-chip" data-hero-action="new-project">✨ Nuovo progetto</button>
           <button type="button" class="hero-chip" data-hero-prompt="Analizza il progetto selezionato e trova eventuali bug o fragilità, poi proponi i fix.">🐛 Caccia ai bug</button>
         </div>
       </div>`;
@@ -990,6 +1010,10 @@ function renderChatHistory(history = []) {
           input.focus();
         }
       });
+    });
+    // Azioni dirette (non prompt): creano/collegano senza modello attivo.
+    thread.querySelector('[data-hero-action="new-project"]')?.addEventListener("click", () => {
+      createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
     });
     return;
   }
