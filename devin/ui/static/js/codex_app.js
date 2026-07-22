@@ -396,7 +396,7 @@ function renderProjects(payload) {
     `,
     ...projects.map((project) => `
       <div class="chat-card-row ${project.path === state.selectedProjectPath ? "active" : ""}">
-        <button class="project-card ${project.path === state.selectedProjectPath ? "active" : ""}" data-project-path="${escapeHtml(project.path)}">
+        <button class="project-card ${project.path === state.selectedProjectPath ? "active" : ""}" data-project-path="${escapeHtml(project.path)}" title="${escapeHtml(project.name)}${project.path ? ` — ${escapeHtml(project.path)}` : ""}">
           <strong>${escapeHtml(project.name)}</strong>
           <span>${project.linked ? "linked · " : ""}${escapeHtml(project.chats ?? 0)} chat - ${escapeHtml(project.knowledge ?? 0)} knowledge</span>
           ${project.work_dir ? `<span class="project-workdir" title="${escapeHtml(project.work_dir)}">📁 ${escapeHtml(project.work_dir.split(/[\\/]/).pop())}</span>` : ""}
@@ -473,7 +473,7 @@ function renderChatList(chats = []) {
     `,
     ...chats.map((chat) => `
       <div class="chat-card-row ${chat.chat_id === state.selectedChatId ? "active" : ""}">
-        <button class="chat-card" data-chat-id="${escapeHtml(chat.chat_id)}">
+        <button class="chat-card" data-chat-id="${escapeHtml(chat.chat_id)}" title="${escapeHtml(chat.title || "Nuova chat")}">
           <strong>${escapeHtml(chat.title || "Nuova chat")}</strong>
           <span>${escapeHtml(chat.messages ?? 0)} messaggi</span>
         </button>

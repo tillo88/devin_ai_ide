@@ -2610,3 +2610,105 @@ details[open] > .collapsible-summary::after {
     font-size: 16px;
   }
 }
+
+/* =====================================================================
+   RESTYLE PASS 1 (2026-07-22) — controlli custom, troncamento, fluidita'.
+   Blocco di override in coda: usa le variabili di tema esistenti, cosi'
+   si adatta alla palette attiva. Obiettivo: togliere l'effetto "web 2000".
+   ===================================================================== */
+
+/* Select: via l'aspetto nativo del browser, chevron custom coerente. */
+select,
+.chat-composer select,
+.composer-actions select,
+.diagnostics-select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239aa7b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  padding-right: 34px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: var(--panel-2, rgba(255,255,255,0.03));
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+}
+select:hover,
+.chat-composer select:hover,
+.diagnostics-select:hover {
+  border-color: var(--border-strong, rgba(255,255,255,0.22));
+}
+select:focus,
+.chat-composer select:focus,
+.diagnostics-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+select option { background: #14161d; color: var(--text); }
+
+/* Checkbox custom: quadratino coerente col tema + spunta. */
+input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1px solid var(--border-strong, rgba(255,255,255,0.24));
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  vertical-align: -3px;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+input[type="checkbox"]:hover { border-color: var(--accent); }
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px; top: 1px;
+  width: 5px; height: 9px;
+  border: solid #0b0b12;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Fluidita': transizioni coerenti su tutti gli elementi interattivi. */
+button, .tiny-button, .icon-button, .ghost-button, .primary-mini-button,
+.project-card, .chat-card, .hero-chip, .command-open-button, a.quick-link {
+  transition: background-color 140ms ease, border-color 140ms ease,
+              color 140ms ease, transform 120ms ease, box-shadow 140ms ease;
+}
+button:active, .tiny-button:active, .icon-button:active,
+.hero-chip:active, .project-card:active { transform: translateY(0.5px) scale(0.99); }
+
+/* Troncamento con ellissi: applicare .u-truncate agli span che possono
+   traboccare; l'attributo title (impostato nel render) mostra il testo
+   intero al passaggio del mouse. */
+.u-truncate {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-card strong, .project-card span,
+.chat-card strong, .chat-card span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
