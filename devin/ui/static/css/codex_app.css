@@ -2737,3 +2737,64 @@ button:active, .tiny-button:active, .icon-button:active,
   --shadow: 0 24px 70px rgba(2, 6, 20, 0.55);
   --soft-glow: 0 0 0 1px rgba(167,139,250,0.06), 0 20px 80px rgba(2,6,20,0.45);
 }
+
+/* =====================================================================
+   RESTYLE PASS 4 (2026-07-22) — rifinitura: scrollbar custom, focus ring
+   indaco, hover con micro-sollevamento, selezione testo. Ultimo tocco per
+   togliere i residui "web anni 2000".
+   ===================================================================== */
+
+/* Scrollbar sottili e coerenti col tema (via quelle di sistema). */
+* { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.28) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(148,163,184,0.22);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(99,102,241,0.55); background-clip: padding-box; }
+
+/* Selezione testo in tinta col brand. */
+::selection { background: rgba(99,102,241,0.32); color: #fbfbfb; }
+
+/* Focus ring coerente su campi e bottoni. */
+textarea:focus, input[type="text"]:focus, input[type="search"]:focus,
+.chat-composer textarea:focus, .diagnostics-input:focus, #diff-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.18);
+}
+button:focus-visible, .tiny-button:focus-visible, .icon-button:focus-visible,
+.hero-chip:focus-visible, .project-card:focus-visible, a.quick-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.35);
+}
+
+/* Micro-sollevamento all'hover: dà profondità senza pesare. */
+.project-card:hover, .chat-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.hero-chip:hover {
+  border-color: rgba(99,102,241,0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(2,6,20,0.35);
+}
+.panel:hover { box-shadow: 0 26px 74px rgba(2,6,20,0.42), inset 0 1px 0 rgba(255,255,255,.05); }
+
+/* Chip hero un filo piu' generosi e nitidi. */
+.hero-chip {
+  padding: 9px 16px;
+  border-radius: 12px;
+  font-weight: 500;
+  letter-spacing: .1px;
+}
+
+/* Link 'quick' (Diagnostics/Knowledge) come pill nitidi. */
+a.quick-link {
+  border-radius: 10px;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+a.quick-link:hover { border-color: rgba(99,102,241,0.5); color: var(--text); }
