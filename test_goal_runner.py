@@ -158,6 +158,88 @@ def test_budget_tempo_esaurito(tmp_path: Path):
     assert "tempo" in res.reason
 
 
+# --- cancello di verifica (DISPATCH: builder + verifier) ------------------
+
+def test_verifier_ok_da_successo_verificato(tmp_path: Path):
+    goal = _goal([Criterion("file_exists", {"path": "code.py"})], mode=MODE_SCAFFOLD)
+
+    def builder(g, root, ctx):
+        (Path(root) / "code.py").write_text("x=1\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    ran = []
+    def verifier(g, root, ctx):
+        ran.append(ctx.attempt_index)
+        return StepOutcome(STEP_CHANGED, strategy="tester", produced_changes=True)  # non rompe
+
+    res = run_goal(goal, tmp_path, builder, verifier=verifier)
+    assert res.status == RESULT_SUCCESS
+    assert "verificati" in res.reason.lower() or "red team" in res.reason.lower()
+    assert ran  # il verifier e' stato eseguito
+    assert any(a.strategy == "tester" for a in res.attempts)
+
+
+def test_verifier_trova_bug_poi_builder_ripara(tmp_path: Path):
+    goal = _goal([
+        Criterion("file_exists", {"path": "code.py"}),
+        Criterion("absence_of_pattern", {"pattern": "BUG"}),
+    ], mode=MODE_SCAFFOLD, budget_steps=6)
+
+    def builder(g, root, ctx):
+        (Path(root) / "code.py").write_text("x=1\n", encoding="utf-8")
+        bug = Path(root) / "hardtest.py"
+        if bug.exists():
+            bug.unlink()  # ripara: rimuove il test col BUG
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    vc = {"n": 0}
+    def verifier(g, root, ctx):
+        vc["n"] += 1
+        if vc["n"] == 1:
+            (Path(root) / "hardtest.py").write_text("# BUG trovato\n", encoding="utf-8")
+            return StepOutcome(STEP_CHANGED, strategy="tester", produced_changes=True, failure_signature="bug-9")
+        (Path(root) / "hardtest.py").write_text("# clean\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="tester", produced_changes=True)
+
+    res = run_goal(goal, tmp_path, builder, verifier=verifier, max_identical_failures=3)
+    assert res.status == RESULT_SUCCESS
+    assert "red team" in res.reason.lower()
+
+
+def test_verifier_rompe_sempre_stesso_bug_blocca(tmp_path: Path):
+    goal = _goal([Criterion("file_exists", {"path": "code.py"})], mode=MODE_SCAFFOLD, budget_steps=20)
+
+    def builder(g, root, ctx):
+        (Path(root) / "code.py").write_text("x=1\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    def verifier(g, root, ctx):
+        (Path(root) / "code.py").unlink()  # rompe sempre allo stesso modo
+        return StepOutcome(STEP_CHANGED, strategy="tester", produced_changes=True, failure_signature="same-bug")
+
+    res = run_goal(goal, tmp_path, builder, verifier=verifier, max_identical_failures=3)
+    assert res.status == RESULT_BLOCKED
+    assert "verificatore" in res.reason
+
+
+def test_verifier_gira_anche_se_gia_soddisfatto_all_avvio(tmp_path: Path):
+    (tmp_path / "code.py").write_text("x=1\n", encoding="utf-8")
+    goal = _goal([Criterion("file_exists", {"path": "code.py"})], mode=MODE_SCAFFOLD)
+
+    ran = []
+    def builder(g, root, ctx):
+        ran.append("build")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder")
+
+    def verifier(g, root, ctx):
+        ran.append("verify")
+        return StepOutcome(STEP_CHANGED, strategy="tester")
+
+    res = run_goal(goal, tmp_path, builder, verifier=verifier)
+    assert res.status == RESULT_SUCCESS
+    assert ran == ["verify"]  # nessuna build: solo la verifica
+
+
 def test_history_passata_all_executor(tmp_path: Path):
     goal = _goal([Criterion("file_exists", {"path": "done.py"})], mode=MODE_SCAFFOLD, budget_steps=3)
     seen_history_len = []

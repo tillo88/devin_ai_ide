@@ -72,6 +72,30 @@ def test_execute_goal_run_aggiorna_lo_store(tmp_path: Path):
     assert rec["finished_at"] is not None
 
 
+def test_execute_goal_run_con_verifier_swarm(tmp_path: Path):
+    from devin.core.goal_mode import Criterion, Goal
+    goal = Goal(objective="o", acceptance=[Criterion("file_exists", {"path": "code.py"})], mode=MODE_SCAFFOLD)
+    gid = "goal_swarm_1"
+    goal_router._goal_runs[gid] = {
+        "goal_run_id": gid, "status": "running", "reason": "", "attempts": [],
+        "result": None, "started_at": "now", "finished_at": None,
+    }
+
+    def builder(g, root, ctx):
+        (Path(root) / "code.py").write_text("x=1\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    def verifier(g, root, ctx):
+        return StepOutcome(STEP_CHANGED, strategy="tester", produced_changes=True)  # non rompe
+
+    goal_router.execute_goal_run(gid, goal, str(tmp_path), builder, verifier)
+
+    rec = goal_router._goal_runs[gid]
+    assert rec["status"] == "success"
+    strategies = {a["strategy"] for a in rec["attempts"]}
+    assert strategies == {"scaffolder", "tester"}  # dispatch: entrambi hanno agito
+
+
 def test_execute_goal_run_cattura_eccezioni(tmp_path: Path):
     from devin.core.goal_mode import Criterion, Goal
     goal = Goal(objective="o", acceptance=[Criterion("file_exists", {"path": "z.py"})], mode=MODE_SCAFFOLD)

@@ -101,6 +101,7 @@ def run_goal(
     project_root: Path | str,
     executor: StepExecutor,
     *,
+    verifier: StepExecutor | None = None,
     max_identical_failures: int = 3,
     clock: Callable[[], float] = time.monotonic,
     on_attempt: Callable[[Attempt], None] | None = None,
@@ -114,24 +115,40 @@ def run_goal(
     - budget_exhausted: esauriti step o tempo.
     - needs_approval: uno step ha prodotto modifiche e la modalita' richiede
       approvazione (D4: maintenance manuale). In scaffold/auto non si ferma.
+
+    Cancello di verifica (DISPATCH multi-ruolo): se `verifier` e' fornito, quando
+    i criteri risultano soddisfatti NON si dichiara subito successo — si manda il
+    verifier (es. Tester/Red Team) a provare a rompere. Se dopo il verifier i
+    criteri reggono -> successo VERO. Se il verifier li rompe (ha trovato un bug,
+    tipicamente scrivendo test piu' duri che falliscono) -> si torna all'executor
+    (build/fix). Cosi' e' l'orchestratore a decidere quando usare il Tester.
     """
     goal.validate()
     root = Path(project_root)
 
     ev: GoalEvaluation = evaluate_goal(goal, root)
-    if ev.satisfied:
+    if ev.satisfied and verifier is None:
         return GoalRunResult(RESULT_SUCCESS, "gia' soddisfatto all'avvio", [], ev.to_dict())
 
     attempts: list[Attempt] = []
     failure_counts: dict[str, int] = {}
+    verified = False
     start = clock()
 
     for step in range(goal.budget_steps):
         if clock() - start >= goal.budget_seconds:
             return GoalRunResult(RESULT_BUDGET, "tempo esaurito", attempts, ev.to_dict())
 
+        # Scelta dell'attore: criteri verdi + verifier non ancora passato -> verifica;
+        # criteri verdi + (nessun verifier | gia' verificato) -> successo; altrimenti build.
+        verifying = ev.satisfied and verifier is not None and not verified
+        if ev.satisfied and not verifying:
+            reason = "criteri soddisfatti e verificati" if verifier is not None else "criteri soddisfatti"
+            return GoalRunResult(RESULT_SUCCESS, reason, attempts, ev.to_dict())
+        actor = verifier if verifying else executor
+
         ctx = StepContext(pending=ev.pending, attempt_index=step, history=list(attempts))
-        outcome = executor(goal, root, ctx)
+        outcome = actor(goal, root, ctx)
 
         # Rivaluta lo stato reale dopo lo step (la verita' e' sul filesystem).
         ev = evaluate_goal(goal, root)
@@ -143,8 +160,23 @@ def run_goal(
             except Exception:
                 pass  # un observer non deve mai far cadere il loop
 
-        if ev.satisfied:
-            return GoalRunResult(RESULT_SUCCESS, "criteri soddisfatti", attempts, ev.to_dict())
+        if verifying:
+            if ev.satisfied:
+                verified = True
+                return GoalRunResult(RESULT_SUCCESS, "criteri soddisfatti e verificati (Red Team ok)", attempts, ev.to_dict())
+            # Il verifier ha rotto la soddisfazione: ha scovato un problema. Si
+            # torna a costruire; contiamo i problemi identici per non inseguire
+            # all'infinito lo stesso bug senza un fixer.
+            verified = False
+            sig = outcome.failure_signature or "verifier-broke"
+            failure_counts[sig] = failure_counts.get(sig, 0) + 1
+            if failure_counts[sig] >= max_identical_failures:
+                return GoalRunResult(
+                    RESULT_BLOCKED,
+                    f"il verificatore trova sempre lo stesso problema x{failure_counts[sig]}: {sig}",
+                    attempts, ev.to_dict(),
+                )
+            continue
 
         if outcome.status == STEP_BLOCKED:
             return GoalRunResult(RESULT_BLOCKED, f"esecutore bloccato: {outcome.detail}", attempts, ev.to_dict())
@@ -163,4 +195,6 @@ def run_goal(
         if outcome.produced_changes and goal.requires_checkpoint():
             return GoalRunResult(RESULT_NEEDS_APPROVAL, "modifiche in attesa di approvazione", attempts, ev.to_dict())
 
+    if ev.satisfied and (verifier is None or verified):
+        return GoalRunResult(RESULT_SUCCESS, "criteri soddisfatti", attempts, ev.to_dict())
     return GoalRunResult(RESULT_BUDGET, "step esauriti", attempts, ev.to_dict())

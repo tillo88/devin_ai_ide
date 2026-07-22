@@ -36,11 +36,11 @@ class GoalRunRequest(BaseModel):
     approval_policy: str = "auto"
     budget_steps: int = 20
     budget_seconds: int = 3600
-    role: str = "scaffolder"        # ruolo del mini-swarm: scaffolder | tester
+    role: str = "scaffolder"        # scaffolder | tester | swarm (build + verify)
     goal: Optional[dict] = None     # alternativa: intero goal_v1
 
 
-VALID_ROLES = {"scaffolder", "tester"}
+VALID_ROLES = {"scaffolder", "tester", "swarm"}
 
 
 def _now() -> str:
@@ -74,9 +74,10 @@ def _attempt_record(attempt: Attempt) -> dict[str, Any]:
     }
 
 
-def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor) -> None:
+def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, verifier=None) -> None:
     """Esegue il loop e aggiorna il record in memoria. Sincrona: il chiamante la
-    mette su thread. `executor` iniettato -> testabile con stub."""
+    mette su thread. `executor` (e opzionale `verifier`) iniettati -> testabile
+    con stub."""
     rec = _goal_runs[goal_run_id]
 
     def on_attempt(attempt: Attempt) -> None:
@@ -84,7 +85,7 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor) 
             rec["attempts"].append(_attempt_record(attempt))
 
     try:
-        result = run_goal(goal, project_path, executor, on_attempt=on_attempt)
+        result = run_goal(goal, project_path, executor, verifier=verifier, on_attempt=on_attempt)
         with _lock:
             rec["status"] = result.status
             rec["reason"] = result.reason
@@ -97,9 +98,14 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor) 
             rec["finished_at"] = _now()
 
 
-def _build_executor(role: str):
-    """Esecutore di PRODUZIONE per il ruolo scelto (Orchestrator + apply reale).
-    Lazy import: carica l'orchestrator solo quando serve davvero."""
+def _build_actors(role: str):
+    """(executor, verifier) di PRODUZIONE per il ruolo scelto. Lazy import: carica
+    l'orchestrator solo quando serve davvero.
+
+    - scaffolder: solo build.
+    - tester: solo verifica adversariale (standalone, raro).
+    - swarm: DISPATCH -> scaffolder costruisce, tester fa da cancello di verifica.
+    """
     from devin.ui.fast_app import CONFIG_PATH  # lazy: costante condivisa
     from devin.core.goal_executors import (
         build_orchestrator_scaffold_runner,
@@ -109,9 +115,13 @@ def _build_executor(role: str):
         tester_executor,
     )
     apply_fn = default_apply_fn()
+    scaffolder = scaffolder_executor(build_orchestrator_scaffold_runner(CONFIG_PATH), apply_fn=apply_fn)
     if role == "tester":
-        return tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn)
-    return scaffolder_executor(build_orchestrator_scaffold_runner(CONFIG_PATH), apply_fn=apply_fn)
+        return tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn), None
+    if role == "swarm":
+        tester = tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn)
+        return scaffolder, tester
+    return scaffolder, None
 
 
 @router.post("/api/goal/run")
@@ -149,7 +159,7 @@ async def api_goal_run(req: GoalRunRequest):
         }
 
     try:
-        executor = _build_executor(role)
+        executor, verifier = _build_actors(role)
     except Exception as exc:
         with _lock:
             _goal_runs[goal_run_id]["status"] = "error"
@@ -157,7 +167,7 @@ async def api_goal_run(req: GoalRunRequest):
         return {"error": str(exc), "goal_run_id": goal_run_id}
 
     t = threading.Thread(
-        target=execute_goal_run, args=(goal_run_id, goal, project, executor), daemon=True,
+        target=execute_goal_run, args=(goal_run_id, goal, project, executor, verifier), daemon=True,
     )
     t.start()
     return {"goal_run_id": goal_run_id, "status": "started"}
