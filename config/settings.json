@@ -13,6 +13,18 @@
     "whole_file_enabled": true,
     "whole_file_max_lines": 300
   },
+  "context_steward": {
+    "watching": 0.65,
+    "preparing": 0.75,
+    "compacting": 0.82,
+    "required": 0.88,
+    "continuation": 0.92,
+    "hysteresis": 0.05,
+    "cooldown_seconds": 600,
+    "min_pressure_drop": 0.08,
+    "max_compactions_per_task": 3,
+    "note": "CS0 (docs/CONTEXT_STEWARD_PLAN.md): supervisore deterministico della pressione di contesto. Soglie come frazione della finestra usabile. Valori CONSERVATIVI DA CALIBRARE su run reali (come il pin tree-sitter / versione llama): non hardcodare nei call site. Isteresi + cooldown + min_pressure_drop rompono il loop riassumi->supera soglia->riassumi."
+  },
   "execution": {
     "change_application_mode": "review",
     "max_promotable_file_mb": 30,

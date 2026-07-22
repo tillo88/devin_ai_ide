@@ -11,6 +11,7 @@ Fonte di verità operativa giorno-per-giorno: i file `CONTINUITY_*` (log datati)
 
 ## Architettura e design
 - **[CODEX_LIKE_MENTAL_MODEL.md](CODEX_LIKE_MENTAL_MODEL.md)** — modello mentale stile Codex/Claude: come ragiona l'app.
+- **[CONTEXT_STEWARD_PLAN.md](CONTEXT_STEWARD_PLAN.md)** — audit + piano stratificato del Context Steward (memoria operativa di sessione, P4/P5). CS0 (nucleo deterministico) implementato in `devin/core/context_steward.py`.
 - **[PROJECT_SANDBOX.md](PROJECT_SANDBOX.md)** — sandbox trasparente dei progetti (copia→diff→applica).
 - **[API_TAURI_SPEC.md](API_TAURI_SPEC.md)** — spec dell'API tra shell Tauri e backend FastAPI.
 

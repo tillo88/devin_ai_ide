@@ -1,0 +1,591 @@
+Farei un piccolo supervisore deterministico sempre attivo e invocherei un modello leggero solo quando serve davvero.
+
+Lo chiamerei Context Steward oppure Continuity Steward.
+
+Ruolo aggiuntivo consigliato
+
+Context Steward
+
+Task preciso:
+
+Sorvegliare pressione del contesto, crescita dei token, ripetizioni, risultati dei tool e confini semantici dei task. Preparare checkpoint verificabili, ridurre ridondanza e mantenere un working set compatto senza perdere evidenze, decisioni o stato operativo.
+
+Non dovrebbe scrivere codice nel progetto e non dovrebbe prendere decisioni tecniche al posto dell’orchestratore.
+
+Stato visibile nel pannello
+Context Steward
+Task: Mantieni compatto il contesto del task “calibrazione Qwen3.6”
+Stato: WATCHING / PREPARING / COMPACTING / VERIFYING / IDLE
+Tool: token meter, task fingerprint, checkpoint store
+Risultato: checkpoint aggiornato, 18.400 token liberati
+
+Risultato espandibile:
+
+Findings
+- pressione contesto salita al 78%
+- 4 blocchi di log già archiviati
+- 2 spiegazioni duplicate
+- task corrente ancora aperto
+
+Evidence preserved
+- run id
+- file dei risultati
+- ultime decisioni
+- ultimi messaggi verbatim
+- errori non risolti
+
+Actions
+- sostituiti i log completi con riferimenti
+- consolidata la roadmap
+- mantenuti gli ultimi 8 turni integrali
+- nessuna memoria permanente modificata
+
+Risks
+- una decisione è ancora provvisoria
+- il test 262K è in corso e non va riassunto come PASS
+Meglio un sistema ibrido, non un agente sempre in inferenza
+Parte sempre attiva, quasi gratuita
+
+Un servizio Python/Rust deterministico può controllare:
+
+token stimati e reali restituiti dal backend;
+dimensione dei messaggi, tool output e allegati;
+stato dei task;
+fingerprint dei contenuti;
+checkpoint già esistenti;
+ripetizioni;
+pressione dello slot;
+task boundary;
+ultimo evento di compattazione.
+
+Questa parte non richiede GPU e consuma pochissimo.
+
+Modello leggero invocato solo quando serve
+
+Il modello “economico” interviene quando:
+
+viene raggiunta una soglia;
+termina un sottotask;
+cambia l’obiettivo;
+un tool produce un output molto grande;
+prima di uno shift/reset;
+prima di passare il lavoro a un altro agente;
+l’orchestratore richiede un checkpoint.
+
+Così non consumi continuamente token per un agente che osserva altri token.
+
+Le quattro memorie da mantenere separate
+
+Il Context Steward non dovrebbe creare un unico riassunto crescente. Serve una struttura a livelli.
+
+1. Evidence archive
+
+Immutabile e non inserito integralmente nel prompt:
+
+log completi
+diff
+risultati test
+manifest
+checksum
+comandi eseguiti
+output grezzi
+
+Nel contesto rimangono soltanto riferimenti verificabili.
+
+2. Active working set
+
+Solo ciò che serve per il task attuale:
+
+obiettivo
+vincoli
+stato corrente
+ultima evidenza
+prossimo passo
+rischi aperti
+3. Rolling continuity checkpoint
+
+Compatto, aggiornato incrementalmente:
+
+decisioni confermate
+tentativi falliti
+perché sono falliti
+configurazione corrente
+cose da non ripetere
+prossimi test
+4. Long-term project memory
+
+Solo fatti stabili e riutilizzabili:
+
+architettura scelta
+hardware persistente
+convenzioni
+regole di sicurezza
+decisioni ormai definitive
+
+Non devono entrarci log temporanei, ipotesi o risultati ancora non confermati.
+
+Politica di pressione del contesto
+
+Riprenderei le soglie che avevamo già delineato, con isteresi per evitare continue compattazioni:
+
+< 65%    IDLE
+65–75%   WATCHING
+75–82%   PREPARING CHECKPOINT
+82–88%   COMPACTING ai confini del task
+88–92%   CHECKPOINT OBBLIGATORIO
+> 92%    CONTROLLED CONTINUATION / nuovo slot
+
+Aggiungerei:
+
+cooldown minimo: 10–20 minuti
+massimo compattazioni per task: 3
+nessuna nuova compattazione finché la pressione non scende di almeno 8–10%
+
+Questo evita il loop:
+
+riassumi → aggiungi riassunto → supera soglia → riassumi di nuovo
+Cosa può trimmare automaticamente
+
+Operazioni sicure:
+
+sostituire output tool molto lunghi con riferimento a file/run;
+deduplicare spiegazioni identiche;
+consolidare roadmap ripetute;
+rimuovere output intermedi già superati;
+tenere solo l’ultima versione di configurazioni mutate;
+comprimere sequenze di tentativi falliti mantenendo causa ed evidenza;
+preservare gli ultimi turni verbatim;
+conservare integralmente istruzioni, vincoli e decisioni recenti.
+
+Operazioni che richiedono approvazione dell’orchestratore:
+
+eliminare una decisione apparentemente obsoleta;
+fondere ipotesi contrastanti;
+promuovere qualcosa nella memoria permanente;
+rimuovere dettagli legati a sicurezza, rollback o recovery;
+dichiarare chiuso un problema.
+Regola fondamentale: mai sostituire l’evidenza col riassunto
+
+Il checkpoint deve contenere riferimenti del tipo:
+
+{
+  "claim": "La baseline MMQ aumenta pp4096 del 68,55%",
+  "status": "verified",
+  "evidence": [
+    "run-20260721-145641/metrics.tsv",
+    "run-20260721-151701/metrics.tsv"
+  ]
+}
+
+Non soltanto:
+
+MMQ sembra molto più veloce.
+
+Questa differenza impedirà al sistema di deformare progressivamente la storia dopo molte compattazioni.
+
+Formato del checkpoint
+
+Userei qualcosa di simile:
+
+{
+  "schema": "chat_continuity_v1",
+  "task_id": "q36-context-calibration",
+  "task_fingerprint": "sha256:...",
+  "created_at": "...",
+  "objective": "...",
+  "confirmed_facts": [],
+  "current_state": {},
+  "decisions": [],
+  "failed_attempts": [],
+  "open_questions": [],
+  "next_actions": [],
+  "risks": [],
+  "evidence_refs": [],
+  "recent_verbatim_turns": [],
+  "supersedes": "checkpoint-id",
+  "token_estimate": 6200
+}
+
+Ogni checkpoint deve essere:
+
+bounded;
+versionato;
+fingerprintato;
+incrementale;
+collegato a quello precedente;
+validato dall’orchestratore;
+reversibile.
+Protezione contro i loop
+
+Il Context Steward deve riconoscere almeno questi casi:
+
+stesso task già riassunto
+stessa proposta già rifiutata
+stesso errore già diagnosticato
+stesso comando già fallito senza variabili cambiate
+stesso file già analizzato
+stessa conclusione senza nuova evidenza
+
+Regole:
+
+fingerprint uguale + nessuna nuova evidenza
+→ non creare un altro task
+
+due retry senza variabile modificata
+→ bloccare e chiedere revisione
+
+checkpoint nuovo quasi identico al precedente
+→ scartare
+
+subagent richiede altro subagent
+→ passare dall’orchestratore, mai ricorsione autonoma
+Come si integra con i ruoli proposti
+
+La tua lista diventerebbe:
+
+Repository Mapper
+Test/Regression Agent
+Security/Sandbox Reviewer
+Context Steward
+Documentation/Continuity Agent
+Web/Docs Researcher opzionale
+
+Separerei Context Steward da Documentation/Continuity Agent:
+
+Context Steward gestisce la memoria operativa della sessione.
+
+Documentation/Continuity Agent aggiorna README, changelog, runbook e documentazione destinata agli esseri umani.
+
+Sono correlati, ma non sono lo stesso lavoro.
+
+Priorità per DEVIN
+
+Lo metterei tra i primi agenti da realizzare, perché migliora tutti gli altri:
+
+1. Context Steward
+2. Repository Mapper
+3. Test/Regression Agent
+4. Security/Sandbox Reviewer
+5. Documentation/Continuity Agent
+6. Web/Docs Researcher
+
+Il risultato finale sarebbe un sistema capace di lavorare molto a lungo senza trascinarsi dietro centinaia di migliaia di token grezzi, ma anche senza affidarsi a riassunti progressivamente meno fedeli.
+
+La formulazione più precisa del suo obiettivo potrebbe essere:
+
+Mantenere il contesto operativo minimo ma sufficiente, preservando evidenze, decisioni, errori, stato e continuità. Ridurre ridondanza e contenuto ricostruibile, non informazione unica. Preparare checkpoint verificabili ai confini semantici e sotto pressione di contesto; non alterare il progetto né promuovere memoria permanente senza validazione dell’orchestratore.
+
+
+bello e strutturato, devo vedere come si integra senza dare problemi a automem understory ecc ma se alla fine è solo memoria chat non dovrebbe influire, automem e understory dovrebbero agire a parte quando cè qualcosa da salvare di importante non vengono influenzati.
+domanda stupida magari ma queste info che salvarebbe context steward, che sono inerenti solo al progetto/chat, salvarli su nvme? e lasciare nella kv solo dei collegamenti al file in modo che sa comunque dove prenderli se servono? o non funziona cosi e comunque dovendo rileggere tutto lo stesso sarebbe uguale a livello di context "speso"^^
+
+Sì, salvarle su NVMe ha perfettamente senso. La parte importante è capire che un collegamento al file non sostituisce magicamente il contenuto nella mente del modello.
+
+Il principio corretto è:
+
+NVMe = memoria esterna persistente
+KV cache = memoria operativa immediata del modello
+Context Steward = decide cosa tenere attivo e cosa archiviare
+Retriever = recupera soltanto ciò che serve
+Il modello non “sa” cosa c’è dietro un percorso
+
+Nel prompt puoi lasciare una voce molto compatta:
+
+Checkpoint attivo:
+file:///mnt/understory/chat/devin/task-abc/checkpoint-004.json
+
+Questa occupa pochissimi token, ma il modello vede soltanto il percorso. Non conosce automaticamente il contenuto del file.
+
+Per utilizzarlo serve un tool che:
+
+legge il file;
+seleziona le sezioni rilevanti;
+inserisce quelle sezioni nel contesto del modello.
+
+Quindi il vantaggio non è:
+
+metto tutto su disco
+→ il modello ricorda tutto senza spendere contesto
+
+È invece:
+
+metto tutto su disco
+→ tengo nel contesto solo indice e sintesi
+→ recupero poche informazioni precise quando servono
+
+Ed è un vantaggio enorme.
+
+Non deve rileggere tutto
+
+Questa è la parte decisiva. Non bisogna salvare un gigantesco file e rileggerlo interamente ogni volta, perché quello consumerebbe di nuovo gli stessi token.
+
+Il Context Steward dovrebbe produrre informazioni a granularità fine:
+
+task/
+├── checkpoint-current.json
+├── decisions.jsonl
+├── failures.jsonl
+├── evidence/
+│   ├── benchmark-mmq.tsv
+│   ├── context-192k.log
+│   └── power-topology.md
+├── summaries/
+│   ├── hardware.md
+│   ├── software.md
+│   └── open-questions.md
+└── index.sqlite
+
+Poi una richiesta come:
+
+Perché avevamo spostato la 1660 Ti sul secondo alimentatore?
+
+non richiede di rileggere tutta la chat. Il retriever può restituire soltanto:
+
+Decisione D-018
+La 1660 Ti è stata spostata sul PSU da 650 W dopo un reset durante
+il deep-fill a 32K. Con la nuova distribuzione, lo stesso test è passato.
+
+Evidenze:
+- run 20260721-165249
+- topology 23/23 PASS
+- PSU layout revision 3
+
+Forse 100–300 token invece di decine di migliaia.
+
+Cosa resta normalmente nella KV
+
+La KV dovrebbe contenere soltanto il working set:
+
+- obiettivo corrente;
+- configurazione attuale;
+- decisioni necessarie per il passo corrente;
+- ultimi messaggi;
+- errori ancora aperti;
+- prossima azione;
+- riferimenti alle evidenze archiviate.
+
+Esempio:
+
+Task corrente: trovare envelope di contesto vanilla Qwen3.6.
+Configurazione: 7 GPU, F16/F16, MMQ off.
+PASS confermati: 32K, 64K, 128K, 192K.
+262K in corso.
+Configurazione PSU: rev3.
+Evidence root: /mnt/understory/projects/devin/q36-calibration/
+
+Questo può stare in poche migliaia di token.
+
+I log completi, i vecchi tentativi e tutta la spiegazione restano sul disco.
+
+Quando viene “speso” di nuovo contesto
+
+Solo ciò che viene effettivamente reinserito nel prompt consuma token.
+
+Supponiamo di avere sul NVMe:
+
+20 MB di log
+300 KB di checkpoint
+80 KB di decisioni
+
+Il disco può contenere tutto senza incidere sul contesto.
+
+Quando il modello chiede informazioni, il retriever può inserire:
+
+2 decisioni rilevanti
+1 estratto di log
+1 configurazione hardware
+
+per un totale magari di 1.500 token.
+
+Quindi:
+
+dimensione archivio su NVMe: potenzialmente enorme
+contesto consumato: solo i frammenti recuperati
+Il collegamento da solo è utile comunque
+
+Anche se il modello non conosce il contenuto, un riferimento strutturato è prezioso:
+
+{
+  "claim": "192K vanilla F16/F16 è stabile",
+  "status": "verified",
+  "evidence_id": "run:q36-context:20260721-165249:196608",
+  "location": "/mnt/understory/projects/devin/calibration/..."
+}
+
+Il modello può dire al tool:
+
+recupera evidence_id run:q36-context:20260721-165249:196608
+
+Il tool restituisce solo la prova necessaria.
+
+È simile a ricordare il titolo e la posizione di un libro, non tutto il libro parola per parola.
+
+NVMe: dove aiuta
+
+Per questa architettura l’NVMe sarebbe molto utile perché il Context Steward produrrà molti file piccoli e aggiornamenti frequenti:
+
+SQLite o database key-value;
+indice vettoriale;
+JSONL append-only;
+checkpoint;
+log;
+diff;
+snapshot;
+embedding;
+salvataggi KV degli slot.
+
+Il vantaggio principale sarà:
+
+latenza bassa nella ricerca
+letture casuali rapide
+indicizzazione veloce
+checkpoint quasi immediati
+ripristino rapido dopo reboot
+
+Non rende “gratuito” il contenuto a livello di token, ma rende economico recuperarlo dal punto di vista del sistema.
+
+Separazione da AutoMem e Understory
+
+La tua intuizione è corretta: non devono pestarsi i piedi.
+
+Context Steward
+
+Memoria operativa e temporanea:
+
+durata: task/chat/sessione
+contenuto: stato, evidenze, ultimi passi, errori aperti
+frequenza: alta
+autorità: non promuove da solo fatti permanenti
+AutoMem
+
+Memoria semantica selezionata:
+
+durata: progetto o utente
+contenuto: fatti riutilizzabili, preferenze, lezioni apprese
+frequenza: bassa
+autorità: salva solo elementi promossi e validati
+Understory
+
+Strato condiviso e federato:
+
+durata: lunga
+contenuto: conoscenza comune tra ruoli, prove, artefatti, lineage
+funzione: repository persistente e sincronizzabile
+
+Il flusso corretto sarebbe:
+
+chat/tool output
+      ↓
+Context Steward
+      ↓
+checkpoint operativo
+      ↓
+orchestratore valida
+      ↓
+elementi importanti promossi
+      ├── AutoMem
+      └── Understory
+
+Non dovrebbe avvenire:
+
+Context Steward compatta
+→ salva automaticamente tutto in AutoMem
+
+Altrimenti memorie temporanee e ipotesi finirebbero per contaminare la memoria permanente.
+
+Una struttura pratica
+
+Sul disco condiviso:
+
+/mnt/understory/
+├── operational/
+│   └── devin/
+│       └── sessions/
+│           └── <session-id>/
+├── projects/
+│   └── devin-ai-ide/
+│       ├── evidence/
+│       ├── decisions/
+│       ├── checkpoints/
+│       └── indexes/
+├── automem/
+│   └── promoted/
+└── shared/
+    └── hardware-baselines/
+
+Nel contesto del modello resta un piccolo catalogo:
+
+{
+  "active_task": "q36-context-envelope",
+  "checkpoint": "ckpt-0042",
+  "evidence_root": "project:devin-ai-ide",
+  "important_refs": [
+    "decision:psu-layout-rev3",
+    "run:topology-23-pass",
+    "run:mmq-baseline"
+  ]
+}
+RAG e retrieval ibrido
+
+Per recuperare bene non userei solo embeddings.
+
+Servono tre metodi insieme:
+
+1. lookup esatto
+   task ID, run ID, hash, file, commit
+
+2. ricerca strutturata
+   stato=verified, modello=Qwen3.6, test=context
+
+3. ricerca semantica
+   “problema di alimentazione che causava reboot”
+
+Per i dati tecnici il lookup esatto è spesso più affidabile degli embeddings.
+
+Esempio:
+
+“qual era il risultato MMQ?”
+→ query strutturata ai benchmark
+
+“perché avevamo sospettato il riser?”
+→ ricerca semantica nelle decisioni
+
+“aprimi il log del 192K”
+→ lookup esatto del run
+Attenzione alla KV cache
+
+C’è anche un dettaglio importante: reinserire continuamente grandi blocchi recuperati può cambiare il prefisso del prompt e ridurre il riuso della KV.
+
+Quindi il prompt dovrebbe avere una struttura stabile:
+
+[system prompt stabile]
+[regole progetto stabili]
+[checkpoint corrente]
+[retrieval specifico del turno]
+[ultimi messaggi]
+
+Il materiale recuperato va inserito in una zona prevedibile, non rimescolato ogni volta in cima al prompt.
+
+Ancora meglio:
+
+checkpoint compatto stabile;
+retrieval temporaneo soltanto quando serve;
+rimuovere il retrieval al turno successivo se non è più necessario.
+Il vero guadagno
+
+Senza Context Steward:
+
+chat cresce fino a 100K
+tutto resta nel prompt
+ogni token successivo lavora contro un contesto enorme
+
+Con Context Steward:
+
+100K di storia
+→ 5K di working checkpoint
+→ 1–3K di retrieval mirato per turno
+→ evidenza completa sempre disponibile sul NVMe
+
+Il modello non “ricorda gratis”, ma evita di portarsi dietro tutto continuamente.
+
+Quindi sì: NVMe + riferimenti + retrieval selettivo è esattamente l’architettura giusta. Il file completo non deve essere riletto ogni volta; viene recuperata solo la porzione necessaria. È proprio questo che permette di mantenere una sessione logicamente continua per giorni o settimane senza tenere centinaia di migliaia di token sempre attivi.
