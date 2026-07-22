@@ -626,14 +626,50 @@ async function renderActivityRail(projectPath) {
         if (review) review.addEventListener("click", () => reviewRunChanges(
           projectPath, review.dataset.reviewChangeRun,
         ));
+        renderApprovalBanner(projectPath, lr);
       } else {
         runEl.textContent = "Nessun run recente in questo progetto.";
         if (!state.selectedRunId) setText("mind-state", "ready");
+        renderApprovalBanner(projectPath, null);
       }
     } catch (_) {
       runEl.textContent = "Nessun run recente in questo progetto.";
+      renderApprovalBanner(projectPath, null);
     }
   }
+}
+
+// Banner di approvazione ben visibile al centro (sopra il composer). I bottoni
+// nel pannello destro sono piccoli e vengono persi quando un run piu' recente
+// rimpiazza lo stato: questo banner rende l'azione impossibile da mancare e
+// resta finche' non decidi (Applica/Rifiuta) o non apri il Diff.
+function renderApprovalBanner(projectPath, lr) {
+  const banner = $("approval-banner");
+  if (!banner) return;
+  const actions = $("approval-banner-actions");
+  const isAwaiting = lr && lr.run_id && lr.status === "awaiting_approval";
+  if (!isAwaiting) {
+    banner.hidden = true;
+    if (actions) actions.innerHTML = "";
+    return;
+  }
+  setText("approval-banner-run", lr.run_id);
+  if (actions) {
+    actions.innerHTML = `
+      <button class="run-decision-btn" data-review-change-run="${escapeHtml(lr.run_id)}">👁 Diff</button>
+      <button class="run-decision-btn approve" data-change-action="apply" data-change-run="${escapeHtml(lr.run_id)}">✓ Applica</button>
+      <button class="run-decision-btn reject" data-change-action="reject" data-change-run="${escapeHtml(lr.run_id)}">× Rifiuta</button>`;
+    actions.querySelectorAll("[data-change-action]").forEach((decision) => {
+      decision.addEventListener("click", () => decideRunChanges(
+        projectPath, decision.dataset.changeRun, decision.dataset.changeAction,
+      ));
+    });
+    const review = actions.querySelector("[data-review-change-run]");
+    if (review) review.addEventListener("click", () => reviewRunChanges(
+      projectPath, review.dataset.reviewChangeRun,
+    ));
+  }
+  banner.hidden = false;
 }
 
 async function selectProject(projectPath) {
@@ -811,6 +847,8 @@ function renderTimeline(events) {
       </article>
     `)
     .join("");
+  // Al (ri)caricamento di un run porta la timeline in fondo, sull'ultimo evento.
+  timeline.scrollTop = timeline.scrollHeight;
   applyRunEventToActivity(events[events.length - 1]);
 }
 
@@ -821,6 +859,9 @@ function appendTimelineEvent(event) {
 
   const timeline = $("timeline");
   if (!timeline) return;
+  // Autoscroll "intelligente": segue gli eventi nuovi solo se sei gia' in fondo,
+  // cosi' se stai leggendo piu' su non ti strappa via.
+  const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 48;
   const existing = new Set(
     Array.from(timeline.querySelectorAll("[data-event-seq]")).map((el) => el.dataset.eventSeq),
   );
@@ -840,6 +881,7 @@ function appendTimelineEvent(event) {
 
   if (timeline.querySelector(".timeline-empty")) timeline.innerHTML = "";
   timeline.appendChild(wrapper.firstElementChild);
+  if (nearBottom) timeline.scrollTop = timeline.scrollHeight;
 }
 
 async function loadRunEvents(runId) {

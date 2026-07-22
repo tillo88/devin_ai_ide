@@ -381,6 +381,60 @@ body.codex-shell {
   letter-spacing: 0.08em;
 }
 
+/* Banner di approvazione al centro: impossibile da mancare */
+.approval-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 18px 12px;
+  padding: 12px 16px;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 14px;
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.approval-banner[hidden] {
+  display: none;
+}
+
+.approval-banner-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.approval-banner-icon {
+  font-size: 20px;
+}
+
+.approval-banner-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.approval-banner-text strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.approval-banner-run {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .chat-composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1682,6 +1736,20 @@ body.codex-shell::before {
 
 .diagnostics-topbar {
   grid-template-columns: minmax(220px, 1fr) auto;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: rgba(9, 11, 16, 0.98);
+}
+
+/* Le tab restano visibili sotto la topbar sticky, cosi' "Workspace" (torna
+   indietro) e la navigazione tra sezioni sono sempre raggiungibili. */
+.diagnostics-shell .diagnostics-tabs {
+  position: sticky;
+  top: 64px;
+  z-index: 20;
+  background: rgba(9, 11, 16, 0.98);
+  padding-bottom: 10px;
 }
 
 .diagnostics-grid {
@@ -2532,7 +2600,8 @@ details[open] > .collapsible-summary::after {
 .activity-run .run-badge { color: var(--text); }
 .activity-run .run-id { color: var(--muted-2); font-size: 11px; }
 .activity-run .run-resume-btn,
-.activity-run .run-decision-btn {
+.activity-run .run-decision-btn,
+.approval-banner-actions .run-decision-btn {
   margin-left: 8px;
   font-size: 11px;
   padding: 2px 8px;
@@ -2543,9 +2612,20 @@ details[open] > .collapsible-summary::after {
   cursor: pointer;
 }
 .activity-run .run-resume-btn:hover,
-.activity-run .run-decision-btn:hover { background: var(--accent); color: var(--bg); }
-.activity-run .run-decision-btn.reject { border-color: var(--danger); color: var(--danger); }
-.activity-run .run-decision-btn.reject:hover { background: var(--danger); color: var(--bg); }
+.activity-run .run-decision-btn:hover,
+.approval-banner-actions .run-decision-btn:hover { background: var(--accent); color: var(--bg); }
+.activity-run .run-decision-btn.reject,
+.approval-banner-actions .run-decision-btn.reject { border-color: var(--danger); color: var(--danger); }
+.activity-run .run-decision-btn.reject:hover,
+.approval-banner-actions .run-decision-btn.reject:hover { background: var(--danger); color: var(--bg); }
+/* Nel banner centrale i bottoni sono piu' grandi e leggibili (override dopo la
+   regola base, che vale per il pannello destro). */
+.approval-banner-actions .run-decision-btn {
+  margin-left: 0;
+  font-size: 13px;
+  padding: 7px 12px;
+}
+.approval-banner-actions .run-decision-btn.approve { border-color: var(--accent); }
 
 .activity-feed-section { min-height: 0; }
 .activity-timeline.timeline {
