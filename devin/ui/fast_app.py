@@ -300,6 +300,23 @@ def _build_mind_status() -> Dict[str, Any]:
         except Exception:
             launcher_status = None
 
+    launcher_source = getattr(launcher_status, "model_source", None) if launcher_status else None
+    launcher_rig_host = getattr(launcher_status, "rig_host", "") if launcher_status else ""
+    if launcher_source in (None, "unavailable"):
+        # Launcher non ancora inizializzato o niente modelli locali: il rig
+        # puo' comunque essere la sorgente attiva. Probe cache-ato (TTL 10s):
+        # questo endpoint e' pollato dalla UI ogni pochi secondi (2026-07-21).
+        try:
+            from devin.ai.local_model_launcher import _rig_is_healthy_cached
+            models_cfg = config.get("models", {})
+            if models_cfg.get("rig_primary") and _rig_is_healthy_cached(models_cfg):
+                launcher_source = "rig"
+                launcher_rig_host = str(models_cfg.get("rig_host", ""))
+        except Exception:
+            pass
+    if not launcher_source:
+        launcher_source = "unavailable"
+
     local_memory = LocalMemoryStore(config).status()
 
     return {
@@ -322,7 +339,8 @@ def _build_mind_status() -> Dict[str, Any]:
         },
         "models": {
             "health": {"checked": False, "see": "/api/health"},
-            "launcher_source": getattr(launcher_status, "model_source", "unavailable") if launcher_status else "unavailable",
+            "launcher_source": launcher_source,
+            "rig_host": launcher_rig_host,
             "local_running": getattr(launcher_status, "local_running", {}) if launcher_status else {},
             "vram": _get_vram_info(),
         },

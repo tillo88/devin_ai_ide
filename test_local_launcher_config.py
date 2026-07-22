@@ -119,3 +119,30 @@ def test_ensure_models_skips_local_when_rig_healthy(monkeypatch):
     assert started  # avvio locale tentato
     assert status_down.model_source == "local"
     _reload()
+
+
+def test_get_status_and_mind_report_rig_source(monkeypatch):
+    """Il badge SOURCE della UI deve dire la verita': rig sano -> 'rig'
+    anche senza modelli locali e anche a launcher non inizializzato."""
+    mod = _reload()
+    instance = mod.LocalModelLauncher()
+    instance._models_cfg = {
+        "rig_primary": True, "rig_host": "192.0.2.1", "rig_port": 8080}
+    monkeypatch.setattr(mod, "_rig_is_healthy_cached", lambda cfg, **k: True)
+
+    status = instance.get_status()
+    assert status.model_source == "rig"
+    assert status.rig_available is True
+    assert status.rig_host == "192.0.2.1"
+
+    # Mind status senza launcher inizializzato: fallback sul probe da config.
+    from devin.ui import fast_app
+    monkeypatch.setattr(fast_app, "_model_launcher", None)
+    from fastapi.testclient import TestClient
+    client = TestClient(fast_app.app)
+    payload = client.get("/api/mind/status").json()
+    # Il config reale ha rig_primary=true: con il probe monkeypatchato a True
+    # la sorgente deve risultare 'rig' con host valorizzato.
+    assert payload["models"]["launcher_source"] == "rig"
+    assert payload["models"]["rig_host"]
+    _reload()

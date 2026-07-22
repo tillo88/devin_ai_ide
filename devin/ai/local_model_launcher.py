@@ -358,6 +358,22 @@ def start_llama_server(config):
     )
 
 
+_rig_health_cache = {"ts": 0.0, "ok": False}
+
+
+def _rig_is_healthy_cached(models_cfg, ttl=10, timeout=1.5):
+    """Versione cache-ata del probe rig per i percorsi pollati (status/mind):
+    la UI interroga ogni pochi secondi e non deve pagare un probe HTTP a
+    ogni giro ne' bombardare il rig (2026-07-21)."""
+    now = time.time()
+    if now - _rig_health_cache["ts"] < ttl:
+        return _rig_health_cache["ok"]
+    ok = _rig_is_healthy(models_cfg, timeout=timeout)
+    _rig_health_cache["ts"] = now
+    _rig_health_cache["ok"] = ok
+    return ok
+
+
 def _rig_is_healthy(models_cfg, timeout=3):
     """Probe rapido del rig primario (llama-server /health).
 
@@ -746,6 +762,19 @@ class LocalModelLauncher:
         for alias in self.processes:
             if alias in MODELS:
                 running[alias] = _running_model_info(alias)
+        # Status onesto verso la UI (2026-07-21): se il rig primario e' sano
+        # la sorgente e' "rig" anche senza modelli locali (probe cache-ato:
+        # questo metodo e' pollato dal pannello Mind ogni pochi secondi).
+        cfg = self._models_cfg or {}
+        if cfg.get("rig_primary") and _rig_is_healthy_cached(cfg):
+            return LauncherStatus(
+                rig_available=True,
+                rig_host=str(cfg.get("rig_host", "")),
+                rig_ports=[int(cfg.get("rig_port", 8080))],
+                local_running=running,
+                model_source="rig",
+                errors=[],
+            )
         return LauncherStatus(
             rig_available=False, rig_host="", rig_ports=[],
             local_running=running,

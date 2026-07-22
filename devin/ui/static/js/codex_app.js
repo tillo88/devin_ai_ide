@@ -261,7 +261,13 @@ async function exportTrainingDataset() {
 
 function renderMind(status) {
   if (!state.selectedRunId) setText("mind-state", "ready");
-  setText("model-source", `source: ${status.models?.launcher_source ?? "unavailable"}`);
+  const launcherSource = status.models?.launcher_source ?? "unavailable";
+  const sourceLabels = {
+    rig: `rig attivo${status.models?.rig_host ? ` · ${status.models.rig_host}` : ""}`,
+    local: "locale attivo",
+    unavailable: "offline · nessun modello",
+  };
+  setText("model-source", sourceLabels[launcherSource] ?? launcherSource);
 
   const localMemory = status.memory?.local ?? {};
   setText("memory-count", `memory: ${localMemory.records ?? 0}`);
