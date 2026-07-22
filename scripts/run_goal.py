@@ -107,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     project = str(Path(args.project).expanduser())
+    Path(project).mkdir(parents=True, exist_ok=True)  # evita errori su cartella nuova
     print(f"[goal] {goal.objective!r}")
     print(f"[goal] mode={goal.mode} approval={goal.approval_policy} "
           f"checkpoint={goal.requires_checkpoint()} criteri={len(goal.acceptance)}")
