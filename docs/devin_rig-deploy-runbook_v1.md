@@ -110,14 +110,27 @@ Endpoint (dopo che il rig ha il codice aggiornato):
 - `GET /api/goal/{goal_run_id}` — stato + attempts (polling).
 - `GET /api/goal` — lista.
 
-Trigger di test (PowerShell dal PC, verso il rig):
+### ⚠️ Convenzione comandi PC: PowerShell SEMPRE monoriga
+I comandi PowerShell per l'utente vanno dati **su una sola riga** (separatori `;`).
+Incollare testo multi-riga nella shell fa scattare l'avviso Windows "Si sta per
+incollare testo che contiene piu' righe" — fastidioso. Quindi: niente blocchi a
+capo, tutto in linea.
+
+Avvio goal (monoriga):
 ```powershell
-$body = @{ project_path="workspace/goaltest_prime";
-  objective="crea is_prime.py con is_prime(n) e test_is_prime.py, test verdi";
-  mode="scaffold"; acceptance=@("tests_pass","file_exists:is_prime.py") } | ConvertTo-Json
-$r = Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/run" -Method Post -ContentType "application/json" -Body $body
-Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$($r.goal_run_id)" | ConvertTo-Json -Depth 6
+$body = @{ project_path="workspace/goaltest_prime"; objective="crea is_prime.py con is_prime(n) e test_is_prime.py, test verdi"; mode="scaffold"; acceptance=@("tests_pass","file_exists:is_prime.py") } | ConvertTo-Json; $r = Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/run" -Method Post -ContentType "application/json" -Body $body; $r.goal_run_id
 ```
+
+Watch stato (monoriga, esce a run finito):
+```powershell
+do { Clear-Host; $s = Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$($r.goal_run_id)"; "STATO: $($s.status) - step: $($s.attempts.Count)"; $s.attempts | ForEach-Object { "  [$($_.index)] $($_.status)/$($_.strategy) sat=$($_.satisfied) - $($_.detail)" }; Start-Sleep -Seconds 3 } while ($s.status -eq 'running'); $s | ConvertTo-Json -Depth 8
+```
+
+Scarica il report JSON (monoriga):
+```powershell
+$id="goal_20260723_010143"; Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$id" | ConvertTo-Json -Depth 8 | Out-File -Encoding utf8 "$HOME\Downloads\$id.json"
+```
+
 CLI equivalente (se mai servisse a mano): `python scripts/run_goal.py --project ...`.
 
 ---
