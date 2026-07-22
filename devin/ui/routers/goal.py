@@ -113,8 +113,11 @@ async def api_goal_run(req: GoalRunRequest):
     except (GoalError, ValueError, KeyError) as exc:
         return {"error": f"goal non valido: {exc}"}
 
+    # Risolvi SEMPRE a path assoluto: un project_path relativo verrebbe risolto
+    # rispetto alla CWD del servizio (imprevedibile) e non sapremmo dove sono
+    # finiti i file. Lo store e la risposta riportano il path assoluto reale.
     from pathlib import Path
-    project = str(Path(req.project_path).expanduser())
+    project = str(Path(req.project_path).expanduser().resolve())
     Path(project).mkdir(parents=True, exist_ok=True)
 
     goal_run_id = datetime.now().strftime("goal_%Y%m%d_%H%M%S_%f")
