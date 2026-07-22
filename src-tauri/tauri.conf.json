@@ -6,15 +6,13 @@
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
-    "devUrl": "http://127.0.0.1:5000/app",
-    "frontendDist": "http://127.0.0.1:5000/app"
+    "frontendDist": "frontend"
   },
   "app": {
     "windows": [
       {
         "label": "main",
         "title": "DEVIN AI IDE",
-        "url": "http://127.0.0.1:5000/app",
         "width": 1440,
         "height": 920,
         "minWidth": 1100,

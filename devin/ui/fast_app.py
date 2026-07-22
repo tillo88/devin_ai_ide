@@ -66,6 +66,20 @@ app = FastAPI(title="DEVIN AI IDE")
 from devin.ui.token_gate import TokenGateMiddleware
 app.add_middleware(TokenGateMiddleware)
 
+# CORS (app nativa 2026-07-22): la UI desktop e' bundlata nell'app Tauri
+# (origin tauri://localhost o http://tauri.localhost su Windows) e chiama il
+# backend cross-origin su 127.0.0.1:5000. Ristretto agli origin Tauri/locali;
+# l'auth resta al token gate (loopback esente). Aggiunto DOPO il token gate =
+# outermost, cosi' il preflight OPTIONS e' gestito per primo.
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^(tauri://localhost|https?://(tauri\.localhost|localhost|127\.0\.0\.1)(:\d+)?)$",
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
+
 # FIX: base.html (usato da history.html) referenzia url_for('static', ...) per
 # css/js (devin/ui/static/css/style.css e js/app.js, gia' presenti e completi
 # sul disco), ma non esisteva nessun app.mount("/static", ...) registrato ->

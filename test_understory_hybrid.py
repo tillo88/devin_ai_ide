@@ -562,9 +562,13 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert "topbar-command" in html
     assert "active-scope-label" in html
     assert "Modern desktop polish layer" in css
-    assert config["build"]["devUrl"] == "http://127.0.0.1:5000/app"
-    assert config["build"]["frontendDist"] == "http://127.0.0.1:5000/app"
-    assert config["app"]["windows"][0]["url"] == "http://127.0.0.1:5000/app"
+    # App nativa (2026-07-22): la UI e' bundlata come file locali (frontendDist
+    # = "frontend"), non piu' servita dal backend via URL. La shell Rust scopre
+    # il backend (rig-first) e inietta l'API base; la finestra non ha piu' un
+    # `url` che punta al backend.
+    assert config["build"]["frontendDist"] == "frontend"
+    assert "devUrl" not in config["build"]
+    assert "url" not in config["app"]["windows"][0]
     assert capability["permissions"] == ["core:default"]
     assert "brownfield" in docs
     assert "sidecar" in docs

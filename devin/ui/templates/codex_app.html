@@ -190,7 +190,9 @@
   <script>
     // PWA (2026-07-18): registrazione service worker, guarded; la pagina e'
     // gia' autenticata, il SW eredita il cookie di sessione (same-origin).
-    if ('serviceWorker' in navigator) {
+    // App nativa (2026-07-22): saltato dentro l'app desktop Tauri (UI bundlata,
+    // niente SW: eviterebbe il caching della vecchia pagina servita dal backend).
+    if ('serviceWorker' in navigator && !window.__TAURI_INTERNALS__) {
       window.addEventListener('load', function () {
         navigator.serviceWorker.register('/sw.js?v={{ shell_version }}', {
           updateViaCache: 'none'

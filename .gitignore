@@ -47,6 +47,8 @@ node_modules/
 # Rust/Tauri build output and generated files (Cargo.lock IS tracked on purpose)
 src-tauri/target/
 src-tauri/gen/
+# Generated frontend bundle (built by scripts/build_frontend_bundle.py before tauri build)
+src-tauri/frontend/
 .idea/
 .vscode/
 .DS_Store
