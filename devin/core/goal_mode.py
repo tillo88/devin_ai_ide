@@ -93,6 +93,41 @@ class Criterion:
         )
 
 
+def _criterion_from_dsl(token: str) -> "Criterion":
+    """Mini-DSL testuale per un criterio (usata da CLI e API).
+
+    tests_pass | file_exists:PATH | contains:PATH:TESTO | absence:REGEX |
+    command:PROG ARG ARG
+    """
+    if token == "tests_pass":
+        return Criterion("tests_pass", {})
+    if token.startswith("file_exists:"):
+        return Criterion("file_exists", {"path": token.split(":", 1)[1]})
+    if token.startswith("contains:"):
+        _, path, text = token.split(":", 2)
+        return Criterion("contains_text", {"path": path, "text": text})
+    if token.startswith("absence:"):
+        return Criterion("absence_of_pattern", {"pattern": token.split(":", 1)[1]})
+    if token.startswith("command:"):
+        return Criterion("command_succeeds", {"argv": token.split(":", 1)[1].split()})
+    raise GoalError(f"criterio non riconosciuto: {token!r}")
+
+
+def parse_acceptance(items: list) -> list["Criterion"]:
+    """Normalizza una lista mista (Criterion | dict goal_v1 | stringa DSL)."""
+    out: list[Criterion] = []
+    for item in items or []:
+        if isinstance(item, Criterion):
+            out.append(item)
+        elif isinstance(item, dict):
+            out.append(Criterion.from_dict(item))
+        elif isinstance(item, str):
+            out.append(_criterion_from_dsl(item))
+        else:
+            raise GoalError(f"criterio di tipo non supportato: {type(item).__name__}")
+    return out
+
+
 @dataclass
 class Goal:
     """Obiettivo autonomo con criteri di accettazione e vincoli."""

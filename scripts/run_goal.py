@@ -38,9 +38,9 @@ from devin.core.goal_mode import (  # noqa: E402
     APPROVAL_MANUAL,
     MODE_MAINTENANCE,
     MODE_SCAFFOLD,
-    Criterion,
     Goal,
     GoalError,
+    parse_acceptance,
 )
 from devin.core.goal_executors import (  # noqa: E402
     build_orchestrator_scaffold_runner,
@@ -52,32 +52,13 @@ from devin.core.goal_runner import run_goal  # noqa: E402
 _DEFAULT_CONFIG = str(Path(__file__).resolve().parents[1] / "config" / "settings.json")
 
 
-def parse_accept(tokens: list[str]) -> list[Criterion]:
-    criteria: list[Criterion] = []
-    for tok in tokens or []:
-        if tok == "tests_pass":
-            criteria.append(Criterion("tests_pass", {}))
-        elif tok.startswith("file_exists:"):
-            criteria.append(Criterion("file_exists", {"path": tok.split(":", 1)[1]}))
-        elif tok.startswith("contains:"):
-            _, path, text = tok.split(":", 2)
-            criteria.append(Criterion("contains_text", {"path": path, "text": text}))
-        elif tok.startswith("absence:"):
-            criteria.append(Criterion("absence_of_pattern", {"pattern": tok.split(":", 1)[1]}))
-        elif tok.startswith("command:"):
-            criteria.append(Criterion("command_succeeds", {"argv": tok.split(":", 1)[1].split()}))
-        else:
-            raise GoalError(f"--accept non riconosciuto: {tok!r}")
-    return criteria
-
-
 def build_goal(args: argparse.Namespace) -> Goal:
     if args.goal_file:
         data = json.loads(Path(args.goal_file).read_text(encoding="utf-8"))
         return Goal.from_dict(data)
     goal = Goal(
         objective=args.objective or "",
-        acceptance=parse_accept(args.accept),
+        acceptance=parse_acceptance(args.accept),
         mode=args.mode,
         approval_policy=args.approval,
         budget_steps=args.max_steps,
