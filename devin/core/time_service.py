@@ -100,7 +100,15 @@ def timestamp_bundle(
         zone_name = resolve_display_timezone_name(environ={})
 
     utc_dt = dt.astimezone(UTC)
-    local_dt = utc_dt.astimezone(ZoneInfo(zone_name))
+    try:
+        local_dt = utc_dt.astimezone(ZoneInfo(zone_name))
+    except Exception:
+        # tzdata mancante (tipico su Windows senza il pacchetto 'tzdata', o
+        # runtime PyInstaller senza il DB IANA): non far crashare la richiesta
+        # (era la causa di 'Failed to fetch' sullo scaffold, 2026-07-22).
+        # Ripiega su UTC come display invece di sollevare ZoneInfoNotFoundError.
+        local_dt = utc_dt
+        zone_name = "UTC"
     return {
         "timestamp_utc": utc_dt.isoformat(),
         "timestamp_local": local_dt.isoformat(),

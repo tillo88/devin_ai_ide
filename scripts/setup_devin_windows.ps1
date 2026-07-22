@@ -79,6 +79,7 @@ $CorePkgs = @(
     "python-dotenv", "instructor",
     "tree-sitter", "tree-sitter-language-pack==0.13.0",
     "bandit", "youtube-transcript-api",
+    "tzdata",
     "pytest", "httpx"
 )
 & $VenvPy -m pip install $CorePkgs 2>&1 | Add-Content $Log
