@@ -110,6 +110,11 @@ Endpoint (dopo che il rig ha il codice aggiornato):
 - `GET /api/goal/{goal_run_id}` — stato + attempts (polling).
 - `GET /api/goal` — lista.
 
+### ⚠️ Ambiente del PC dell'utente (Alessandro)
+- **Cartella Download su `G:\Downloads`** (NON `$HOME\Downloads`). Usare sempre
+  `G:\Downloads` nei comandi che salvano/scaricano file sul PC.
+- Shell: PowerShell su Windows.
+
 ### ⚠️ Convenzione comandi PC: PowerShell SEMPRE monoriga
 I comandi PowerShell per l'utente vanno dati **su una sola riga** (separatori `;`).
 Incollare testo multi-riga nella shell fa scattare l'avviso Windows "Si sta per
@@ -128,7 +133,7 @@ do { Clear-Host; $s = Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal
 
 Scarica il report JSON (monoriga):
 ```powershell
-$id="goal_20260723_010143"; Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$id" | ConvertTo-Json -Depth 8 | Out-File -Encoding utf8 "$HOME\Downloads\$id.json"
+$id="goal_20260723_010143"; Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$id" | ConvertTo-Json -Depth 8 | Out-File -Encoding utf8 "G:\Downloads\$id.json"
 ```
 
 CLI equivalente (se mai servisse a mano): `python scripts/run_goal.py --project ...`.
