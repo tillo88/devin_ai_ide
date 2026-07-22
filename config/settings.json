@@ -38,7 +38,7 @@
     "rig_self_hosted": false,
     "rig_self_hosted_note": "METTI true quando DEVIN AI IDE gira SUL rig stesso (deploy via deploy-devin-webapp.sh): il modello e' in localhost:8080, niente WOL (non ha senso svegliare se stessi) e niente attesa all'avvio. Su PC che usa un rig REMOTO separato, lascia false.",
     "local_role": "chat_and_autocomplete_only",
-    "local_test_mode": true,
+    "local_test_mode": false,
     "local_test_mode_note": "TEMPORANEO: rig non ancora arrivato. Con true, il locale avvia anche il planner/reasoning (oltre al coder) per poter testare Mantenimento + Zero-Shot Scaffolding end-to-end. Rimettere false quando il rig e' online. NB: con local_test_mode=true il WOL verso il rig e' disattivato automaticamente (il rig non esiste ancora, inutile aspettarlo).",
 
     "wol_enabled": true,
