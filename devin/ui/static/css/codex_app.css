@@ -436,15 +436,126 @@ body.codex-shell {
 }
 
 .chat-composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  align-items: end;
   margin: 0 18px 14px;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 18px;
   background: rgba(15, 23, 42, 0.72);
+}
+
+/* Barra strumenti del composer: File / Skill / Goal a sinistra, invio a destra */
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tool {
+  position: relative;
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(15, 23, 42, 0.75);
+  color: var(--muted);
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.tool-btn:hover,
+.tool-btn[aria-expanded="true"] {
+  color: var(--text);
+  border-color: rgba(34, 211, 238, 0.45);
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.tool-ico {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.tool-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-pop[hidden] {
+  display: none;
+}
+
+.pop-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pop-item:hover {
+  background: rgba(34, 211, 238, 0.14);
+}
+
+.composer-submit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.web-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--accent, #22d3ee);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 999px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+/* Il mode select non deve prendere tutta la larghezza nella riga di invio */
+.composer-submit select {
+  width: auto;
+  min-width: 108px;
+  padding: 8px;
 }
 
 .chat-composer textarea,
@@ -3012,4 +3123,69 @@ a.quick-link:hover { border-color: rgba(99,102,241,0.5); color: var(--text); }
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+
+/* === Sidebar collassabili (desktop) === */
+.panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.collapse-btn {
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* Colonne del grid quando un lato e' compresso. Specificita' (0,2,0): vince
+   sulle regole .workspace-grid base e nelle media query. */
+body.left-collapsed .workspace-grid {
+  grid-template-columns: minmax(0, 1fr) 326px;
+}
+body.right-collapsed .workspace-grid {
+  grid-template-columns: 294px minmax(0, 1fr);
+}
+body.left-collapsed.right-collapsed .workspace-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.left-collapsed .workspace-panel {
+  display: none;
+}
+body.right-collapsed .mind-panel {
+  display: none;
+}
+
+/* Pulsanti a scomparsa per riaprire un pannello compresso */
+.rail-reopen {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 60;
+  width: 26px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.95);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+.rail-reopen:hover {
+  color: var(--text);
+  border-color: rgba(34, 211, 238, 0.45);
+}
+.rail-reopen[hidden] {
+  display: none;
+}
+.rail-reopen-left {
+  left: 0;
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+}
+.rail-reopen-right {
+  right: 0;
+  border-right: 0;
+  border-radius: 10px 0 0 10px;
 }

@@ -41,7 +41,10 @@
     <aside class="panel workspace-panel">
       <div class="panel-header">
         <span>Workspace</span>
-        <button class="icon-button" id="refresh-app" title="Refresh">&#8635;</button>
+        <span class="panel-header-actions">
+          <button class="icon-button" id="refresh-app" title="Refresh">&#8635;</button>
+          <button class="icon-button collapse-btn" data-collapse="left" title="Comprimi il pannello Workspace" aria-label="Comprimi Workspace">&#10094;</button>
+        </span>
       </div>
       <section class="panel-section">
         <div class="section-title-row">
@@ -94,34 +97,50 @@
 
       <form class="chat-composer" id="chat-form">
         <textarea id="chat-input" rows="2" placeholder="Chiedi a DEVIN..."></textarea>
-        <div class="composer-actions">
-          <div class="composer-plus">
-            <button type="button" id="composer-plus-btn" class="plus-button" title="Aggiungi: skill, modalità, allegati" aria-haspopup="true" aria-expanded="false">+</button>
-            <div class="plus-menu" id="plus-menu" role="menu" hidden>
-              <button type="button" class="plus-item" data-plus="attach" role="menuitem">📎 Allega file</button>
-              <button type="button" class="plus-item" data-plus="link-folder" role="menuitem">📁 Collega cartella</button>
-              <div class="plus-sep"></div>
-              <div class="plus-group-label">Modalità</div>
-              <button type="button" class="plus-item" data-plus-prompt="Fai il punto del progetto: struttura, stato attuale e prossimi passi consigliati." role="menuitem">📋 Punto del progetto</button>
-              <button type="button" class="plus-item" data-plus="new-project" role="menuitem">✨ Nuovo progetto</button>
-              <button type="button" class="plus-item" data-plus-prompt="Analizza il progetto selezionato e trova eventuali bug o fragilità, poi proponi i fix." role="menuitem">🐛 Caccia ai bug</button>
-              <div class="plus-sep"></div>
-              <div class="plus-group-label">Skills</div>
-              <button type="button" class="plus-item" data-plus-prompt="Scrivi test unitari completi per il codice indicato, coprendo i casi limite. I test devono passare." role="menuitem">🧪 Scrivi i test</button>
-              <button type="button" class="plus-item" data-plus-prompt="Fai il refactor del codice indicato mantenendo il comportamento invariato: migliora leggibilità, nomi e struttura." role="menuitem">🔧 Refactor</button>
-              <button type="button" class="plus-item" data-plus-prompt="Spiega passo per passo cosa fa il codice indicato e dove sono i punti critici." role="menuitem">📖 Spiega il codice</button>
-              <button type="button" class="plus-item" data-plus-prompt="Scrivi/aggiorna la documentazione (README e docstring) per il modulo indicato." role="menuitem">📝 Documenta</button>
+        <div class="composer-bar">
+          <div class="composer-tools">
+            <div class="tool">
+              <button type="button" class="tool-btn" data-tool="file" aria-haspopup="true" aria-expanded="false" title="Allega file o collega una cartella">
+                <span class="tool-ico">📎</span><span class="tool-label">File</span>
+              </button>
+              <div class="tool-pop" data-pop="file" hidden>
+                <button type="button" class="pop-item" data-plus="attach">📎 Allega file</button>
+                <button type="button" class="pop-item" data-plus="link-folder">📁 Collega cartella</button>
+              </div>
+            </div>
+            <div class="tool">
+              <button type="button" class="tool-btn" data-tool="skill" aria-haspopup="true" aria-expanded="false" title="Skill: preset di prompt pronti">
+                <span class="tool-ico">⚡</span><span class="tool-label">Skill</span>
+              </button>
+              <div class="tool-pop" data-pop="skill" hidden>
+                <button type="button" class="pop-item" data-plus-prompt="Scrivi test unitari completi per il codice indicato, coprendo i casi limite. I test devono passare.">🧪 Scrivi i test</button>
+                <button type="button" class="pop-item" data-plus-prompt="Fai il refactor del codice indicato mantenendo il comportamento invariato: migliora leggibilità, nomi e struttura.">🔧 Refactor</button>
+                <button type="button" class="pop-item" data-plus-prompt="Spiega passo per passo cosa fa il codice indicato e dove sono i punti critici.">📖 Spiega il codice</button>
+                <button type="button" class="pop-item" data-plus-prompt="Scrivi/aggiorna la documentazione (README e docstring) per il modulo indicato.">📝 Documenta</button>
+              </div>
+            </div>
+            <div class="tool">
+              <button type="button" class="tool-btn" data-tool="goal" aria-haspopup="true" aria-expanded="false" title="Goal: cosa deve fare DEVIN">
+                <span class="tool-ico">🎯</span><span class="tool-label">Goal</span>
+              </button>
+              <div class="tool-pop" data-pop="goal" hidden>
+                <button type="button" class="pop-item" data-plus-prompt="Fai il punto del progetto: struttura, stato attuale e prossimi passi consigliati.">📋 Punto del progetto</button>
+                <button type="button" class="pop-item" data-plus="new-project">✨ Nuovo progetto</button>
+                <button type="button" class="pop-item" data-plus-prompt="Analizza il progetto selezionato e trova eventuali bug o fragilità, poi proponi i fix.">🐛 Caccia ai bug</button>
+              </div>
             </div>
           </div>
-          <select id="chat-mode" title="Model mode">
-            <option value="auto">auto</option>
-            <option value="chat">chat</option>
-            <option value="reasoning">reasoning</option>
-          </select>
-          <label class="toggle-label"><input type="checkbox" id="chat-web"> web</label>
-          <input type="file" id="chat-file" multiple hidden>
-          <span class="mini-label" id="chat-file-label" title="No files attached">no files</span>
-          <button type="submit" id="chat-send">Invia</button>
+          <div class="composer-submit">
+            <span class="mini-label" id="chat-file-label" title="No files attached">no files</span>
+            <span class="web-chip" title="Ricerca web sempre attiva">🌐 web</span>
+            <select id="chat-mode" title="Model mode">
+              <option value="auto">auto</option>
+              <option value="chat">chat</option>
+              <option value="reasoning">reasoning</option>
+            </select>
+            <input type="file" id="chat-file" multiple hidden>
+            <button type="submit" id="chat-send">Invia</button>
+          </div>
         </div>
       </form>
 
@@ -146,7 +165,10 @@
     <aside class="panel mind-panel focus-panel">
       <div class="panel-header">
         <span>Attività</span>
-        <span class="mini-label" id="mind-state">loading</span>
+        <span class="panel-header-actions">
+          <span class="mini-label" id="mind-state">loading</span>
+          <button class="icon-button collapse-btn" data-collapse="right" title="Comprimi il pannello Attività" aria-label="Comprimi Attività">&#10095;</button>
+        </span>
       </div>
 
       <section class="panel-section">
@@ -196,6 +218,8 @@
     </aside>
   </main>
 
+  <button class="rail-reopen rail-reopen-left" data-collapse="left" title="Mostra il pannello Workspace" aria-label="Mostra Workspace" hidden>&#10095;</button>
+  <button class="rail-reopen rail-reopen-right" data-collapse="right" title="Mostra il pannello Attività" aria-label="Mostra Attività" hidden>&#10094;</button>
 
   <div class="command-overlay" id="command-overlay" hidden>
     <section class="command-palette" role="dialog" aria-modal="true" aria-labelledby="command-title">

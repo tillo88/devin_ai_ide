@@ -380,6 +380,13 @@ function setPipelineStage(index = null, completed = false) {
   });
 }
 
+// Stati terminali di un run: una volta raggiunti, gli eventi intermedi ancora
+// in coda o ri-consegnati dallo stream non devono riportare il badge a running.
+const RUN_TERMINAL_STATES = new Set([
+  "awaiting_approval", "success", "verified_success", "failed",
+  "rejected", "rolled_back", "applied_uncommitted", "stopped", "timeout",
+]);
+
 function showRunStatus(runId, status, { updateBadge = true, completed = false } = {}) {
   if (!runId) return;
   state.selectedRunId = runId;
@@ -415,6 +422,11 @@ function applyRunEventToActivity(event) {
     loadProjectOverview().catch(() => {});
     return;
   }
+  // Guard: se il run e' gia' in uno stato TERMINALE (es. awaiting_approval,
+  // success, failed), un evento intermedio ri-consegnato dallo stream (es. dopo
+  // una riconnessione SSE) NON deve riportare il badge a "running". Senza questo
+  // guard un run in attesa di approvazione poteva "tornare running" da solo.
+  if (RUN_TERMINAL_STATES.has(state.selectedRunStatus)) return;
   showRunStatus(event.run_id, "running");
 }
 
@@ -1214,7 +1226,7 @@ async function sendChatMessage(message) {
       const formData = new FormData();
       formData.append("message", message);
       formData.append("mode", $("chat-mode")?.value ?? "auto");
-      formData.append("use_web_search", Boolean($("chat-web")?.checked) ? "true" : "false");
+      formData.append("use_web_search", "true");  // ricerca web sempre attiva
       formData.append("project_path", state.selectedProjectPath || "");
       formData.append("chat_id", state.selectedChatId || "");
       selectedFiles.forEach((file) => formData.append("files", file));
@@ -1230,7 +1242,7 @@ async function sendChatMessage(message) {
         body: JSON.stringify({
           message,
           mode: $("chat-mode")?.value ?? "auto",
-          use_web_search: Boolean($("chat-web")?.checked),
+          use_web_search: true,  // ricerca web sempre attiva
           project_path: state.selectedProjectPath || null,
           chat_id: state.selectedChatId || null,
         }),
@@ -1757,49 +1769,53 @@ function setupChatComposer() {
     });
   });
 
-  // Menu "+" del composer: skill/preset di prompt, modalità e allegati.
-  const plusBtn = $("composer-plus-btn");
-  const plusMenu = $("plus-menu");
-  const closePlusMenu = () => {
-    if (!plusMenu) return;
-    plusMenu.hidden = true;
-    plusBtn?.setAttribute("aria-expanded", "false");
+  // Strumenti del composer: File / Skill / Goal. Ogni bottone apre il proprio
+  // popover verso l'alto-sinistra (niente clip dal pannello destro). Un solo
+  // popover aperto per volta; chiusura su click fuori o Esc.
+  const toolButtons = Array.from(document.querySelectorAll(".composer-tools .tool-btn"));
+  const closeAllTools = () => {
+    document.querySelectorAll(".composer-tools .tool-pop").forEach((pop) => { pop.hidden = true; });
+    toolButtons.forEach((btn) => btn.setAttribute("aria-expanded", "false"));
   };
-  const openPlusMenu = () => {
-    if (!plusMenu) return;
-    plusMenu.hidden = false;
-    plusBtn?.setAttribute("aria-expanded", "true");
-  };
-  plusBtn?.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (plusMenu?.hidden) openPlusMenu();
-    else closePlusMenu();
-  });
-  plusMenu?.addEventListener("click", (event) => {
-    const item = event.target.closest(".plus-item");
-    if (!item) return;
-    const prompt = item.dataset.plusPrompt;
-    const action = item.dataset.plus;
-    if (prompt) {
-      const input = $("chat-input");
-      if (input) {
-        input.value = input.value ? `${input.value.replace(/\s+$/, "")} ${prompt}` : prompt;
-        input.focus();
+  toolButtons.forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const pop = btn.parentElement.querySelector(".tool-pop");
+      const wasOpen = pop && !pop.hidden;
+      closeAllTools();
+      if (pop && !wasOpen) {
+        pop.hidden = false;
+        btn.setAttribute("aria-expanded", "true");
       }
-    } else if (action === "attach") {
-      $("chat-file")?.click();
-    } else if (action === "link-folder") {
-      linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
-    } else if (action === "new-project") {
-      createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
-    }
-    closePlusMenu();
+    });
+  });
+  document.querySelectorAll(".composer-tools .tool-pop").forEach((pop) => {
+    pop.addEventListener("click", (event) => {
+      const item = event.target.closest(".pop-item");
+      if (!item) return;
+      const prompt = item.dataset.plusPrompt;
+      const action = item.dataset.plus;
+      if (prompt) {
+        const input = $("chat-input");
+        if (input) {
+          input.value = input.value ? `${input.value.replace(/\s+$/, "")} ${prompt}` : prompt;
+          input.focus();
+        }
+      } else if (action === "attach") {
+        $("chat-file")?.click();
+      } else if (action === "link-folder") {
+        linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+      } else if (action === "new-project") {
+        createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+      }
+      closeAllTools();
+    });
   });
   document.addEventListener("click", (event) => {
-    if (plusMenu && !plusMenu.hidden && !event.target.closest(".composer-plus")) closePlusMenu();
+    if (!event.target.closest(".composer-tools")) closeAllTools();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closePlusMenu();
+    if (event.key === "Escape") closeAllTools();
   });
 }
 
@@ -1876,6 +1892,25 @@ function setupPanelToggles() {
   };
   bind("toggle-workspace-panel", "pwa-show-workspace");
   bind("toggle-mind-panel", "pwa-show-mind");
+
+  // Collasso sidebar su desktop: i bottoni "comprimi" nei pannelli e i due
+  // pulsanti-rail per riaprirli condividono data-collapse=left|right.
+  const applyCollapseState = () => {
+    const leftCollapsed = document.body.classList.contains("left-collapsed");
+    const rightCollapsed = document.body.classList.contains("right-collapsed");
+    const railLeft = document.querySelector(".rail-reopen-left");
+    const railRight = document.querySelector(".rail-reopen-right");
+    if (railLeft) railLeft.hidden = !leftCollapsed;
+    if (railRight) railRight.hidden = !rightCollapsed;
+  };
+  document.querySelectorAll("[data-collapse]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const side = btn.dataset.collapse === "right" ? "right" : "left";
+      document.body.classList.toggle(`${side}-collapsed`);
+      applyCollapseState();
+    });
+  });
+  applyCollapseState();
 
   // Chiudi l'overlay workspace dopo una selezione (progetto/chat/azione).
   document.querySelector(".workspace-panel")?.addEventListener("click", (event) => {
