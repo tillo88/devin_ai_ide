@@ -52,6 +52,7 @@ Step "Build devin-backend (onedir): puo' richiedere alcuni minuti"
     --add-data "devin\ui\static;devin\ui\static" `
     --add-data "config\settings.json;config" `
     --collect-all tree_sitter_language_pack `
+    --collect-all tzdata `
     --hidden-import uvicorn.logging `
     --hidden-import uvicorn.loops.auto `
     --hidden-import uvicorn.protocols.http.auto `

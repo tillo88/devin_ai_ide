@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from devin.core.time_service import resolve_display_timezone_name, timestamp_bundle
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """Backward-compatible UTC timestamp helper used by older tests/callers."""
+    return str(timestamp_bundle(display_timezone="UTC")["timestamp_utc"])
 
 
 def safe_run_id(run_id: str) -> str:
@@ -57,11 +59,17 @@ def classify_log_event(message: str, level: str = "info") -> str:
 
 
 class RunEventStore:
-    """Append-only JSONL event store for Codex-like run timelines."""
+    """Append-only JSONL event store for Codex-like run timelines.
 
-    def __init__(self, log_dir: str | Path):
+    UTC remains the canonical persisted instant. A Europe/Rome (or configured
+    IANA zone) representation is stored alongside it for agents/UI consumers,
+    without rewriting legacy records.
+    """
+
+    def __init__(self, log_dir: str | Path, *, display_timezone: str | None = None):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.display_timezone = display_timezone or resolve_display_timezone_name()
 
     def path_for(self, run_id: str) -> Path:
         return self.log_dir / f"{safe_run_id(run_id)}.events.jsonl"
@@ -80,9 +88,15 @@ class RunEventStore:
         if path.exists():
             with path.open("r", encoding="utf-8") as fh:
                 seq = sum(1 for _ in fh)
+        stamp = timestamp_bundle(display_timezone=self.display_timezone)
         record = {
             "seq": seq,
-            "ts": _utc_now(),
+            # Legacy field kept stable for current frontend and stored JSONL.
+            "ts": stamp["timestamp_utc"],
+            "timestamp_utc": stamp["timestamp_utc"],
+            "timestamp_local": stamp["timestamp_local"],
+            "display_timezone": stamp["display_timezone"],
+            "timezone_status": stamp["timezone_status"],
             "run_id": safe_run_id(run_id),
             "type": str(event_type or "log"),
             "level": str(level or "info"),
