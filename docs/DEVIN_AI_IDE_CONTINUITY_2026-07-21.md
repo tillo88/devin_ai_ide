@@ -193,6 +193,38 @@ Avanzamento successivo (stessa notte, `79c7b40`..`27c8feb`):
 App release gia' verificata dall'owner: parte da sola col backup locale,
 solo finestra, zero browser ("yeeees partita subito").
 
+## Sessione 2026-07-21 (parte 4): merge timezone, UI, Context Steward
+
+- **Branch remoto integrato**: `fix/timezone-normalization-europe-rome`
+  (6 commit, autore esterno) revisionato = update pulito, non regressione;
+  merge --no-ff in main (`time_service` UTC-canonico + Europe/Rome, run_events
+  con campi tz e `ts` legacy stabile, tzdata nei requirements e nel bundle
+  sidecar). File disgiunti dal lavoro locale, zero conflitti.
+- **UI badge SOURCE onesto** (`94fb110`): rig/locale/offline con host, probe
+  rig cache-ato (TTL 10s) per non spammare gli endpoint pollati.
+- **UI empty-state progetti** (`b2a27d1`): CTA dirette Crea/Collega quando non
+  ci sono progetti; hero "Nuovo progetto" ora crea davvero (non serve modello).
+- **Context Steward** (audit + piano + scaffold):
+  - `docs/CONTEXT_STEWARD_PLAN.md`: verdetto = formalizzazione di
+    `chat_continuity.py` (gia' ~60%) dentro P4/P5, non componente nuovo; piano
+    6 fasi CS0..CS5 con DoD, nessuna dipende dalla successiva per dare valore;
+    long-term NON e' un componente Steward (e' AutoMem).
+  - **CS0** (`1fd44c0`): `devin/core/context_steward.py` - supervisore
+    deterministico GPU/LLM-free: macchina di pressione con isteresi (no
+    flapping), cooldown + min_pressure_drop + cap per task (rompe il loop
+    riassumi->supera soglia->riassumi), loop guard a fingerprint, resume JSON.
+    Config `context_steward` in settings.json (conservativa, DA CALIBRARE).
+    11 test.
+  - **CS1** (`12f3365`): `devin/core/evidence_archive.py` - archivio
+    content-addressed SHA-256 (NVMe-ready): il checkpoint tiene solo
+    riferimenti (claim+status+evidence_id), mai il corpo. Idempotente,
+    retrieval byte-for-byte con integrity check, tamper detection, provenance
+    con UTC+local (time_service). make_ref non setta 'verified' da solo. 7 test.
+  - Suite: **454 passed**, 1 skipped.
+- Prossime fasi Steward: CS2 retrieval ibrido (lookup esatto + strutturato +
+  semantico su VectorStore esistente), CS3 pannello osservabile, CS4
+  compattazione LLM a confine (unico pezzo con inferenza), CS5 stabilita' KV.
+
 ## Prossima ripresa: sequenza esatta
 
 1. Push su GitHub se ci sono commit locali non pubblicati.
