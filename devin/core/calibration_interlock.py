@@ -1,15 +1,9 @@
 """Fail-closed admission gate for AI Rig calibration windows.
 
-The calibration controller owns a small JSON file in ``/run/ai-rig``.  When
-that file is active, the DEVIN backend rejects new model-consuming chat and
-Goal requests, while already accepted work is allowed to drain.  A read-only
-status endpoint reports when no chat stream, accepted Goal, starting run or
-active run remains, so the external controller can stop/change the model only
-when ``safe_to_stop_model`` is true.
-
-This module deliberately does not stop services or models and does not create
-or remove the interlock file.  Those operations belong to the privileged AI
-Rig calibration controller.
+A privileged calibration controller owns a small JSON file in ``/run/ai-rig``.
+When the file is active, DEVIN rejects new model-consuming requests while
+already accepted chat, Goal and training work drains.  This module never stops
+services or models and never creates/removes the controller-owned file.
 """
 
 from __future__ import annotations
@@ -30,11 +24,10 @@ INTERLOCK_PATH_ENV = "DEVIN_CALIBRATION_INTERLOCK_FILE"
 DEFAULT_INTERLOCK_PATH = "/run/ai-rig/calibration-interlock.json"
 MAX_INTERLOCK_BYTES = 64 * 1024
 MAX_CAPTURE_BYTES = 64 * 1024
-
 STATUS_PATH = "/api/calibration/interlock"
 
-# Exact mutating/model-consuming admissions.  Read-only history, diagnostics,
-# health and stop/recovery endpoints remain available while the gate is armed.
+# Exact endpoints that can consume the model or enqueue work that will consume
+# it.  Recovery/read-only routes, including /api/stop, stay reachable.
 PROTECTED_POST_PATHS = frozenset(
     {
         "/api/chat",
@@ -44,6 +37,7 @@ PROTECTED_POST_PATHS = frozenset(
         "/api/run/resume",
         "/api/chat/scaffold",
         "/api/chat/generate_patch",
+        "/api/training/run",
     }
 )
 
@@ -62,6 +56,9 @@ _TERMINAL_RUN_STATUSES = frozenset(
         "rejected",
         "rolled_back",
     }
+)
+_TERMINAL_TRAINING_STATUSES = frozenset(
+    {"finished", "failed", "stopped", "cancelled"}
 )
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _STATUS_RE = re.compile(r"(?im)^status:\s*([a-z_]+)\s*$")
@@ -91,8 +88,7 @@ def resolve_interlock_path(environ: dict[str, str] | None = None) -> Path:
 
 
 def _invalid_state(path: Path, error: str) -> InterlockState:
-    # Invalid/unreadable state blocks admissions, but never claims that it is
-    # safe to stop the model.  An operator must repair or remove the file.
+    # Invalid state blocks admissions but never authorizes a model stop.
     return InterlockState(
         path=str(path),
         status="invalid_fail_closed",
@@ -176,10 +172,9 @@ class AdmissionRegistry:
 
     def register_pending_goal(self, run_id: str) -> None:
         value = str(run_id or "").strip()
-        if not _RUN_ID_RE.fullmatch(value):
-            return
-        with self._lock:
-            self._pending_goal_ids.add(value)
+        if _RUN_ID_RE.fullmatch(value):
+            with self._lock:
+                self._pending_goal_ids.add(value)
 
     def reconcile_pending(
         self,
@@ -193,21 +188,19 @@ class AdmissionRegistry:
 
         removable = set()
         for run_id in candidates:
-            # Keep the acceptance bridge for the whole run.  starting/active
-            # prove that work is alive; only terminal log evidence may clear it.
+            # Keep the bridge throughout starting/active.  Only terminal log
+            # evidence may remove it, closing transition and exception races.
             if run_id in starting_run_ids or run_id in active_run_ids:
                 continue
             try:
                 if terminal_check(run_id):
                     removable.add(run_id)
             except Exception:
-                # Unknown state remains pending: drain reporting is fail-closed.
-                pass
+                pass  # unknown remains pending: fail-closed drain
 
         if removable:
             with self._lock:
                 self._pending_goal_ids.difference_update(removable)
-
         with self._lock:
             return sorted(self._pending_goal_ids)
 
@@ -254,12 +247,34 @@ def _terminal_log_checker(log_dir: Path):
     return check
 
 
+def _active_training_job_ids() -> set[str]:
+    from devin.ui.routers.training import _training_job_snapshot
+
+    jobs = _training_job_snapshot()
+    if not isinstance(jobs, list):
+        raise RuntimeError("training job snapshot is not a list")
+
+    active = set()
+    for item in jobs:
+        if not isinstance(item, dict):
+            raise RuntimeError("training job snapshot contains invalid entry")
+        status = str(item.get("status") or "unknown").strip().lower()
+        if status in _TERMINAL_TRAINING_STATUSES:
+            continue
+        job_id = str(item.get("job_id") or "").strip()
+        if not _RUN_ID_RE.fullmatch(job_id):
+            raise RuntimeError("non-terminal training job has invalid job_id")
+        active.add(job_id)
+    return active
+
+
 def runtime_status_payload() -> dict[str, Any]:
     state = read_interlock()
     runtime_ok = True
     runtime_error = ""
     starting_ids: set[str] = set()
     active_ids: set[str] = set()
+    training_ids: set[str] = set()
     log_dir: Path | None = None
 
     try:
@@ -268,6 +283,7 @@ def runtime_status_payload() -> dict[str, Any]:
         with fast_app.runs_lock:
             starting_ids = set(fast_app.starting_runs)
             active_ids = set(fast_app.active_runs)
+        training_ids = _active_training_job_ids()
         log_dir = Path(fast_app.LOG_DIR)
     except Exception as exc:
         runtime_ok = False
@@ -287,6 +303,7 @@ def runtime_status_payload() -> dict[str, Any]:
         {
             "starting_run_ids": sorted(starting_ids),
             "active_run_ids": sorted(active_ids),
+            "active_training_job_ids": sorted(training_ids),
             "pending_goal_ids": pending_ids,
             "runtime_snapshot_ok": runtime_ok,
             "runtime_snapshot_error": runtime_error,
@@ -300,6 +317,7 @@ def runtime_status_payload() -> dict[str, Any]:
         and not activity["pending_goal_ids"]
         and not activity["starting_run_ids"]
         and not activity["active_run_ids"]
+        and not activity["active_training_job_ids"]
     )
     safe_to_stop = bool(state.valid and state.active and drained)
 
@@ -320,7 +338,7 @@ def _blocked_response(state: InterlockState, request_kind: str) -> JSONResponse:
     )
     return JSONResponse(
         {
-            "error": "new chat and Goal work is temporarily blocked for calibration",
+            "error": "new chat, Goal and training work is temporarily blocked for calibration",
             "code": code,
             "retryable": True,
             "request_kind": request_kind,
