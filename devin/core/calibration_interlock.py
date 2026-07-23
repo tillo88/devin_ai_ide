@@ -193,8 +193,9 @@ class AdmissionRegistry:
 
         removable = set()
         for run_id in candidates:
+            # Keep the acceptance bridge for the whole run.  starting/active
+            # prove that work is alive; only terminal log evidence may clear it.
             if run_id in starting_run_ids or run_id in active_run_ids:
-                removable.add(run_id)
                 continue
             try:
                 if terminal_check(run_id):
