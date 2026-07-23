@@ -1,52 +1,63 @@
-# SearXNG sul rig (per DEVIN, privacy-first)
+# SearXNG sul rig — shared per tutti e 3 i ruoli (privacy-first)
 
 Metasearch self-hosted: le query di DEVIN restano sulla LAN, niente cloud terzo,
-niente API key. Gira in Docker sul rig (ruolo devin), sempre attivo col rig.
+niente API key. Serve a **tutti e tre i ruoli** (devin/hermes/teacher), quindi la
+config vive **una volta sola sul disco shared** (`/mnt/ai-rig-shared/searxng`) e su
+ogni ruolo si abilita solo un servizio systemd. Nessuna copia, nessun secret
+duplicato. Il rig e' triple-boot: gira un ruolo alla volta, quindi un solo
+container SearXNG attivo per volta, sulla stessa config condivisa.
+
 DEVIN lo usa con `web_search.provider=searxng` e
 `searxng_url=http://192.168.1.100:8081`.
 
-## Setup (sul rig, in questa cartella)
+## Passo 1 — popola il disco shared (UNA VOLTA SOLA, da un ruolo qualsiasi)
 
 ```bash
-# 1. config per-macchina dal template
-cp config/settings.yml.example config/settings.yml
-
-# 2. genera un secret e mettilo in config/settings.yml (server.secret_key)
+sudo mkdir -p /mnt/ai-rig-shared/searxng
+sudo cp -r ~/devin_ai_ide/scripts/rig/searxng/{docker-compose.yml,config} /mnt/ai-rig-shared/searxng/
+cd /mnt/ai-rig-shared/searxng
+sudo cp config/settings.yml.example config/settings.yml
+# metti un secret in config/settings.yml (server.secret_key):
 openssl rand -hex 32
-
-# 3. avvia (restart unless-stopped -> riparte da solo al boot in ruolo devin)
-docker compose up -d
-
-# 4. verifica il JSON: DEVE tornare JSON, non 403
-curl "http://127.0.0.1:8081/search?q=test&format=json" | head -c 300
 ```
 
-## Usare SearXNG in DEVIN
+## Passo 2 — abilita il servizio su OGNI ruolo (devin, hermes, teacher)
 
-Nel `config/settings.json` (per-macchina) del backend che vuoi:
+Su ciascun ruolo (systemd e' per-OS), una volta:
+
+```bash
+bash ~/devin_ai_ide/scripts/rig/searxng/install_searxng_service.sh
+```
+
+Lo script controlla la config shared, sceglie `docker compose`/`docker-compose`,
+installa `ai-rig-searxng.service` (avvio al boot, `WorkingDirectory` = shared) e lo
+avvia. Poi verifica il JSON. Ripeti dopo aver bootato negli altri due ruoli.
+
+## Passo 3 — verifica
+
+```bash
+curl "http://127.0.0.1:8081/search?q=test&format=json" | head -c 300   # JSON, non 403
+# oppure dal PC, senza toccare la config dell'app:
+python scripts/test_internet.py --provider searxng --url http://192.168.1.100:8081
+```
+
+## Passo 4 — fai usare SearXNG a DEVIN
+
+Nel `config/settings.json` (per-macchina) del backend DEVIN:
 
 ```json
 "web_search": { "provider": "searxng", "searxng_url": "http://192.168.1.100:8081" }
 ```
 
-Prova SENZA toccare la config dell'app (dal PC o dal rig):
-
-```
-python scripts/test_internet.py --provider searxng --url http://192.168.1.100:8081
-```
-
-Se lo stadio 1 (SEARCH) torna risultati, SearXNG e' a posto.
-
-## I due trucchi (gia' risolti nel template)
+## I due trucchi (gia' risolti nel template `settings.yml.example`)
 
 1. **JSON non abilitato** — SearXNG disabilita `format=json` di default -> 403.
-   Il template lo abilita in `search.formats`.
-2. **Limiter/bot-detection** — le richieste programmatiche non-browser vengono
-   bloccate 403. Il template mette `server.limiter: false` (servizio interno LAN).
+   Risolto in `search.formats: [html, json]`.
+2. **Limiter/bot-detection** — le richieste programmatiche non-browser -> 403.
+   Risolto con `server.limiter: false` (servizio interno LAN).
 
 ## Manutenzione
-
-- Aggiornare l'immagine: `docker compose pull && docker compose up -d`
-- Log: `docker compose logs -f searxng`
-- Nota rig: gira sul disco/ruolo **devin** (come il backend DEVIN e i container
-  understory/automem) — up quando serve, cioe' quando il rig e' in ruolo devin.
+- Aggiornare l'immagine (una volta, si riflette su tutti i ruoli):
+  `cd /mnt/ai-rig-shared/searxng && docker compose pull && docker compose up -d`
+- Log: `docker compose logs -f searxng` · Stato: `systemctl status ai-rig-searxng`
+- Il container's data e la config stanno sullo shared: una sola fonte di verita'.
