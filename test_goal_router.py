@@ -77,12 +77,13 @@ def test_build_actors_tutti_i_ruoli_no_nameerror(tmp_path: Path):
     # reali senza caricare modelli. Avrebbe beccato il NameError 'debugger_executor'.
     cfg = str(tmp_path / "settings.json")
     for role in ("scaffolder", "tester", "swarm"):
-        executor, verifier = goal_router._build_actors(role, config_path=cfg)
-        assert callable(executor), role
-        if role == "swarm":
-            assert callable(verifier)   # tester come cancello di verifica
-        else:
-            assert verifier is None
+        for auto in (False, True):  # auto_apply=True e' il caso goal-scaffold
+            executor, verifier = goal_router._build_actors(role, config_path=cfg, auto_apply=auto)
+            assert callable(executor), (role, auto)
+            if role == "swarm":
+                assert callable(verifier)   # tester come cancello di verifica
+            else:
+                assert verifier is None
 
 
 def test_execute_goal_run_con_verifier_swarm(tmp_path: Path):

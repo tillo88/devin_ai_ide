@@ -98,10 +98,12 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
             rec["finished_at"] = _now()
 
 
-def _build_actors(role: str, config_path: str | None = None):
+def _build_actors(role: str, config_path: str | None = None, auto_apply: bool = False):
     """(executor, verifier) di PRODUZIONE per il ruolo scelto. Lazy import: carica
-    l'orchestrator solo quando serve davvero. `config_path` iniettabile per i test
-    (default: la costante condivisa di fast_app).
+    l'orchestrator solo quando serve davvero. `config_path` iniettabile per i test.
+    `auto_apply` (goal auto/scaffold): i ruoli scrivono DIRETTAMENTE nel goal
+    workspace (legacy_auto_apply) cosi' anche l'output non verificato atterra e il
+    Debugger puo' iterarci (completa D4). In maintenance/manuale resta 'review'.
 
     - scaffolder: solo build.
     - tester: solo verifica adversariale (standalone, raro).
@@ -121,15 +123,19 @@ def _build_actors(role: str, config_path: str | None = None):
         tester_executor,
     )
     apply_fn = default_apply_fn()
-    CONFIG_PATH = config_path
-    scaffolder = scaffolder_executor(build_orchestrator_scaffold_runner(CONFIG_PATH), apply_fn=apply_fn)
+    cp = config_path
+    scaffolder = scaffolder_executor(
+        build_orchestrator_scaffold_runner(cp, auto_apply=auto_apply), apply_fn=apply_fn)
     if role == "tester":
-        return tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn), None
+        return tester_executor(
+            build_orchestrator_tester_runner(cp, auto_apply=auto_apply), apply_fn=apply_fn), None
     if role == "swarm":
         # DISPATCH a 3 ruoli: scaffolder costruisce / debugger ripara (scelti dalla
         # policy per stato), tester come cancello di verifica adversariale.
-        debugger = debugger_executor(build_orchestrator_debugger_runner(CONFIG_PATH), apply_fn=apply_fn)
-        tester = tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn)
+        debugger = debugger_executor(
+            build_orchestrator_debugger_runner(cp, auto_apply=auto_apply), apply_fn=apply_fn)
+        tester = tester_executor(
+            build_orchestrator_tester_runner(cp, auto_apply=auto_apply), apply_fn=apply_fn)
         builder = dispatching_executor({"scaffolder": scaffolder, "debugger": debugger})
         return builder, tester
     return scaffolder, None
@@ -170,7 +176,9 @@ async def api_goal_run(req: GoalRunRequest):
         }
 
     try:
-        executor, verifier = _build_actors(role)
+        # goal auto (scaffold o approval=auto) -> i ruoli applicano direttamente nel
+        # goal workspace, cosi' anche l'output non verificato atterra (D4).
+        executor, verifier = _build_actors(role, auto_apply=not goal.requires_checkpoint())
     except Exception as exc:
         with _lock:
             _goal_runs[goal_run_id]["status"] = "error"

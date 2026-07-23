@@ -252,7 +252,17 @@ def dispatching_executor(
 
 # --- cablaggio di produzione (non unit-testato: richiede modelli/rig) ---------
 
-def build_orchestrator_scaffold_runner(config_path: str, *, sse_callback=None) -> RunScaffoldFn:
+def _maybe_auto_apply(orch, auto_apply: bool) -> None:
+    """Nel goal auto (requires_checkpoint=False) i ruoli scrivono DIRETTAMENTE nel
+    progetto (goal workspace isolato): serve perche' un output non verificato
+    (syntax_only) altrimenti resterebbe nel sandbox e il Debugger non potrebbe
+    lavorarci. Completa la decisione D4. In maintenance/manuale resta 'review'."""
+    if auto_apply:
+        orch.change_application_mode = "legacy_auto_apply"
+
+
+def build_orchestrator_scaffold_runner(config_path: str, *, sse_callback=None,
+                                       auto_apply: bool = False) -> RunScaffoldFn:
     """Ritorna un run_scaffold_fn che costruisce l'Orchestrator e lancia lo scaffold.
 
     Ogni chiamata apre e chiude un Orchestrator (context manager), come fa oggi
@@ -262,12 +272,14 @@ def build_orchestrator_scaffold_runner(config_path: str, *, sse_callback=None) -
 
     def run_scaffold_fn(task: str, project_path: str, run_id: str) -> dict:
         with Orchestrator(config_path=config_path, project_path=project_path, sse_callback=sse_callback) as orch:
+            _maybe_auto_apply(orch, auto_apply)
             return orch.run_scaffold(task=task, project_path=project_path, run_id=run_id)
 
     return run_scaffold_fn
 
 
-def build_orchestrator_tester_runner(config_path: str, *, sse_callback=None) -> RunScaffoldFn:
+def build_orchestrator_tester_runner(config_path: str, *, sse_callback=None,
+                                     auto_apply: bool = False) -> RunScaffoldFn:
     """run_tester_fn di produzione: usa orchestrator.run (manutenzione) col prompt
     adversariale del Tester per rafforzare i test di un progetto esistente.
 
@@ -278,12 +290,14 @@ def build_orchestrator_tester_runner(config_path: str, *, sse_callback=None) -> 
     def run_tester_fn(task: str, project_path: str, run_id: str) -> dict:
         full_task = TESTER_TASK.format(objective=task)
         with Orchestrator(config_path=config_path, project_path=project_path, sse_callback=sse_callback) as orch:
+            _maybe_auto_apply(orch, auto_apply)
             return orch.run(task=full_task, project_path=project_path, run_id=run_id)
 
     return run_tester_fn
 
 
-def build_orchestrator_debugger_runner(config_path: str, *, sse_callback=None) -> RunScaffoldFn:
+def build_orchestrator_debugger_runner(config_path: str, *, sse_callback=None,
+                                       auto_apply: bool = False) -> RunScaffoldFn:
     """run_debugger_fn di produzione: usa orchestrator.run (manutenzione) col prompt
     del Debugger per diagnosi + fix minimo su un progetto rosso. Da usare sul rig."""
     from devin.core.orchestrator import Orchestrator
@@ -291,6 +305,7 @@ def build_orchestrator_debugger_runner(config_path: str, *, sse_callback=None) -
     def run_debugger_fn(task: str, project_path: str, run_id: str) -> dict:
         full_task = DEBUGGER_TASK.format(objective=task)
         with Orchestrator(config_path=config_path, project_path=project_path, sse_callback=sse_callback) as orch:
+            _maybe_auto_apply(orch, auto_apply)
             return orch.run(task=full_task, project_path=project_path, run_id=run_id)
 
     return run_debugger_fn
