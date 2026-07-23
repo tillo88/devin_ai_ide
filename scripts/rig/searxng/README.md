@@ -55,13 +55,19 @@ curl "http://127.0.0.1:8081/search?q=test&format=json" | head -c 300   # JSON, n
 python scripts/test_internet.py --provider searxng --url http://192.168.1.100:8081
 ```
 
-## Passo 4 — fai usare SearXNG a DEVIN
+## Passo 4 — fai usare SearXNG a DEVIN (consigliato: primario + fallback)
 
-Nel `config/settings.json` (per-macchina) del backend DEVIN:
+Nel `config/settings.json` (per-macchina) del backend DEVIN — SearXNG primario,
+TinyFish di riserva SE SearXNG e' giu':
 
 ```json
-"web_search": { "provider": "searxng", "searxng_url": "http://192.168.1.100:8081" }
+"web_search": { "provider": "searxng", "fallback": "tinyfish", "searxng_url": "http://192.168.1.100:8081" }
 ```
+
+Il fallback scatta SOLO sull'errore del primario (container giu'), non sui
+risultati vuoti: una query andata a vuoto su SearXNG NON viene rimandata in
+silenzio al cloud (privacy). TinyFish serve la sua chiave in `devin/ui/.env`;
+se manca, il fallback e' semplicemente saltato e resta solo SearXNG.
 
 ## I due trucchi (gia' risolti nel template `settings.yml.example`)
 

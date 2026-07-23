@@ -67,24 +67,66 @@ class TinyFishProvider(WebSearchProvider):
         ]
 
 
-def get_web_search_provider(config: Dict[str, Any]) -> WebSearchProvider:
-    """
-    Factory: legge config["web_search"]["provider"] ("searxng" | "tinyfish").
-    Default: tinyfish (retrocompatibile con la key già in uso), ma settings.json
-    di default punta a searxng non appena il container è su (vedi README).
-    """
-    ws_cfg = config.get("web_search", {})
-    provider = ws_cfg.get("provider", "tinyfish")
+class FallbackProvider(WebSearchProvider):
+    """Catena di provider: prova il primario, e SOLO sul FALLIMENTO (errore/rete)
+    passa al successivo. NON fa fallback sui risultati vuoti: se il primario
+    risponde (anche con 0 risultati) si rispetta il suo esito. Cosi' una query
+    andata a vuoto su SearXNG NON finisce in silenzio sul cloud (privacy)."""
 
-    if provider == "searxng":
+    def __init__(self, providers: List["WebSearchProvider"]):
+        self.providers = providers
+
+    def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        last_exc = None
+        for i, p in enumerate(self.providers):
+            try:
+                return p.search(query, max_results=max_results)
+            except Exception as e:
+                last_exc = e
+                nxt = type(self.providers[i + 1]).__name__ if i + 1 < len(self.providers) else "nessuno"
+                print(f"[WebSearch] {type(p).__name__} fallito ({e}); fallback -> {nxt}")
+                continue
+        if last_exc:
+            raise last_exc  # tutti falliti: propaga (i chiamanti sono gia' fail-soft)
+        return []
+
+
+def _build_single_provider(name: str, ws_cfg: Dict[str, Any]) -> WebSearchProvider:
+    if name == "searxng":
         base_url = ws_cfg.get("searxng_url")
         if not base_url:
             raise RuntimeError("web_search.searxng_url mancante in settings.json")
         return SearXNGProvider(base_url)
-
     api_key_env = ws_cfg.get("tinyfish_api_key_env", "TINYFISH_API_KEY")
-    api_key = os.getenv(api_key_env)
-    return TinyFishProvider(api_key)
+    return TinyFishProvider(os.getenv(api_key_env))
+
+
+def get_web_search_provider(config: Dict[str, Any]) -> WebSearchProvider:
+    """Factory. Supporta:
+      - provider singolo: `web_search.provider` ("searxng" | "tinyfish");
+      - fallback (consigliato): `web_search.provider` + `web_search.fallback`
+        (privacy-first: searxng primario, tinyfish di riserva se il primario e' giu');
+      - catena esplicita: `web_search.providers = ["searxng", "tinyfish"]`.
+    Default: tinyfish (retrocompatibile). I provider non costruibili (es. tinyfish
+    senza chiave, searxng senza url) vengono SALTATI, non fanno cadere gli altri."""
+    ws_cfg = config.get("web_search", {})
+    names = ws_cfg.get("providers")
+    if not names:
+        primary = ws_cfg.get("provider", "tinyfish")
+        fb = ws_cfg.get("fallback")
+        names = [primary] + ([fb] if fb and fb != primary else [])
+
+    built: List[WebSearchProvider] = []
+    for n in names:
+        try:
+            built.append(_build_single_provider(n, ws_cfg))
+        except Exception as e:
+            print(f"[WebSearch] provider '{n}' non disponibile, salto: {e}")
+
+    if not built:
+        # nessuno costruibile: costruisci il primo e lascia esplodere (come prima)
+        return _build_single_provider(names[0] if names else "tinyfish", ws_cfg)
+    return built[0] if len(built) == 1 else FallbackProvider(built)
 
 
 def format_results_as_context(results: List[Dict[str, Any]]) -> str:
