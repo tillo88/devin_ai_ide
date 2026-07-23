@@ -76,6 +76,18 @@ se manca, il fallback e' semplicemente saltato e resta solo SearXNG.
 2. **Limiter/bot-detection** — le richieste programmatiche non-browser -> 403.
    Risolto con `server.limiter: false` (servizio interno LAN).
 
+## Tetto risorse (IMPORTANTE)
+
+Il compose limita SearXNG a **2 core e 1 GB** (`cpus: "2.0"`, `mem_limit: "1g"`).
+Serve perche' in passato il container ha generato 250+ worker saturando tutti i
+core del rig (nessun errore nei log: il box si strozza, non crasha). Il tetto e'
+a livello container: qualunque cosa faccia il processo, non si prende il rig.
+Controlla il consumo reale:
+```bash
+sudo docker stats --no-stream searxng
+sudo docker exec searxng sh -c 'ps aux | wc -l'   # quanti processi girano
+```
+
 ## Manutenzione
 - Aggiornare l'immagine (una volta, si riflette su tutti i ruoli):
   `cd /mnt/ai-rig-shared/searxng && docker compose pull && docker compose up -d`

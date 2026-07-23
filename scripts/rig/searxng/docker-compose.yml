@@ -15,3 +15,14 @@ services:
     environment:
       # base_url coerente con settings.json di DEVIN
       - SEARXNG_BASE_URL=http://192.168.1.100:8081/
+      # Limita i worker del server (servizio interno LAN, carico leggerissimo).
+      # I nomi variano per versione: se ignorati non fa danno, il tetto vero e'
+      # sotto (cpus/mem_limit).
+      - SEARXNG_WORKERS=4
+      - UWSGI_WORKERS=4
+      - GRANIAN_WORKERS=4
+    # SAFETY NET DURO (a livello container): anche se il processo generasse
+    # decine di worker, NON puo' saturare il rig. Cap a 2 core e 1 GB.
+    # (Il rig ha 20 core: SearXNG interno non ne serve di piu'.)
+    cpus: "2.0"
+    mem_limit: "1g"
