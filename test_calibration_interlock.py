@@ -72,7 +72,7 @@ def _write_lock(path: Path, *, active=True):
     )
 
 
-def _fake_runtime(monkeypatch, tmp_path, training_jobs=None):
+def _fake_runtime(monkeypatch, tmp_path, training_jobs=None, goal_runs=None):
     log_dir = tmp_path / "logs"
     log_dir.mkdir(exist_ok=True)
     fast_app = SimpleNamespace(
@@ -82,10 +82,13 @@ def _fake_runtime(monkeypatch, tmp_path, training_jobs=None):
         LOG_DIR=log_dir,
     )
     jobs = [] if training_jobs is None else training_jobs
+    goals = {} if goal_runs is None else goal_runs
     training = SimpleNamespace(_training_job_snapshot=lambda: list(jobs))
+    goal = SimpleNamespace(_goal_runs=goals, _lock=threading.Lock())
     monkeypatch.setitem(sys.modules, "devin.ui.fast_app", fast_app)
     monkeypatch.setitem(sys.modules, "devin.ui.routers.training", training)
-    return fast_app, jobs
+    monkeypatch.setitem(sys.modules, "devin.ui.routers.goal", goal)
+    return fast_app, jobs, goals
 
 
 @pytest.fixture(autouse=True)
@@ -131,7 +134,15 @@ def test_active_interlock_blocks_only_new_model_work(tmp_path):
 
     middleware = ci.CalibrationInterlockMiddleware(app)
 
-    for protected_path in ("/api/chat", "/api/run", "/api/training/run"):
+    protected_paths = (
+        "/api/chat",
+        "/api/autocomplete",
+        "/api/autocomplete/stream",
+        "/api/run",
+        "/api/goal/run",
+        "/api/training/run",
+    )
+    for protected_path in protected_paths:
         blocked_status, blocked_body, _ = asyncio.run(
             _invoke(middleware, "POST", protected_path)
         )
@@ -158,7 +169,8 @@ def test_corrupt_interlock_blocks_but_never_reports_safe(tmp_path):
     assert payload["safe_to_stop_model"] is False
 
 
-def test_sse_chat_is_counted_until_final_body():
+@pytest.mark.parametrize("path", ["/api/chat", "/api/autocomplete/stream"])
+def test_sse_model_work_is_counted_until_final_body(path):
     stream_started = asyncio.Event()
     release_stream = asyncio.Event()
 
@@ -190,7 +202,7 @@ def test_sse_chat_is_counted_until_final_body():
     middleware = ci.CalibrationInterlockMiddleware(streaming_app)
 
     async def scenario():
-        task = asyncio.create_task(_invoke(middleware, "POST", "/api/chat"))
+        task = asyncio.create_task(_invoke(middleware, "POST", path))
         await stream_started.wait()
         assert ci._registry.snapshot()["active_chat_requests"] == 1
         release_stream.set()
@@ -203,7 +215,7 @@ def test_sse_chat_is_counted_until_final_body():
 def test_goal_response_requires_terminal_evidence_before_drain(
     tmp_path, monkeypatch
 ):
-    fast_app, _ = _fake_runtime(monkeypatch, tmp_path)
+    fast_app, _, _ = _fake_runtime(monkeypatch, tmp_path)
     log_dir = fast_app.LOG_DIR
 
     async def goal_app(scope, receive, send):
@@ -219,8 +231,6 @@ def test_goal_response_requires_terminal_evidence_before_drain(
     assert pending["activity"]["pending_goal_ids"] == ["run_goal_1"]
     assert pending["drained"] is False
 
-    # starting/active visibility never clears the acceptance bridge: only a
-    # terminal footer may do it.
     fast_app.starting_runs.add("run_goal_1")
     starting = ci.runtime_status_payload()
     assert starting["activity"]["pending_goal_ids"] == ["run_goal_1"]
@@ -234,6 +244,28 @@ def test_goal_response_requires_terminal_evidence_before_drain(
     _write_lock(tmp_path / "interlock.json")
     drained = ci.runtime_status_payload()
     assert drained["activity"]["pending_goal_ids"] == []
+    assert drained["drained"] is True
+    assert drained["safe_to_stop_model"] is True
+
+
+def test_goal_mode_store_is_part_of_drain(tmp_path, monkeypatch):
+    goals = {
+        "goal_1": {
+            "goal_run_id": "goal_1",
+            "status": "running",
+        }
+    }
+    _fake_runtime(monkeypatch, tmp_path, goal_runs=goals)
+    _write_lock(tmp_path / "interlock.json")
+
+    busy = ci.runtime_status_payload()
+    assert busy["activity"]["active_goal_run_ids"] == ["goal_1"]
+    assert busy["drained"] is False
+    assert busy["safe_to_stop_model"] is False
+
+    goals["goal_1"]["status"] = "success"
+    drained = ci.runtime_status_payload()
+    assert drained["activity"]["active_goal_run_ids"] == []
     assert drained["drained"] is True
     assert drained["safe_to_stop_model"] is True
 
