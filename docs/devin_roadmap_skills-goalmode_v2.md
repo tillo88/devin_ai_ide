@@ -142,6 +142,10 @@ non re-inventarla, allinearsi.
     detector mock permissivi, crash validator -> `auto_success`, `runner_error`
     non deve contare come tentativo, quality gate INDIPENDENTE dal codice del
     modello, dataset SFT solo con provenance. Punti 1 e 5 = security-critical.
+    **STATO (2026-07-23): tutti e 10 GIA' implementati e testati** (hardening
+    2026-07-18 + sidecar ordering) — mappatura debito->codice->test in
+    `docs/devin_p6_debts_status_v1.md`. Il P6 residuo e' il **Council** (feature),
+    non i debiti.
   - **Validazione = ragionamento, non soluzione** (il "3+3=5" = non hai capito
     il concetto). Verificare la logica, non l'output.
   - **Consenso multi-agente coi "fratelloni"** (Produttore -> critici A/B ->

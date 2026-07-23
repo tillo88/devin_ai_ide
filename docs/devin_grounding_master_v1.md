@@ -135,6 +135,11 @@ sorgente di ipotesi esterne, passaggio manuale, con **redazione + consenso** (ma
 invio automatico di repo/file; log di cosa esce; risultato = `external_review`, non
 verita' assoluta; promozione solo dopo validazione/rerun).
 
+**Stato P6 (2026-07-23):** i **10 debiti** di training/eval risultano GIA'
+implementati e coperti da test (hardening 2026-07-18 + sidecar export). Mappatura
+completa debito->codice->test in `docs/devin_p6_debts_status_v1.md`. Il P6 residuo
+e' il **Federated Evidence Council** (feature multi-modello), non i debiti.
+
 **Filosofia owner (NUOVA IDEA + P6):** validare il RAGIONAMENTO, non la soluzione
 ("3+3=5" = non hai capito il concetto). I 10 debiti P6 (gold test aggirabili via
 conftest, detector mock permissivi, crash validator -> auto_success, runner_error
