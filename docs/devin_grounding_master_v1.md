@@ -147,7 +147,9 @@ non conta come tentativo, quality gate indipendente dal codice del modello, data
 SFT solo con provenance...) — punti 1 e 5 security-critical.
 
 Il nostro **Tester adversariale** e' il **primo seme locale** di questa validazione
-concettuale; il Council multi-modello e P6 sono l'estensione.
+concettuale; il Council multi-modello e P6 sono l'estensione. **Design del Council**
+(review cieca per assi + arbitro GLM-Colibri con esperimenti): vedi
+`docs/devin_federated_council_design_v1.md`.
 
 ---
 

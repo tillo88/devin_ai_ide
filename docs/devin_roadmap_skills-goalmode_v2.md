@@ -145,7 +145,7 @@ non re-inventarla, allinearsi.
     **STATO (2026-07-23): tutti e 10 GIA' implementati e testati** (hardening
     2026-07-18 + sidecar ordering) — mappatura debito->codice->test in
     `docs/devin_p6_debts_status_v1.md`. Il P6 residuo e' il **Council** (feature),
-    non i debiti.
+    non i debiti — design in `docs/devin_federated_council_design_v1.md`.
   - **Validazione = ragionamento, non soluzione** (il "3+3=5" = non hai capito
     il concetto). Verificare la logica, non l'output.
   - **Consenso multi-agente coi "fratelloni"** (Produttore -> critici A/B ->
