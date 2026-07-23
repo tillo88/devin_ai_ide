@@ -11,8 +11,10 @@ registrata.
 
 ## Obiettivo
 
-Impedire che nuove chat, Goal o sessioni training vengano accettati mentre il
+Impedire che nuovo lavoro capace di usare un modello venga accettato mentre il
 controller di calibrazione sta per fermare o riconfigurare il modello del rig.
+Sono compresi chat, autocomplete, run di manutenzione/scaffold, Goal Mode e
+training.
 
 Il backend non ferma il modello e non gestisce direttamente la calibrazione.
 Espone invece una barriera di ammissione fail-closed e un segnale di drain
@@ -20,7 +22,7 @@ verificabile.
 
 ```text
 controller arma interlock
--> backend rifiuta nuove chat, Goal e sessioni training
+-> backend rifiuta nuovo lavoro model-consuming
 -> controller attende safe_to_stop_model=true
 -> controller ferma/riconfigura il modello
 -> calibrazione
@@ -71,16 +73,19 @@ Un file invalido non autorizza mai lo stop del modello.
 
 ## Richieste bloccate
 
-Solo `POST` che possono consumare il modello o avviare lavoro:
+Solo `POST` che possono consumare un modello o avviare lavoro che lo usera':
 
 ```text
 /api/chat
 /api/chat/vision
 /api/chat/document
+/api/autocomplete
+/api/autocomplete/stream
 /api/run
 /api/run/resume
 /api/chat/scaffold
 /api/chat/generate_patch
+/api/goal/run
 /api/training/run
 ```
 
@@ -124,6 +129,7 @@ Campi principali:
     "pending_goal_ids": [],
     "starting_run_ids": [],
     "active_run_ids": [],
+    "active_goal_run_ids": [],
     "active_training_job_ids": [],
     "runtime_snapshot_ok": true
   },
@@ -136,23 +142,29 @@ Campi principali:
 
 1. interlock valido e attivo;
 2. snapshot runtime leggibile;
-3. nessuna chat SSE ancora aperta;
+3. nessuna chat o autocomplete SSE ancora aperta;
 4. nessuna ammissione Goal/training in corso;
-5. nessun Goal accettato privo di evidenza terminale;
+5. nessun run accettato privo di evidenza terminale;
 6. nessun run in `starting_runs`;
-7. nessun run in `active_runs`;
-8. nessun training job non terminale (`queued`, `running` o stato ignoto).
+7. nessun Orchestrator in `active_runs`;
+8. nessuna Goal Mode con stato `running`;
+9. nessun training job non terminale (`queued`, `running` o stato ignoto).
 
-Le chat SSE restano contabilizzate fino all'ultimo body ASGI. I Goal accettati
-restano in `pending_goal_ids` fino a un footer terminale nel relativo log,
-anche quando sono gia' visibili in `starting_runs` o `active_runs`. Questo
-chiude sia la finestra risposta-JSON -> thread background sia le transizioni
+Le risposte SSE restano contabilizzate fino all'ultimo body ASGI. I run
+accettati tramite `/api/run`, resume, scaffold o generate-patch restano in
+`pending_goal_ids` fino a un footer terminale nel relativo log, anche quando
+sono gia' visibili in `starting_runs` o `active_runs`. Questo chiude sia la
+finestra risposta-JSON -> thread background sia le transizioni
 starting -> active -> terminale.
 
-Il training possiede una coda distinta (`_training_jobs`): ogni job con stato
-non terminale resta in `active_training_job_ids`, inclusi gli intervalli fra un
-caso e il successivo in cui non esiste temporaneamente un Orchestrator in
-`active_runs`.
+La Goal Mode possiede uno store distinto (`_goal_runs`): ogni record `running`
+resta in `active_goal_run_ids` fino a uno stato finale (`success`, `blocked`,
+`budget_exhausted`, `needs_approval`, `error` o stato esplicito di stop).
+
+Il training possiede una seconda coda distinta (`_training_jobs`): ogni job
+con stato non terminale resta in `active_training_job_ids`, inclusi gli
+intervalli fra un caso e il successivo in cui non esiste temporaneamente un
+Orchestrator in `active_runs`.
 
 ## Relazione con il token gate
 
@@ -186,9 +198,10 @@ Prima dell'attivazione live servono inoltre:
    distribuito;
 2. backup e rollback;
 3. test con file assente: comportamento identico alla baseline;
-4. test lock attivo: chat, Goal e training bloccati, `/api/stop` e status
-   disponibili;
-5. test drain con una chat SSE reale, un Goal reale e un training job reale;
+4. test lock attivo: chat, autocomplete, Goal Mode e training bloccati,
+   `/api/stop` e status disponibili;
+5. test drain con una chat SSE reale, autocomplete SSE, run normale, Goal Mode
+   e training job;
 6. nessun riavvio o cambio modello durante la serie KVarN formale;
 7. integrazione successiva col controller di calibrazione in `ai-rig-ops`.
 
@@ -197,6 +210,6 @@ Prima dell'attivazione live servono inoltre:
 - il file e' locale al ruolo DEVIN;
 - il backend non crea e non cancella il lock;
 - nessun timeout forza il drain: il controller attende o fallisce;
-- nessun run o training job attivo viene terminato automaticamente;
+- nessun run, Goal Mode o training job attivo viene terminato automaticamente;
 - il controller esterno deve verificare anche health e identita' del modello
   dopo il ripristino, prima di disarmare l'interlock.
