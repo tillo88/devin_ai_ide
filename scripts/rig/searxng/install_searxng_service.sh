@@ -55,8 +55,9 @@ sudo tee "$UNIT" > /dev/null <<UNITEOF
 [Unit]
 Description=SearXNG for DEVIN (shared, privacy-first web search)
 After=docker.service network-online.target
-Requires=docker.service
-Wants=network-online.target
+# Wants (soft), non Requires: su un ruolo senza docker attivo il servizio
+# degrada (fallisce ExecStart) invece di impallare il boot con un dependency job.
+Wants=docker.service network-online.target
 RequiresMountsFor=/mnt/ai-rig-shared
 
 [Service]
