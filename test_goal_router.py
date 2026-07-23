@@ -72,6 +72,19 @@ def test_execute_goal_run_aggiorna_lo_store(tmp_path: Path):
     assert rec["finished_at"] is not None
 
 
+def test_build_actors_tutti_i_ruoli_no_nameerror(tmp_path: Path):
+    # Copre il wiring di PRODUZIONE (prima non testato): costruisce gli esecutori
+    # reali senza caricare modelli. Avrebbe beccato il NameError 'debugger_executor'.
+    cfg = str(tmp_path / "settings.json")
+    for role in ("scaffolder", "tester", "swarm"):
+        executor, verifier = goal_router._build_actors(role, config_path=cfg)
+        assert callable(executor), role
+        if role == "swarm":
+            assert callable(verifier)   # tester come cancello di verifica
+        else:
+            assert verifier is None
+
+
 def test_execute_goal_run_con_verifier_swarm(tmp_path: Path):
     from devin.core.goal_mode import Criterion, Goal
     goal = Goal(objective="o", acceptance=[Criterion("file_exists", {"path": "code.py"})], mode=MODE_SCAFFOLD)

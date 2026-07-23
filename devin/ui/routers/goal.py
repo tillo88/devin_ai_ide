@@ -98,25 +98,30 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
             rec["finished_at"] = _now()
 
 
-def _build_actors(role: str):
+def _build_actors(role: str, config_path: str | None = None):
     """(executor, verifier) di PRODUZIONE per il ruolo scelto. Lazy import: carica
-    l'orchestrator solo quando serve davvero.
+    l'orchestrator solo quando serve davvero. `config_path` iniettabile per i test
+    (default: la costante condivisa di fast_app).
 
     - scaffolder: solo build.
     - tester: solo verifica adversariale (standalone, raro).
-    - swarm: DISPATCH -> scaffolder costruisce, tester fa da cancello di verifica.
+    - swarm: DISPATCH -> scaffolder costruisce + debugger ripara, tester = cancello.
     """
-    from devin.ui.fast_app import CONFIG_PATH  # lazy: costante condivisa
+    if config_path is None:
+        from devin.ui.fast_app import CONFIG_PATH  # lazy: costante condivisa
+        config_path = CONFIG_PATH
     from devin.core.goal_executors import (
         build_orchestrator_debugger_runner,
         build_orchestrator_scaffold_runner,
         build_orchestrator_tester_runner,
+        debugger_executor,
         default_apply_fn,
         dispatching_executor,
         scaffolder_executor,
         tester_executor,
     )
     apply_fn = default_apply_fn()
+    CONFIG_PATH = config_path
     scaffolder = scaffolder_executor(build_orchestrator_scaffold_runner(CONFIG_PATH), apply_fn=apply_fn)
     if role == "tester":
         return tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn), None
