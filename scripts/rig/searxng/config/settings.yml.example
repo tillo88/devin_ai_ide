@@ -1,20 +1,20 @@
-# SearXNG settings per DEVIN. Copia in config/settings.yml e imposta un secret.
-# config/settings.yml e' per-macchina (gitignored): il secret resta sul rig.
+# SearXNG settings per DEVIN — minimale e testata per l'uso API interno.
+# Copia in config/settings.yml e imposta il secret. config/settings.yml e'
+# per-macchina (gitignored): il secret resta sul rig.
 use_default_settings: true
 
 server:
   # OBBLIGATORIO: SearXNG NON parte col secret di default.
   # Genera con:  openssl rand -hex 32
   secret_key: "CAMBIAMI_openssl_rand_hex_32"
-  bind_address: "0.0.0.0"
-  # limiter OFF: le richieste JSON di DEVIN non sono un browser; col limiter
-  # attivo la bot-detection risponde 403. Off perche' e' un servizio interno LAN.
+  # limiter OFF + non-public: le richieste JSON di DEVIN non sono un browser;
+  # col limiter/bot-detection tornerebbero 403. E' un servizio interno LAN.
   limiter: false
-  image_proxy: false
+  public_instance: false
 
 search:
   # ABILITA il JSON: il provider di DEVIN chiama /search?format=json.
-  # Senza queste righe -> 403 "Forbidden". E' il motivo #1 di fallimento.
+  # Senza queste righe -> 403 "Forbidden" (il default vanilla).
   formats:
     - html
     - json
