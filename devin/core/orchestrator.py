@@ -313,9 +313,14 @@ class Orchestrator:
             first_line = (error or "").strip().splitlines()[0][:140]
             self._log(f"[WEB-REF] Errore cercabile, consulto il web: {first_line}", "info")
             # Query consapevole del linguaggio (prima era 'python' hardcoded ->
-            # su progetti JS/Rust cercava la cosa sbagliata).
+            # su progetti JS/Rust cercava la cosa sbagliata). Difensivo: se il
+            # rilevamento non e' disponibile (es. stub nei test) -> 'python'.
             from devin.ai.web_capabilities import error_reference_query
-            block = search_coding_context(error_reference_query(error, self._project_language()), config)
+            try:
+                language = self._project_language()
+            except Exception:
+                language = "python"
+            block = search_coding_context(error_reference_query(error, language), config)
             self._web_searches_done = done + 1
             if not block:
                 return ""
