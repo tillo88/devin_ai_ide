@@ -29,5 +29,8 @@ docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\
 echo "== TOP CPU (10) =="
 top -b -o %CPU -n1 | head -17 | tail -11
 
+echo "== RAM (totale host: il numero per l'OOM) =="
+free -h | awk 'NR==1 || /Mem:|Swap:/'
+
 echo "== LOAD =="
 uptime
