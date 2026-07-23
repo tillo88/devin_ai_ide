@@ -72,10 +72,27 @@ def _write_lock(path: Path, *, active=True):
     )
 
 
+def _fake_runtime(monkeypatch, tmp_path, training_jobs=None):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir(exist_ok=True)
+    fast_app = SimpleNamespace(
+        runs_lock=threading.Lock(),
+        starting_runs=set(),
+        active_runs={},
+        LOG_DIR=log_dir,
+    )
+    jobs = [] if training_jobs is None else training_jobs
+    training = SimpleNamespace(_training_job_snapshot=lambda: list(jobs))
+    monkeypatch.setitem(sys.modules, "devin.ui.fast_app", fast_app)
+    monkeypatch.setitem(sys.modules, "devin.ui.routers.training", training)
+    return fast_app, jobs
+
+
 @pytest.fixture(autouse=True)
 def _isolated_registry_and_path(monkeypatch, tmp_path):
     monkeypatch.setattr(ci, "_registry", ci.AdmissionRegistry())
     monkeypatch.setenv(ci.INTERLOCK_PATH_ENV, str(tmp_path / "interlock.json"))
+    _fake_runtime(monkeypatch, tmp_path)
 
 
 def test_interlock_absent_active_inactive_and_corrupt(tmp_path):
@@ -114,13 +131,14 @@ def test_active_interlock_blocks_only_new_model_work(tmp_path):
 
     middleware = ci.CalibrationInterlockMiddleware(app)
 
-    blocked_status, blocked_body, _ = asyncio.run(
-        _invoke(middleware, "POST", "/api/chat")
-    )
-    assert blocked_status == 423
-    blocked = json.loads(blocked_body)
-    assert blocked["code"] == "calibration_interlock_active"
-    assert blocked["retryable"] is True
+    for protected_path in ("/api/chat", "/api/run", "/api/training/run"):
+        blocked_status, blocked_body, _ = asyncio.run(
+            _invoke(middleware, "POST", protected_path)
+        )
+        assert blocked_status == 423
+        blocked = json.loads(blocked_body)
+        assert blocked["code"] == "calibration_interlock_active"
+        assert blocked["retryable"] is True
 
     stop_status, stop_body, _ = asyncio.run(
         _invoke(middleware, "POST", "/api/stop")
@@ -129,17 +147,9 @@ def test_active_interlock_blocks_only_new_model_work(tmp_path):
     assert json.loads(stop_body) == {"ok": True}
 
 
-def test_corrupt_interlock_blocks_but_never_reports_safe(tmp_path, monkeypatch):
+def test_corrupt_interlock_blocks_but_never_reports_safe(tmp_path):
     path = tmp_path / "interlock.json"
     path.write_text("not json", encoding="utf-8")
-    fake_fast_app = SimpleNamespace(
-        runs_lock=threading.Lock(),
-        starting_runs=set(),
-        active_runs={},
-        LOG_DIR=tmp_path / "logs",
-    )
-    fake_fast_app.LOG_DIR.mkdir()
-    monkeypatch.setitem(sys.modules, "devin.ui.fast_app", fake_fast_app)
 
     payload = ci.runtime_status_payload()
 
@@ -193,15 +203,8 @@ def test_sse_chat_is_counted_until_final_body():
 def test_goal_response_requires_terminal_evidence_before_drain(
     tmp_path, monkeypatch
 ):
-    log_dir = tmp_path / "logs"
-    log_dir.mkdir()
-    fake_fast_app = SimpleNamespace(
-        runs_lock=threading.Lock(),
-        starting_runs=set(),
-        active_runs={},
-        LOG_DIR=log_dir,
-    )
-    monkeypatch.setitem(sys.modules, "devin.ui.fast_app", fake_fast_app)
+    fast_app, _ = _fake_runtime(monkeypatch, tmp_path)
+    log_dir = fast_app.LOG_DIR
 
     async def goal_app(scope, receive, send):
         await JSONResponse({"run_id": "run_goal_1", "status": "started"})(
@@ -216,21 +219,38 @@ def test_goal_response_requires_terminal_evidence_before_drain(
     assert pending["activity"]["pending_goal_ids"] == ["run_goal_1"]
     assert pending["drained"] is False
 
-    # Seeing the run in starting/active state must not clear the acceptance
-    # bridge: only terminal log evidence can do that.
-    fake_fast_app.starting_runs.add("run_goal_1")
+    # starting/active visibility never clears the acceptance bridge: only a
+    # terminal footer may do it.
+    fast_app.starting_runs.add("run_goal_1")
     starting = ci.runtime_status_payload()
     assert starting["activity"]["pending_goal_ids"] == ["run_goal_1"]
     assert starting["activity"]["starting_run_ids"] == ["run_goal_1"]
     assert starting["drained"] is False
 
-    fake_fast_app.starting_runs.clear()
+    fast_app.starting_runs.clear()
     (log_dir / "run_goal_1.log").write_text(
         "Run started\nstatus: success\n", encoding="utf-8"
     )
     _write_lock(tmp_path / "interlock.json")
     drained = ci.runtime_status_payload()
     assert drained["activity"]["pending_goal_ids"] == []
+    assert drained["drained"] is True
+    assert drained["safe_to_stop_model"] is True
+
+
+def test_training_queue_is_part_of_drain(tmp_path, monkeypatch):
+    jobs = [{"job_id": "training_1", "status": "queued"}]
+    _fake_runtime(monkeypatch, tmp_path, training_jobs=jobs)
+    _write_lock(tmp_path / "interlock.json")
+
+    busy = ci.runtime_status_payload()
+    assert busy["activity"]["active_training_job_ids"] == ["training_1"]
+    assert busy["drained"] is False
+    assert busy["safe_to_stop_model"] is False
+
+    jobs[0]["status"] = "finished"
+    drained = ci.runtime_status_payload()
+    assert drained["activity"]["active_training_job_ids"] == []
     assert drained["drained"] is True
     assert drained["safe_to_stop_model"] is True
 
