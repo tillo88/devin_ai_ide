@@ -309,17 +309,22 @@ def _check_tests_pass(criterion: Criterion, root: Path, execute: bool) -> Criter
         if d.is_dir():
             ignores += ["--ignore", str(d)]
     # Stesso approccio del quality gate dell'orchestrator: pytest, fallback unittest.
-    for argv in (
+    for i, argv in enumerate((
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
          "--import-mode=importlib", "--maxfail=20", *ignores],
         [sys.executable, "-m", "unittest", "discover", "-v"],
-    ):
+    )):
+        is_pytest = (i == 0)
         proc = _run(argv, root, timeout)
-        if "No module named pytest" in proc["output"] or "No module named 'pytest'" in proc["output"]:
+        # "No module named pytest" viene interpretato come "pytest non installato"
+        # SOLO per il comando pytest. Se compare nell'output di UNITTEST vuol dire
+        # che un file di test importa pytest e pytest manca: e' un FALLIMENTO del
+        # test (unittest exit != 0), non un runner assente -> niente skip.
+        if is_pytest and ("No module named pytest" in proc["output"]
+                          or "No module named 'pytest'" in proc["output"]):
             continue
         ok = proc["returncode"] == 0
-        runner = "pytest" if "pytest" in argv[2] else "unittest"
-        return CriterionResult(criterion, ok, f"{runner} exit {proc['returncode']}")
+        return CriterionResult(criterion, ok, f"{'pytest' if is_pytest else 'unittest'} exit {proc['returncode']}")
     return CriterionResult(criterion, False, "nessun test runner disponibile")
 
 

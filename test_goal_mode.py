@@ -118,6 +118,39 @@ def test_tests_pass_ignora_sandbox_annidata(tmp_path: Path):
     assert ev.satisfied  # solo il test reale in root viene eseguito, e passa
 
 
+def test_tests_pass_pytest_assente_fallback_unittest(tmp_path: Path, monkeypatch):
+    # pytest non installato (es. .venv-rig) -> skip pytest, usa unittest.
+    import devin.core.goal_mode as gm
+
+    def fake_run(argv, root, timeout):
+        if "pytest" in argv[2]:
+            return {"returncode": 1, "output": "No module named 'pytest'"}
+        return {"returncode": 0, "output": "Ran 3 tests\nOK"}
+
+    monkeypatch.setattr(gm, "_run", fake_run)
+    ev = evaluate_goal(_goal([Criterion("tests_pass", {})]), tmp_path)
+    assert ev.satisfied
+    assert "unittest exit 0" in ev.results[0].detail
+
+
+def test_tests_pass_unittest_con_import_pytest_non_e_skip(tmp_path: Path, monkeypatch):
+    # Bug fixato: se un file di test fa `import pytest` e pytest manca, il run di
+    # UNITTEST stampa "No module named pytest" -> NON deve essere scambiato per
+    # "runner assente" (era "nessun test runner disponibile"): e' un test FALLITO.
+    import devin.core.goal_mode as gm
+
+    def fake_run(argv, root, timeout):
+        if "pytest" in argv[2]:
+            return {"returncode": 1, "output": "No module named pytest"}
+        return {"returncode": 1, "output": "ModuleNotFoundError: No module named 'pytest'"}
+
+    monkeypatch.setattr(gm, "_run", fake_run)
+    ev = evaluate_goal(_goal([Criterion("tests_pass", {})]), tmp_path)
+    r = ev.results[0]
+    assert not r.passed
+    assert "unittest exit 1" in r.detail  # non "nessun test runner disponibile"
+
+
 def test_tests_pass_verde_e_rosso(tmp_path: Path):
     green = tmp_path / "green"
     green.mkdir()
