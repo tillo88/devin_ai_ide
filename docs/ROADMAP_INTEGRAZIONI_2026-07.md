@@ -54,6 +54,14 @@ loop deve avere gate bloccante + limite iterazioni + log durevole. Mai loop
 che scrivono in memoria recall-safe.
 
 ### 4. Docs locali per il Coder (variante local di Context7) — MEDIO
+> **STATO (2026-07-23):** primo taglio import-aware fatto. `devin/ai/web_capabilities.py`
+> e' il selettore deterministico/bounded ("l'orchestrator decide quale capacita'
+> internet chiamare, come le skill"): `extract_imports` (py/js, stdlib esclusa),
+> `detect_language`, `error_reference_query` per-linguaggio, `select_web_capabilities`.
+> `orchestrator._maybe_library_docs` inietta le doc UFFICIALI delle librerie
+> importate sul self-heal (budget condiviso, fail-soft). Fix collegato: tolto il
+> 'python' hardcoded in `_maybe_web_reference`. 13 test offline. Restano: docs
+> cache per-libreria persistente/pinnata, iniezione proattiva (non solo su retry).
 Il problema che Context7 risolve (API allucinate/datate) l'abbiamo VISTO nel
 bench (endpoint Steam inventati ×2). Versione local-first: cache di doc
 ufficiali per libreria (Crawl4AI già installato) in knowledge dedicata +
