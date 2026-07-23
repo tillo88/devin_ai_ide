@@ -108,9 +108,11 @@ def _build_actors(role: str):
     """
     from devin.ui.fast_app import CONFIG_PATH  # lazy: costante condivisa
     from devin.core.goal_executors import (
+        build_orchestrator_debugger_runner,
         build_orchestrator_scaffold_runner,
         build_orchestrator_tester_runner,
         default_apply_fn,
+        dispatching_executor,
         scaffolder_executor,
         tester_executor,
     )
@@ -119,8 +121,12 @@ def _build_actors(role: str):
     if role == "tester":
         return tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn), None
     if role == "swarm":
+        # DISPATCH a 3 ruoli: scaffolder costruisce / debugger ripara (scelti dalla
+        # policy per stato), tester come cancello di verifica adversariale.
+        debugger = debugger_executor(build_orchestrator_debugger_runner(CONFIG_PATH), apply_fn=apply_fn)
         tester = tester_executor(build_orchestrator_tester_runner(CONFIG_PATH), apply_fn=apply_fn)
-        return scaffolder, tester
+        builder = dispatching_executor({"scaffolder": scaffolder, "debugger": debugger})
+        return builder, tester
     return scaffolder, None
 
 

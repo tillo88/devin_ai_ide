@@ -185,6 +185,71 @@ def tester_executor(
     return executor
 
 
+# --- Ruolo Debugger: recovery strutturato --------------------------------
+
+# Il Debugger interviene quando la struttura c'e' ma qualcosa NON passa (build/
+# test rossi). Non riscrive tutto e non indebolisce i test: diagnosi ordinata +
+# fix minimo. Complementare al Critic INTERNO dell'orchestrator (che self-heala
+# dentro una run): il Debugger e' il fixer di livello superiore.
+DEBUGGER_TASK = (
+    "Il progetto ha build o test ROSSI. Agisci come DEBUGGER con metodo, non a "
+    "tentativi.\n"
+    "Obiettivo originale del progetto: {objective}\n\n"
+    "Procedura:\n"
+    "1. Formula ipotesi sulla causa, ordinate per probabilita'.\n"
+    "2. Individua la riproduzione minima del fallimento.\n"
+    "3. Isola la causa radice (non i sintomi).\n"
+    "4. Applica il fix piu' PICCOLO e mirato al codice di PRODUZIONE.\n\n"
+    "Vincoli assoluti: NON riscrivere tutto; NON indebolire, cancellare o rendere "
+    "banali i test per farli passare; NON mascherare l'errore. Se il fix corretto "
+    "richiede piu' passi, fai solo il prossimo passo verificabile."
+)
+
+
+def debugger_executor(
+    run_debugger_fn: RunScaffoldFn,
+    *,
+    apply_fn: ApplyFn | None = None,
+    run_id_factory: Callable[[], str] = _new_run_id,
+) -> StepExecutor:
+    """Costruisce lo StepExecutor del ruolo Debugger (fixer di livello superiore)."""
+    def executor(goal: Goal, project_root: Path, ctx: StepContext) -> StepOutcome:
+        run_id = run_id_factory()
+        result = run_debugger_fn(task=goal.objective, project_path=str(project_root), run_id=run_id)
+        return outcome_from_run_result(goal, Path(project_root), run_id, result or {}, apply_fn, strategy="debugger")
+
+    return executor
+
+
+# --- Dispatcher: sceglie il costruttore giusto per lo stato corrente ---------
+
+def default_build_policy(goal: Goal, project_root: Path, ctx: StepContext) -> str:
+    """Policy deterministica del DISPATCH builder:
+    - criteri strutturali non soddisfatti (file mancanti/contenuto) -> scaffolder;
+    - struttura presente ma qualcosa non passa (tests/command) -> debugger.
+    """
+    pending_types = {r.criterion.type for r in ctx.pending}
+    if pending_types & {"file_exists", "contains_text"}:
+        return "scaffolder"
+    return "debugger"
+
+
+def dispatching_executor(
+    builders: dict[str, StepExecutor],
+    *,
+    policy: Callable[[Goal, Path, StepContext], str] = default_build_policy,
+) -> StepExecutor:
+    """StepExecutor che sceglie il ruolo builder via `policy` e vi delega.
+    `builders` es. {"scaffolder": ..., "debugger": ...}. La strategy nell'outcome
+    riflette gia' il ruolo che ha agito (impostata dai sotto-executor)."""
+    def executor(goal: Goal, project_root: Path, ctx: StepContext) -> StepOutcome:
+        role = policy(goal, project_root, ctx)
+        sub = builders.get(role) or next(iter(builders.values()))
+        return sub(goal, project_root, ctx)
+
+    return executor
+
+
 # --- cablaggio di produzione (non unit-testato: richiede modelli/rig) ---------
 
 def build_orchestrator_scaffold_runner(config_path: str, *, sse_callback=None) -> RunScaffoldFn:
@@ -216,6 +281,19 @@ def build_orchestrator_tester_runner(config_path: str, *, sse_callback=None) -> 
             return orch.run(task=full_task, project_path=project_path, run_id=run_id)
 
     return run_tester_fn
+
+
+def build_orchestrator_debugger_runner(config_path: str, *, sse_callback=None) -> RunScaffoldFn:
+    """run_debugger_fn di produzione: usa orchestrator.run (manutenzione) col prompt
+    del Debugger per diagnosi + fix minimo su un progetto rosso. Da usare sul rig."""
+    from devin.core.orchestrator import Orchestrator
+
+    def run_debugger_fn(task: str, project_path: str, run_id: str) -> dict:
+        full_task = DEBUGGER_TASK.format(objective=task)
+        with Orchestrator(config_path=config_path, project_path=project_path, sse_callback=sse_callback) as orch:
+            return orch.run(task=full_task, project_path=project_path, run_id=run_id)
+
+    return run_debugger_fn
 
 
 def default_apply_fn() -> ApplyFn:

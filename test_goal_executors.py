@@ -17,7 +17,11 @@ from devin.core.goal_mode import (
     Goal,
 )
 from devin.core.goal_executors import (
+    DEBUGGER_TASK,
     TESTER_TASK,
+    debugger_executor,
+    default_build_policy,
+    dispatching_executor,
     outcome_from_run_result,
     outcome_from_scaffold_result,
     scaffolder_executor,
@@ -29,6 +33,7 @@ from devin.core.goal_runner import (
     STEP_CHANGED,
     STEP_FAILED,
     StepContext,
+    StepOutcome,
     run_goal,
 )
 
@@ -180,6 +185,79 @@ def test_loop_tester_valida_con_test_generati(tmp_path: Path):
     res = run_goal(goal, tmp_path, executor)
     assert res.status == RESULT_SUCCESS
     assert res.attempts[0].strategy == "tester"
+
+
+# --- ruolo Debugger + dispatcher + swarm a 3 ruoli ------------------------
+
+def test_debugger_prompt_e_strategy(tmp_path: Path):
+    assert "DEBUGGER" in DEBUGGER_TASK
+    assert "NON indebolire" in DEBUGGER_TASK  # non deve barare sui test
+    out = outcome_from_run_result(
+        _goal(), tmp_path, "run_d", {"success": False, "error": "x"}, None, strategy="debugger",
+    )
+    assert out.strategy == "debugger"
+
+
+def _pending(*types):
+    from devin.core.goal_mode import Criterion, CriterionResult
+    return [CriterionResult(Criterion(t, {"path": "x"} if t in ("file_exists", "contains_text") else {}), False, "no")
+            for t in types]
+
+
+def test_build_policy_sceglie_scaffolder_o_debugger(tmp_path: Path):
+    goal = _goal()
+    # file mancante -> costruisci
+    ctx_build = StepContext(pending=_pending("file_exists"), attempt_index=0, history=[])
+    assert default_build_policy(goal, tmp_path, ctx_build) == "scaffolder"
+    # struttura ok, test rossi -> ripara
+    ctx_fix = StepContext(pending=_pending("tests_pass"), attempt_index=0, history=[])
+    assert default_build_policy(goal, tmp_path, ctx_fix) == "debugger"
+
+
+def test_dispatcher_delega_al_ruolo_scelto(tmp_path: Path):
+    calls = []
+    def scaff(g, r, c): calls.append("scaffolder"); return StepOutcome(STEP_CHANGED, strategy="scaffolder")
+    def dbg(g, r, c): calls.append("debugger"); return StepOutcome(STEP_CHANGED, strategy="debugger")
+    disp = dispatching_executor({"scaffolder": scaff, "debugger": dbg})
+    out = disp(_goal(), tmp_path, StepContext(pending=_pending("tests_pass"), attempt_index=0, history=[]))
+    assert out.strategy == "debugger"
+    assert calls == ["debugger"]
+
+
+def test_swarm_completo_3_ruoli(tmp_path: Path):
+    # scaffolder costruisce -> tester trova un BUG -> dispatcher manda il debugger
+    # a riparare -> tester riverifica -> success.
+    from devin.core.goal_mode import Criterion, Goal
+    goal = Goal(objective="o", mode=MODE_SCAFFOLD, budget_steps=8, acceptance=[
+        Criterion("file_exists", {"path": "code.py"}),
+        Criterion("absence_of_pattern", {"pattern": "BUG"}),
+    ])
+
+    def scaff(g, root, ctx):
+        (Path(root) / "code.py").write_text("x=1\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    def dbg(g, root, ctx):
+        bug = Path(root) / "hardtest.py"
+        if bug.exists():
+            bug.unlink()  # rimuove il marker BUG = "ripara"
+        return StepOutcome(STEP_CHANGED, strategy="debugger", produced_changes=True)
+
+    vc = {"n": 0}
+    def tester(g, root, ctx):
+        vc["n"] += 1
+        if vc["n"] == 1:
+            (Path(root) / "hardtest.py").write_text("# BUG\n", encoding="utf-8")
+            return StepOutcome(STEP_CHANGED, strategy="tester", produced_changes=True, failure_signature="bug")
+        return StepOutcome(STEP_CHANGED, strategy="tester", produced_changes=True)
+
+    executor = dispatching_executor({"scaffolder": scaff, "debugger": dbg})
+    res = run_goal(goal, tmp_path, executor, verifier=tester)
+    assert res.status == RESULT_SUCCESS
+    seq = [a.strategy for a in res.attempts]
+    assert seq[0] == "scaffolder"
+    assert "tester" in seq and "debugger" in seq  # tutti e tre hanno agito
+    assert seq[2] == "debugger"  # dopo il bug del tester, e' partito il fixer
 
 
 def test_loop_maintenance_manuale_va_in_attesa(tmp_path: Path):
