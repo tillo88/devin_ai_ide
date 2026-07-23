@@ -74,7 +74,8 @@ UNITEOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now ai-rig-searxng.service
 echo ">> Stato: $(sudo systemctl is-active ai-rig-searxng.service || true)"
-echo ">> docker: $($COMPOSE -f "$SHARED_DIR/docker-compose.yml" ps --format '{{.Name}} {{.State}}' 2>/dev/null | tr '\n' ' ')"
+# docker richiede root se l'utente non e' nel gruppo 'docker' -> sudo.
+echo ">> docker: $(cd "$SHARED_DIR" && sudo $COMPOSE ps --format '{{.Name}} {{.State}}' 2>/dev/null | tr '\n' ' ')"
 
 echo ">> Verifica JSON (SearXNG ci mette qualche secondo a caricare)..."
 ok=0
@@ -91,7 +92,7 @@ for i in $(seq 1 10); do
     fi
     sleep 3
 done
-[ "$ok" = 1 ] || echo "   Non ancora pronto. Controlla: $COMPOSE -f $SHARED_DIR/docker-compose.yml logs --tail 40 searxng"
+[ "$ok" = 1 ] || echo "   Non ancora pronto. Controlla: (cd $SHARED_DIR && sudo $COMPOSE logs --tail 40 searxng)"
 echo ""
 echo "Fatto su QUESTO ruolo. Per gli altri, dopo aver bootato nel ruolo:"
 echo "  bash $SHARED_DIR/install_searxng_service.sh"
