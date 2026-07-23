@@ -39,7 +39,18 @@ def section(title: str) -> None:
 
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="Prova la catena internet di DEVIN.")
+    parser.add_argument("--provider", choices=["tinyfish", "searxng"],
+                        help="forza il provider solo per questo test (non tocca settings.json)")
+    parser.add_argument("--url", help="override di searxng_url (es. http://192.168.1.100:8081)")
+    args = parser.parse_args()
+
     config = json.loads((ROOT / "config" / "settings.json").read_text(encoding="utf-8"))
+    if args.provider:
+        config.setdefault("web_search", {})["provider"] = args.provider
+    if args.url:
+        config.setdefault("web_search", {})["searxng_url"] = args.url
     ws = config.get("web_search", {})
 
     section("0) Config + chiave")
