@@ -23,6 +23,11 @@ services:
       - GRANIAN_WORKERS=4
     # SAFETY NET DURO (a livello container): anche se il processo generasse
     # decine di worker, NON puo' saturare il rig. Cap a 2 core e 1 GB.
-    # (Il rig ha 20 core: SearXNG interno non ne serve di piu'.)
-    cpus: "2.0"
-    mem_limit: "1g"
+    # Forma `deploy.resources.limits`: e' quella che `docker compose up` (v2)
+    # onora davvero (le chiavi legacy cpus/mem_limit venivano IGNORATE nel tuo
+    # setup -> il LIMIT restava = RAM host).
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
