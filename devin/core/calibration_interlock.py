@@ -2,8 +2,8 @@
 
 A privileged calibration controller owns a small JSON file in ``/run/ai-rig``.
 When the file is active, DEVIN rejects new model-consuming requests while
-already accepted chat, Goal and training work drains.  This module never stops
-services or models and never creates/removes the controller-owned file.
+already accepted chat, autocomplete, Goal and training work drains.  This
+module never stops services/models and never creates/removes the file.
 """
 
 from __future__ import annotations
@@ -26,18 +26,28 @@ MAX_INTERLOCK_BYTES = 64 * 1024
 MAX_CAPTURE_BYTES = 64 * 1024
 STATUS_PATH = "/api/calibration/interlock"
 
-# Exact endpoints that can consume the model or enqueue work that will consume
-# it.  Recovery/read-only routes, including /api/stop, stay reachable.
 PROTECTED_POST_PATHS = frozenset(
     {
         "/api/chat",
         "/api/chat/vision",
         "/api/chat/document",
+        "/api/autocomplete",
+        "/api/autocomplete/stream",
         "/api/run",
         "/api/run/resume",
         "/api/chat/scaffold",
         "/api/chat/generate_patch",
+        "/api/goal/run",
         "/api/training/run",
+    }
+)
+_CHAT_POST_PATHS = frozenset(
+    {
+        "/api/chat",
+        "/api/chat/vision",
+        "/api/chat/document",
+        "/api/autocomplete",
+        "/api/autocomplete/stream",
     }
 )
 
@@ -59,6 +69,18 @@ _TERMINAL_RUN_STATUSES = frozenset(
 )
 _TERMINAL_TRAINING_STATUSES = frozenset(
     {"finished", "failed", "stopped", "cancelled"}
+)
+_TERMINAL_GOAL_STATUSES = frozenset(
+    {
+        "success",
+        "blocked",
+        "budget_exhausted",
+        "needs_approval",
+        "error",
+        "failed",
+        "stopped",
+        "cancelled",
+    }
 )
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _STATUS_RE = re.compile(r"(?im)^status:\s*([a-z_]+)\s*$")
@@ -88,7 +110,6 @@ def resolve_interlock_path(environ: dict[str, str] | None = None) -> Path:
 
 
 def _invalid_state(path: Path, error: str) -> InterlockState:
-    # Invalid state blocks admissions but never authorizes a model stop.
     return InterlockState(
         path=str(path),
         status="invalid_fail_closed",
@@ -148,7 +169,7 @@ def read_interlock(path: str | Path | None = None) -> InterlockState:
 
 
 class AdmissionRegistry:
-    """Process-local accounting for accepted work that may still use the model."""
+    """Process-local accounting for accepted work that may still use a model."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -188,15 +209,13 @@ class AdmissionRegistry:
 
         removable = set()
         for run_id in candidates:
-            # Keep the bridge throughout starting/active.  Only terminal log
-            # evidence may remove it, closing transition and exception races.
             if run_id in starting_run_ids or run_id in active_run_ids:
                 continue
             try:
                 if terminal_check(run_id):
                     removable.add(run_id)
             except Exception:
-                pass  # unknown remains pending: fail-closed drain
+                pass
 
         if removable:
             with self._lock:
@@ -268,6 +287,26 @@ def _active_training_job_ids() -> set[str]:
     return active
 
 
+def _active_goal_run_ids() -> set[str]:
+    from devin.ui.routers.goal import _goal_runs, _lock
+
+    with _lock:
+        records = [dict(item) for item in _goal_runs.values()]
+
+    active = set()
+    for item in records:
+        status = str(item.get("status") or "unknown").strip().lower()
+        if status in _TERMINAL_GOAL_STATUSES:
+            continue
+        if status != "running":
+            raise RuntimeError(f"goal run has unknown non-terminal status: {status}")
+        goal_run_id = str(item.get("goal_run_id") or "").strip()
+        if not _RUN_ID_RE.fullmatch(goal_run_id):
+            raise RuntimeError("running goal has invalid goal_run_id")
+        active.add(goal_run_id)
+    return active
+
+
 def runtime_status_payload() -> dict[str, Any]:
     state = read_interlock()
     runtime_ok = True
@@ -275,6 +314,7 @@ def runtime_status_payload() -> dict[str, Any]:
     starting_ids: set[str] = set()
     active_ids: set[str] = set()
     training_ids: set[str] = set()
+    goal_ids: set[str] = set()
     log_dir: Path | None = None
 
     try:
@@ -284,6 +324,7 @@ def runtime_status_payload() -> dict[str, Any]:
             starting_ids = set(fast_app.starting_runs)
             active_ids = set(fast_app.active_runs)
         training_ids = _active_training_job_ids()
+        goal_ids = _active_goal_run_ids()
         log_dir = Path(fast_app.LOG_DIR)
     except Exception as exc:
         runtime_ok = False
@@ -303,6 +344,7 @@ def runtime_status_payload() -> dict[str, Any]:
         {
             "starting_run_ids": sorted(starting_ids),
             "active_run_ids": sorted(active_ids),
+            "active_goal_run_ids": sorted(goal_ids),
             "active_training_job_ids": sorted(training_ids),
             "pending_goal_ids": pending_ids,
             "runtime_snapshot_ok": runtime_ok,
@@ -317,6 +359,7 @@ def runtime_status_payload() -> dict[str, Any]:
         and not activity["pending_goal_ids"]
         and not activity["starting_run_ids"]
         and not activity["active_run_ids"]
+        and not activity["active_goal_run_ids"]
         and not activity["active_training_job_ids"]
     )
     safe_to_stop = bool(state.valid and state.active and drained)
@@ -338,7 +381,7 @@ def _blocked_response(state: InterlockState, request_kind: str) -> JSONResponse:
     )
     return JSONResponse(
         {
-            "error": "new chat, Goal and training work is temporarily blocked for calibration",
+            "error": "new model-consuming work is temporarily blocked for calibration",
             "code": code,
             "retryable": True,
             "request_kind": request_kind,
@@ -392,9 +435,7 @@ class CalibrationInterlockMiddleware:
             return
 
         state = read_interlock()
-        request_kind = "chat" if path in {
-            "/api/chat", "/api/chat/vision", "/api/chat/document"
-        } else "goal"
+        request_kind = "chat" if path in _CHAT_POST_PATHS else "goal"
         if state.blocked:
             await _blocked_response(state, request_kind)(scope, receive, send)
             return
