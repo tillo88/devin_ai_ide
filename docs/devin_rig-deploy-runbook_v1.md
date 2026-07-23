@@ -123,8 +123,8 @@ Endpoint (dopo che il rig ha il codice aggiornato):
   e' l'inner loop dell'orchestrator, vedi roadmap v2.
 
 ### ⚠️ Ambiente del PC dell'utente (Alessandro)
-- **Cartella Download su `G:\Downloads`** (NON `$HOME\Downloads`). Usare sempre
-  `G:\Downloads` nei comandi che salvano/scaricano file sul PC.
+- **Cartella Download su `G:\Download`** (NON `$HOME\Downloads`). Usare sempre
+  `G:\Download` nei comandi che salvano/scaricano file sul PC.
 - Shell: PowerShell su Windows.
 
 ### ⚠️ Convenzione comandi PC: PowerShell SEMPRE monoriga
@@ -145,7 +145,7 @@ do { Clear-Host; $s = Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal
 
 Scarica il report JSON (monoriga):
 ```powershell
-$id="goal_20260723_010143"; Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$id" | ConvertTo-Json -Depth 8 | Out-File -Encoding utf8 "G:\Downloads\$id.json"
+$id="goal_20260723_010143"; Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/$id" | ConvertTo-Json -Depth 8 | Out-File -Encoding utf8 "G:\Download\$id.json"
 ```
 
 CLI equivalente (se mai servisse a mano): `python scripts/run_goal.py --project ...`.

@@ -55,6 +55,36 @@ TEACHER). Cambio operativo previsto Ornith -> GLM-Colibri con canary obbligatori
 
 ---
 
+## 3bis. Stack operativo del rig (dipendenza — fonte: AI_Rig_Operational_Runbook v1.2)
+Il rig e' gestito dal progetto SEPARATO **ai-rig-iso-build**. Cio' che serve a DEVIN AI IDE:
+
+- **Nel ruolo `devin` il rig fa girare DUE servizi:** `llama-server@devin.service`
+  (il MODELLO Ornith su `:8080`, `/health`) e il nostro `devin-backend.service`
+  (l'APP FastAPI su `:5000`). Il runbook del rig copre solo il primo; il secondo
+  e' nostro (install_devin_backend.sh). Il backend parla al modello su `:8080`.
+- **Modello DEVIN:** Ornith-1.0-35B-A3B MXFP4 MOE Q8 (ctx 32K, reasoning budget
+  20480), motore BeeLlama storica `85e22ea` in `/opt/llama.cpp/build/bin`
+  (=YES_DO_NOT_USE per esperimenti). Health `http://127.0.0.1:8080/health`.
+- **Cambio ruolo (reale):** NON `grub-reboot` (commento obsoleto) ma
+  `/usr/local/bin/ai-rig-select-role.sh <devin|hermes|teacher> [--poweroff]` che
+  imposta UEFI BootOrder/BootNext (dischi per seriale). Il **bot Telegram su
+  WolPi** (Raspberry) fa WOL + cold-swap (poweroff→WOL→verifica role→verifica API,
+  fino a 900s): comandi `/wakeup /status /verify /devin /hermes /teacher`. Per
+  lavorare su DEVIN AI IDE il rig deve essere in ruolo `devin`.
+- **Ruoli distinti, fix NON si propagano** (drift noto: HERMES senza il drop-in
+  `ai-rig-wait-gpus-stable.sh` che DEVIN/TEACHER hanno).
+- **Regole non negoziabili che ci toccano:** niente NVML (`nvidia-smi`/`nvtop`/
+  `nvitop`/`gpustat`) mentre CUDA e' attivo (solo one-shot prima/dopo); niente
+  SIGKILL (D-state → recovery controllato/REISUB, marker `NEEDS_REBOOT`); dopo
+  ogni test Ornith HEALTHY; fail-closed; una variabile alla volta; stop se un
+  loop supera 10-15 min senza artefatto.
+- **KVarN / preview v0.4.1:** percorso KV sperimentale, **quarantined** (Pascal/
+  Turing sotto il requisito shared-memory per Qwen headwide). Non rilanciare.
+- **Parallelo con la Goal Mode:** la sez. 22 del runbook rig ("orchestrator
+  adattabile": canary prima delle curve, fail-closed, resume solo con fingerprint
+  identico, **budget + heartbeat contro i loop silenziosi**) e' lo stesso spirito
+  del nostro Goal loop. Domini diversi (calibrazione GPU vs coding), principi uguali.
+
 ## 4. Architettura software
 **Inner loop di UNA run** (`devin/agents/` + orchestrator):
 `Planner -> Coder -> Patcher -> Runner -> Critic` (max 3 retry, self-heal via Critic).
@@ -166,6 +196,6 @@ locale, stop solo del backend avviato dall'app).
 - Leggere `INDEX.md` + `CONTINUITY_*` prima di ri-derivare o creare doc.
 - Memoria anti-contaminazione: mai promuovere non-verificato; failure utili solo con causa+evidenza+regola di retry.
 - Commit incrementali dopo un punto test verde; preservare segreti/stato runtime (mai committare `.env`, `tinyfish api.txt`, JSONL memoria viva, log, modelli, workspace runtime).
-- PowerShell per l'owner **monoriga**; Download su **`G:\Downloads`**; l'owner esegue i comandi Windows (Claude legge gli output dai log).
+- PowerShell per l'owner **monoriga**; Download su **`G:\Download`**; l'owner esegue i comandi Windows (Claude legge gli output dai log).
 - Deploy rig = push -> pull -> restart `devin-backend.service` (mai auto). Vedi runbook.
 - Pulizia del vecchio: solo dopo review esplicita (archive-first).
