@@ -10,11 +10,15 @@ container SearXNG attivo per volta, sulla stessa config condivisa.
 DEVIN lo usa con `web_search.provider=searxng` e
 `searxng_url=http://192.168.1.100:8081`.
 
-## Passo 1 — popola il disco shared (UNA VOLTA SOLA, da un ruolo qualsiasi)
+## Passo 1 — popola il disco shared (UNA VOLTA SOLA, dal ruolo devin)
+
+Il repo `~/devin_ai_ide` sta SOLO sul disco devin; lo shared invece e' montato su
+tutti i ruoli. Quindi copiamo compose + config + **lo script** sullo shared, cosi'
+su hermes/teacher non serve il repo:
 
 ```bash
 sudo mkdir -p /mnt/ai-rig-shared/searxng
-sudo cp -r ~/devin_ai_ide/scripts/rig/searxng/{docker-compose.yml,config} /mnt/ai-rig-shared/searxng/
+sudo cp -r ~/devin_ai_ide/scripts/rig/searxng/{docker-compose.yml,config,install_searxng_service.sh} /mnt/ai-rig-shared/searxng/
 cd /mnt/ai-rig-shared/searxng
 sudo cp config/settings.yml.example config/settings.yml
 # metti un secret in config/settings.yml (server.secret_key):
@@ -23,15 +27,25 @@ openssl rand -hex 32
 
 ## Passo 2 — abilita il servizio su OGNI ruolo (devin, hermes, teacher)
 
-Su ciascun ruolo (systemd e' per-OS), una volta:
+systemd e' per-OS (sul disco del ruolo), quindi va abilitato una volta per ruolo.
+Ma si lancia SEMPRE dallo **shared** (uguale su tutti, niente repo necessario):
 
 ```bash
-bash ~/devin_ai_ide/scripts/rig/searxng/install_searxng_service.sh
+bash /mnt/ai-rig-shared/searxng/install_searxng_service.sh
 ```
 
 Lo script controlla la config shared, sceglie `docker compose`/`docker-compose`,
-installa `ai-rig-searxng.service` (avvio al boot, `WorkingDirectory` = shared) e lo
-avvia. Poi verifica il JSON. Ripeti dopo aver bootato negli altri due ruoli.
+installa `ai-rig-searxng.service` (avvio al boot, `WorkingDirectory` = shared),
+lo avvia e verifica il JSON con retry. Ripeti dopo aver bootato negli altri due
+ruoli.
+
+> **"Non si puo' fare tutto da devin?"** — In teoria si': i dischi sono fisicamente
+> qui, si potrebbero montare le root di hermes/teacher da devin e piazzare l'unit
+> a mano nel loro `/etc/systemd/system/multi-user.target.wants/`. Ma abilitare un
+> servizio su un OS non-bootato e' fragile (systemctl vuole l'OS vivo; resta il
+> symlink manuale). La via pulita e semplice e' il comando sopra, una volta per
+> ruolo, dallo shared. Provisioning cross-ruolo da devin = possibile miglioramento
+> futuro, non ora.
 
 ## Passo 3 — verifica
 

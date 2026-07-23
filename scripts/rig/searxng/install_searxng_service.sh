@@ -73,11 +73,25 @@ UNITEOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now ai-rig-searxng.service
-sleep 4
-echo ">> Stato:"
-sudo systemctl is-active ai-rig-searxng.service || true
+echo ">> Stato: $(sudo systemctl is-active ai-rig-searxng.service || true)"
+echo ">> docker: $($COMPOSE -f "$SHARED_DIR/docker-compose.yml" ps --format '{{.Name}} {{.State}}' 2>/dev/null | tr '\n' ' ')"
+
+echo ">> Verifica JSON (SearXNG ci mette qualche secondo a caricare)..."
+ok=0
+for i in $(seq 1 10); do
+    body="$(curl -s --max-time 8 "http://127.0.0.1:8081/search?q=test&format=json" 2>/dev/null || true)"
+    if printf '%s' "$body" | grep -q '"results"'; then
+        echo "   OK: JSON ricevuto (SearXNG risponde)."
+        ok=1
+        break
+    fi
+    if printf '%s' "$body" | grep -qi "429\|Too Many\|Forbidden\|403"; then
+        echo "   ATTENZIONE: 403/429 -> manca format json o limiter attivo nel settings.yml." >&2
+        break
+    fi
+    sleep 3
+done
+[ "$ok" = 1 ] || echo "   Non ancora pronto. Controlla: $COMPOSE -f $SHARED_DIR/docker-compose.yml logs --tail 40 searxng"
 echo ""
-echo ">> Verifica JSON (deve tornare JSON, non 403):"
-curl -s --max-time 8 "http://127.0.0.1:8081/search?q=test&format=json" | head -c 200 || echo "(non ancora pronto: riprova tra qualche secondo)"
-echo ""
-echo "Fatto su questo ruolo. Ripeti su hermes e teacher (stesso comando)."
+echo "Fatto su QUESTO ruolo. Per gli altri, dopo aver bootato nel ruolo:"
+echo "  bash $SHARED_DIR/install_searxng_service.sh"
