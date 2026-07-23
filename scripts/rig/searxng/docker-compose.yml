@@ -1,0 +1,17 @@
+# SearXNG per DEVIN — metasearch self-hosted, privacy-first.
+# Sul rig (ruolo devin): sempre up col rig, le query di DEVIN restano sulla LAN.
+# DEVIN lo usa con web_search.provider=searxng e
+# searxng_url=http://192.168.1.100:8081 (gia' in config/settings.json).
+# Setup: vedi README.md in questa cartella.
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./config:/etc/searxng:rw
+    environment:
+      # base_url coerente con settings.json di DEVIN
+      - SEARXNG_BASE_URL=http://192.168.1.100:8081/

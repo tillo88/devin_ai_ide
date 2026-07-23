@@ -22,6 +22,9 @@ devin/ui/.env
 # Template versionato: config/settings.example.json (il codice crea settings.json da li' se manca).
 config/settings.json
 
+# SearXNG: config reale per-macchina col secret (template: settings.yml.example)
+scripts/rig/searxng/config/settings.yml
+
 # Runtime data
 logs/
 devin/ui/logs/
