@@ -160,10 +160,22 @@ def test_sse_chat_is_counted_until_final_body():
                 "headers": [(b"content-type", b"text/event-stream")],
             }
         )
-        await send({"type": "http.response.body", "body": b"data: one\n\n", "more_body": True})
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"data: one\n\n",
+                "more_body": True,
+            }
+        )
         stream_started.set()
         await release_stream.wait()
-        await send({"type": "http.response.body", "body": b"data: done\n\n", "more_body": False})
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"data: done\n\n",
+                "more_body": False,
+            }
+        )
 
     middleware = ci.CalibrationInterlockMiddleware(streaming_app)
 
@@ -178,7 +190,7 @@ def test_sse_chat_is_counted_until_final_body():
     asyncio.run(scenario())
 
 
-def test_goal_response_closes_acceptance_race_until_runtime_or_terminal(
+def test_goal_response_requires_terminal_evidence_before_drain(
     tmp_path, monkeypatch
 ):
     log_dir = tmp_path / "logs"
@@ -204,17 +216,21 @@ def test_goal_response_closes_acceptance_race_until_runtime_or_terminal(
     assert pending["activity"]["pending_goal_ids"] == ["run_goal_1"]
     assert pending["drained"] is False
 
-    # Once the run is visible in the backend runtime, active/starting state is
-    # authoritative and the short acceptance bridge can be removed.
+    # Seeing the run in starting/active state must not clear the acceptance
+    # bridge: only terminal log evidence can do that.
     fake_fast_app.starting_runs.add("run_goal_1")
     starting = ci.runtime_status_payload()
-    assert starting["activity"]["pending_goal_ids"] == []
+    assert starting["activity"]["pending_goal_ids"] == ["run_goal_1"]
     assert starting["activity"]["starting_run_ids"] == ["run_goal_1"]
     assert starting["drained"] is False
 
     fake_fast_app.starting_runs.clear()
+    (log_dir / "run_goal_1.log").write_text(
+        "Run started\nstatus: success\n", encoding="utf-8"
+    )
     _write_lock(tmp_path / "interlock.json")
     drained = ci.runtime_status_payload()
+    assert drained["activity"]["pending_goal_ids"] == []
     assert drained["drained"] is True
     assert drained["safe_to_stop_model"] is True
 
