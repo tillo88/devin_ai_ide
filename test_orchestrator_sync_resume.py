@@ -408,6 +408,51 @@ def test_web_reference_cap_resets_per_run(monkeypatch):
     print("✓ Web-ref cap: reset per run (max_per_run), cap intra-run invariato")
 
 
+def test_library_docs_injects_official_docs_for_imports(monkeypatch):
+    """Roadmap #4: le doc ufficiali delle librerie di terze parti importate
+    vengono iniettate (per non far inventare API). Stdlib esclusa."""
+    import devin.ai.web_search as web_search
+    calls = {"q": "", "n": 0}
+
+    def fake_docs(query, config, max_chars=2200):
+        calls["q"] = query
+        calls["n"] += 1
+        return "DOCS BLOCK"
+
+    monkeypatch.setattr(web_search, "search_docs_context", fake_docs)
+    stub = SimpleNamespace(
+        ai_client=SimpleNamespace(config={}),
+        _log=lambda *a, **k: None,
+        _project_language=lambda: "python",
+    )
+    code = "import requests\nfrom fastapi import FastAPI\nimport os\n"
+    out = Orchestrator._maybe_library_docs(stub, code)
+    assert "LIBRARY DOCS" in out and "DOCS BLOCK" in out
+    assert "requests" in calls["q"] and "fastapi" in calls["q"]
+    assert "os" not in calls["q"]  # stdlib esclusa dalla ricerca
+    assert calls["n"] == 1
+    assert stub._web_searches_done == 1
+
+
+def test_library_docs_no_thirdparty_no_search(monkeypatch):
+    import devin.ai.web_search as web_search
+    hits = {"n": 0}
+    monkeypatch.setattr(web_search, "search_docs_context",
+                        lambda q, c, max_chars=2200: hits.__setitem__("n", hits["n"] + 1) or "X")
+    stub = SimpleNamespace(ai_client=SimpleNamespace(config={}), _log=lambda *a, **k: None,
+                           _project_language=lambda: "python")
+    out = Orchestrator._maybe_library_docs(stub, "import os\nimport sys\n")
+    assert out == "" and hits["n"] == 0  # solo stdlib -> nessuna ricerca
+
+
+def test_library_docs_respects_shared_budget(monkeypatch):
+    import devin.ai.web_search as web_search
+    monkeypatch.setattr(web_search, "search_docs_context", lambda q, c, max_chars=2200: "X")
+    stub = SimpleNamespace(ai_client=SimpleNamespace(config={}), _log=lambda *a, **k: None,
+                           _project_language=lambda: "python", _web_searches_done=2)  # budget gia' esaurito
+    assert Orchestrator._maybe_library_docs(stub, "import requests\n") == ""
+
+
 def test_run_scaffold_entry_resets_web_search_budget(tmp_path):
     """Wiring reale dell'entry point: run_scaffold() azzera il contatore PRIMA
     di qualunque early-return (qui: nessun modello disponibile). Stub minimo:

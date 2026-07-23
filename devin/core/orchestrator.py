@@ -240,7 +240,8 @@ class Orchestrator:
         sandbox_files: Optional[Dict[str, str]] = None
     ) -> str:
         self._log(f"[SELF-HEAL] {stage} failed: {error} — invio al Critic per auto-correzione", "warning")
-        context = context + self._maybe_web_reference(error)
+        context = (context + self._maybe_web_reference(error)
+                   + self._maybe_library_docs(patch, *((sandbox_files or {}).values())))
         swapped_for_critic = False
         try:
             if self._degraded_mode and self.serialize_vram:
@@ -328,6 +329,48 @@ class Orchestrator:
                     f"fonte, non inventare API):\n{block}")
         except Exception as e:
             self._log(f"[WEB-REF] ricerca fallita (proseguo senza): {e}", "warning")
+            return ""
+
+    def _maybe_library_docs(self, *code_texts: str) -> str:
+        """Doc UFFICIALI delle librerie di terze parti importate nel codice appena
+        generato/patchato, iniettate sul retry per non far INVENTARE API al
+        modello (roadmap #4, il bug degli endpoint Steam inventati). L'orchestrator
+        decide di chiamarla via web_capabilities; budget CONDIVISO con
+        _maybe_web_reference (web_search.agent_search.max_per_run). Fail-soft."""
+        try:
+            from devin.ai.web_capabilities import extract_imports
+            config = getattr(self.ai_client, "config", {}) if hasattr(self, "ai_client") else {}
+            agent_cfg = (config or {}).get("web_search", {}).get("agent_search", {})
+            if not agent_cfg.get("enabled", True):
+                return ""
+            max_per_run = int(agent_cfg.get("max_per_run", 2))
+            done = getattr(self, "_web_searches_done", 0)
+            if done >= max_per_run:
+                return ""
+            code = "\n".join(t for t in code_texts if t)[:20000]
+            if not code.strip():
+                return ""
+            try:
+                language = self._project_language()
+            except Exception:
+                language = "python"
+            libs = sorted(extract_imports(code, language))[:4]
+            if not libs:
+                return ""
+            from devin.ai.web_search import search_docs_context
+            self._log(f"[LIB-DOCS] Librerie importate: {', '.join(libs)} — consulto le doc ufficiali", "info")
+            block = search_docs_context(
+                f"{language} official documentation: " + ", ".join(libs), config, max_chars=1800)
+            self._web_searches_done = done + 1
+            if not block:
+                return ""
+            return ("\n\nLIBRARY DOCS (fonti ufficiali per " + ", ".join(libs)
+                    + " — usa QUESTE API, non inventarle):\n" + block)
+        except Exception as e:
+            try:
+                self._log(f"[LIB-DOCS] non disponibile (proseguo): {e}", "warning")
+            except Exception:
+                pass
             return ""
 
     # ============================================================
