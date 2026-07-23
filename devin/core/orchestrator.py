@@ -265,6 +265,32 @@ class Orchestrator:
         di run() e run_scaffold()."""
         self._web_searches_done = 0
 
+    def _project_language(self) -> str:
+        """Linguaggio prevalente del progetto (cache-ato, fail-soft -> 'python').
+        Usato per rendere le ricerche web consapevoli del linguaggio."""
+        cached = getattr(self, "_cached_language", None)
+        if cached:
+            return cached
+        from devin.ai.web_capabilities import detect_language
+        names: List[str] = []
+        _skip = {".git", "venv", ".venv", ".venv-rig", ".venv-win", "node_modules",
+                 "__pycache__", "workspace", ".devin_state"}
+        try:
+            root = Path(self.project_path)
+            for p in root.rglob("*"):
+                if not p.is_file():
+                    continue
+                if any(part in _skip for part in p.relative_to(root).parts):
+                    continue
+                names.append(p.name)
+                if len(names) >= 200:
+                    break
+        except Exception:
+            pass
+        lang = detect_language(names) if names else "python"
+        self._cached_language = lang
+        return lang
+
     def _maybe_web_reference(self, error: str) -> str:
         """Ricerca web AL SERVIZIO DEL CODING (2026-07-10): se l'errore e'
         "cercabile" (modulo mancante, API cambiata, versioni incompatibili —
@@ -286,7 +312,10 @@ class Orchestrator:
                 return ""
             first_line = (error or "").strip().splitlines()[0][:140]
             self._log(f"[WEB-REF] Errore cercabile, consulto il web: {first_line}", "info")
-            block = search_coding_context(f"python {first_line}", config)
+            # Query consapevole del linguaggio (prima era 'python' hardcoded ->
+            # su progetti JS/Rust cercava la cosa sbagliata).
+            from devin.ai.web_capabilities import error_reference_query
+            block = search_coding_context(error_reference_query(error, self._project_language()), config)
             self._web_searches_done = done + 1
             if not block:
                 return ""
