@@ -96,6 +96,11 @@ class GoalRunResult:
 StepExecutor = Callable[[Goal, Path, StepContext], StepOutcome]
 
 
+def _passed_count(ev: GoalEvaluation) -> int:
+    """Quanti criteri risultano soddisfatti (metrica di progresso)."""
+    return sum(1 for r in ev.results if r.passed)
+
+
 def run_goal(
     goal: Goal,
     project_root: Path | str,
@@ -103,6 +108,7 @@ def run_goal(
     *,
     verifier: StepExecutor | None = None,
     max_identical_failures: int = 3,
+    max_no_progress: int = 4,
     clock: Callable[[], float] = time.monotonic,
     on_attempt: Callable[[Attempt], None] | None = None,
 ) -> GoalRunResult:
@@ -133,6 +139,7 @@ def run_goal(
     attempts: list[Attempt] = []
     failure_counts: dict[str, int] = {}
     verified = False
+    no_progress = 0
     start = clock()
 
     for step in range(goal.budget_steps):
@@ -147,6 +154,7 @@ def run_goal(
             return GoalRunResult(RESULT_SUCCESS, reason, attempts, ev.to_dict())
         actor = verifier if verifying else executor
 
+        satisfied_before = _passed_count(ev)  # per il guard anti-stallo
         ctx = StepContext(pending=ev.pending, attempt_index=step, history=list(attempts))
         outcome = actor(goal, root, ctx)
 
@@ -190,6 +198,21 @@ def run_goal(
                     f"stesso fallimento ripetuto x{failure_counts[sig]}: {sig}",
                     attempts, ev.to_dict(),
                 )
+        else:
+            # Guard anti-stallo: l'executor dice "changed/no_change" ma i criteri
+            # soddisfatti NON aumentano. Senza questo, uno scaffolder che "riesce"
+            # ma non fa passare (es. tests_pass sempre rosso) cicla fino al budget.
+            # I FALLIMENTI espliciti restano gestiti sopra dalla firma ripetuta.
+            if _passed_count(ev) > satisfied_before:
+                no_progress = 0
+            else:
+                no_progress += 1
+                if no_progress >= max_no_progress:
+                    return GoalRunResult(
+                        RESULT_BLOCKED,
+                        f"nessun progresso: gli stessi criteri restano non soddisfatti dopo {no_progress} step",
+                        attempts, ev.to_dict(),
+                    )
 
         # Checkpoint D4: modifiche + modalita' che richiede approvazione -> pausa.
         if outcome.produced_changes and goal.requires_checkpoint():

@@ -158,6 +158,50 @@ def test_budget_tempo_esaurito(tmp_path: Path):
     assert "tempo" in res.reason
 
 
+# --- guard anti-stallo (nessun progresso) ---------------------------------
+
+def test_stallo_executor_cambia_senza_progredire(tmp_path: Path):
+    goal = _goal([Criterion("file_exists", {"path": "mai.py"})], mode=MODE_SCAFFOLD, budget_steps=20)
+
+    def executor(g, root, ctx):
+        # "cambia" un file che NON e' il criterio -> nessun progresso reale
+        (Path(root) / f"junk_{ctx.attempt_index}.py").write_text("x=1\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    res = run_goal(goal, tmp_path, executor, max_no_progress=4)
+    assert res.status == RESULT_BLOCKED
+    assert "nessun progresso" in res.reason
+    assert len(res.attempts) == 4  # si ferma, non arriva al budget di 20
+
+
+def test_no_change_ripetuto_blocca(tmp_path: Path):
+    goal = _goal([Criterion("file_exists", {"path": "mai.py"})], mode=MODE_SCAFFOLD, budget_steps=20)
+
+    def executor(g, root, ctx):
+        return StepOutcome(STEP_NO_CHANGE, strategy="analyst")
+
+    res = run_goal(goal, tmp_path, executor, max_no_progress=3)
+    assert res.status == RESULT_BLOCKED
+    assert len(res.attempts) == 3
+
+
+def test_progresso_reale_non_blocca(tmp_path: Path):
+    goal = _goal([
+        Criterion("file_exists", {"path": "a.py"}),
+        Criterion("file_exists", {"path": "b.py"}),
+        Criterion("file_exists", {"path": "c.py"}),
+    ], mode=MODE_SCAFFOLD, budget_steps=10)
+    names = ["a.py", "b.py", "c.py"]
+
+    def executor(g, root, ctx):
+        (Path(root) / names[ctx.attempt_index]).write_text("1\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    res = run_goal(goal, tmp_path, executor, max_no_progress=2)  # basso apposta
+    assert res.status == RESULT_SUCCESS  # ogni step fa progresso -> mai stallo
+    assert len(res.attempts) == 3
+
+
 # --- cancello di verifica (DISPATCH: builder + verifier) ------------------
 
 def test_verifier_ok_da_successo_verificato(tmp_path: Path):
