@@ -140,6 +140,8 @@ class AIClient:
     def _load_config(self, path: str) -> dict:
         """Carica config con fallback a default."""
         try:
+            from devin.core.settings_bootstrap import ensure_settings
+            ensure_settings(path)  # clone nuovo: crea settings.json dal template
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:

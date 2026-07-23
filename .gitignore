@@ -18,6 +18,10 @@ env/
 !.env.example
 devin/ui/.env
 
+# settings.json e' per-macchina (rig_self_hosted, ui.host, ui.api_token): non tracciato.
+# Template versionato: config/settings.example.json (il codice crea settings.json da li' se manca).
+config/settings.json
+
 # Runtime data
 logs/
 devin/ui/logs/

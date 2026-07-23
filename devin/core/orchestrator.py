@@ -105,6 +105,10 @@ class Orchestrator:
         self._state_persistence = None
         self._degraded_mode = False  # True se il rig (primario) è down e giriamo su locale
 
+        # settings.json e' per-macchina e non tracciato: su un clone nuovo va
+        # creato dal template versionato prima di leggerlo.
+        from devin.core.settings_bootstrap import ensure_settings
+        ensure_settings(config_path)
         # encoding esplicito: su Windows il default e' cp1252 ('charmap') e
         # settings.json contiene UTF-8 (bug emerso col sidecar, 2026-07-21)
         with open(config_path, "r", encoding="utf-8") as f:

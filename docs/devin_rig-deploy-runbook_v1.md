@@ -54,25 +54,26 @@ Sul **rig** (via SSH `tillo@192.168.1.100`), nella root del clone:
      `bash scripts/rig/install_devin_backend.sh`
 5. Verifica: `curl -s http://127.0.0.1:5000/api/health`
 
-### Intoppo ricorrente: `config/settings.json` blocca il `git pull`
-`config/settings.json` e' **tracciato** in git ma sul rig viene modificato in
-locale (`rig_self_hosted=true`, `ui.host=0.0.0.0` messi dall'install script).
-Quando un commit in arrivo tocca lo stesso file, `git pull` si ferma con
-"Your local changes would be overwritten by merge".
+### `config/settings.json` — FIX DEFINITIVO applicato (untrack + template)
+Dal commit di untrack, `config/settings.json` **non e' piu' tracciato**
+(gitignored): la config per-macchina non va piu' in conflitto ai pull. Il
+template versionato e' `config/settings.example.json`; il codice
+(`devin/core/settings_bootstrap.py::ensure_settings`, chiamato da orchestrator/
+AIClient/fast_app) crea `settings.json` dal template solo **se manca** (clone
+nuovo). Se esiste, non lo tocca: la config del rig resta intatta.
 
-Via pulita, con backup (sul rig, root del clone):
+**Rollout ONE-TIME sul rig** (solo il pull che introduce l'untrack; il rig ha
+ancora la vecchia versione tracciata + modificata). Sul rig, root del clone:
 ```bash
-cp config/settings.json ~/settings.rig.bak      # backup
-git checkout -- config/settings.json            # scarta la modifica locale
-git pull
-bash scripts/rig/install_devin_backend.sh       # ri-mette rig_self_hosted/host + restart
-diff ~/settings.rig.bak config/settings.json     # controllo: altre personalizzazioni perse?
+cp config/settings.json ~/settings.rig.bak    # 1. backup della config vera del rig
+git checkout -- config/settings.json          # 2. scarta le mod locali -> pull pulito
+git pull                                        # 3. l'untrack passa senza conflitto
+cp ~/settings.rig.bak config/settings.json      # 4. ripristina la config del rig
+sudo systemctl restart devin-backend.service    # 5. restart
 ```
-Fix definitivo (da fare bene, prossimo giro): **smettere di tracciare**
-`config/settings.json`, metterlo in `.gitignore` e tenere un
-`config/settings.example.json` come template. Cosi' la config per-macchina non
-va mai in conflitto ai pull. (`git update-index --skip-worktree` NON basta: se
-upstream modifica il file, il pull si blocca comunque.)
+Dopo questo giro, `settings.json` e' untracked sul rig e i pull futuri **non si
+bloccano mai piu'** su quel file. (`git update-index --skip-worktree` NON
+bastava: se upstream modificava il file il pull si bloccava comunque.)
 
 ### Quando serve toccare il venv `.venv-rig`
 Solo se il commit introduce **nuove dipendenze pip**. In quel caso, sul rig:

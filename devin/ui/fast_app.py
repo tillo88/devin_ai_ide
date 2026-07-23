@@ -34,6 +34,12 @@ print("[STARTUP] build fast_app: 2026-07-10c (Progetti+debug_context+picker)")
 # il server veniva avviato da una directory diversa dalla root del progetto).
 CONFIG_PATH = str(ROOT / "config" / "settings.json")
 
+# settings.json e' per-macchina e non tracciato in git: su un clone nuovo va
+# creato dal template versionato (config/settings.example.json) prima che
+# qualsiasi endpoint lo legga.
+from devin.core.settings_bootstrap import ensure_settings as _ensure_settings
+_ensure_settings(CONFIG_PATH)
+
 import json
 import socket
 import asyncio
