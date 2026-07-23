@@ -107,11 +107,22 @@ l'exe vecchio, serve codice vecchio.
 
 Endpoint (dopo che il rig ha il codice aggiornato):
 - `POST /api/goal/run` — body: `{project_path, objective, acceptance[], mode,
-  approval_policy, budget_steps, budget_seconds}`. `acceptance` accetta stringhe
-  DSL (`tests_pass`, `file_exists:PATH`, `contains:PATH:TESTO`, `absence:REGEX`,
-  `command:...`) o dict `{type, params}`. Ritorna `{goal_run_id, status}`.
+  approval_policy, budget_steps, budget_seconds, role}`. `acceptance` accetta
+  stringhe DSL (`tests_pass`, `file_exists:PATH`, `contains:PATH:TESTO`,
+  `absence:REGEX`, `command:...`) o dict `{type, params}`. `role` =
+  `scaffolder` (default) | `tester` | **`swarm`** (dispatch a 3 ruoli:
+  scaffolder costruisce / debugger ripara, tester come cancello di verifica).
+  Ritorna `{goal_run_id, status}`.
 - `GET /api/goal/{goal_run_id}` — stato + attempts (polling).
 - `GET /api/goal` — lista.
+
+Avvio SWARM (monoriga, il caso completo):
+```powershell
+$body = @{ project_path="workspace/goaltest_swarm2"; objective="crea is_prime.py con is_prime(n) e test_is_prime.py; i test devono passare"; mode="scaffold"; role="swarm"; acceptance=@("file_exists:is_prime.py","tests_pass") } | ConvertTo-Json; $r = Invoke-RestMethod -Uri "http://192.168.1.100:5000/api/goal/run" -Method Post -ContentType "application/json" -Body $body; $r.goal_run_id
+```
+Negli attempts vedrai la strategy per step: `scaffolder` (costruisce), `tester`
+(verifica adversariale), `debugger` (ripara se il tester trova un bug). Se non
+avanza, ora si ferma con `blocked: nessun progresso` invece di ciclare a vuoto.
 
 ### Fatti confermati sul rig (da struttura ad albero, 2026-07-23)
 - Python del venv: **3.12** (`.pyc` cpython-312 in tutto `devin/`).

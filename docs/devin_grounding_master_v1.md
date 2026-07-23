@@ -169,7 +169,15 @@ locale, stop solo del backend avviato dall'app).
 - Suite: cresciuta 419 -> 421 -> 429 -> 454 -> **466 passed** (piu' i nostri test Goal Mode, 53, in sandbox). Windows nativo `.venv-win` Python 3.13; sandbox Linux Python 3.10/3.12; rig Python 3.12 (`.venv-rig`).
 - Windows-native milestone raggiunta; installer .msi/.exe prodotti; exe backend ~350MB verificato.
 - Context Steward CS0-CS3 in produzione.
-- **Goal Mode (nostra):** goal_mode (checklist verificabile), goal_runner (loop + cancello di verifica/Red Team), goal_executors (Scaffolder + Tester), router `/api/goal/*` (ruoli scaffolder|tester|swarm). Primo run reale sul rig: scaffolder ok; swarm bloccato da collisione pytest nel sandbox annidato -> fix `tests_pass` (ignore workspace/ + import-mode=importlib). Tester (percorso `orchestrator.run`) ancora da vedere girare coi modelli.
+- **Goal Mode (nostra):** goal_mode (checklist verificabile), goal_runner (loop +
+  cancello di verifica/Red Team + guard anti-stallo "nessun progresso"),
+  goal_executors (**mini-swarm 3 ruoli**: Scaffolder costruisce, Debugger ripara,
+  dispatcher sceglie per stato; Tester = cancello adversariale), router
+  `/api/goal/*` (ruoli `scaffolder|tester|swarm`). ~35 test offline, suite
+  completa **534 passed, 5 skipped**. Primo run reale sul rig: scaffolder ok;
+  swarm bloccato da collisione pytest nel sandbox annidato -> fix `tests_pass`
+  (ignore workspace/ + import-mode=importlib). Ancora da vedere coi modelli sul
+  rig: il percorso reale di Tester/Debugger (`orchestrator.run`).
 
 ---
 
