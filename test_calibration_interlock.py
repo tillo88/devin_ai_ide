@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 from starlette.responses import JSONResponse
 
+import devin.ui as devin_ui
+import devin.ui.routers as devin_ui_routers
 from devin.core import calibration_interlock as ci
 from devin.ui import token_gate
 
@@ -85,9 +87,17 @@ def _fake_runtime(monkeypatch, tmp_path, training_jobs=None, goal_runs=None):
     goals = {} if goal_runs is None else goal_runs
     training = SimpleNamespace(_training_job_snapshot=lambda: list(jobs))
     goal = SimpleNamespace(_goal_runs=goals, _lock=threading.Lock())
+
+    # Patch both sys.modules and the attributes cached on parent packages.
+    # `from devin.ui import fast_app` may otherwise keep returning a real module
+    # imported by an earlier test, making the fake runtime nondeterministic in
+    # the full suite even though the isolated test passes.
     monkeypatch.setitem(sys.modules, "devin.ui.fast_app", fast_app)
     monkeypatch.setitem(sys.modules, "devin.ui.routers.training", training)
     monkeypatch.setitem(sys.modules, "devin.ui.routers.goal", goal)
+    monkeypatch.setattr(devin_ui, "fast_app", fast_app, raising=False)
+    monkeypatch.setattr(devin_ui_routers, "training", training, raising=False)
+    monkeypatch.setattr(devin_ui_routers, "goal", goal, raising=False)
     return fast_app, jobs, goals
 
 
