@@ -26,6 +26,10 @@ Design (approvato dall'owner):
 - Fallimento -> 401 JSON {"error": "unauthorized"}, nessun dettaglio sul
   perche'.
 
+Il calibration interlock e' composto *dentro* questo gate: l'autenticazione
+continua a proteggere i client remoti, poi il gate di calibrazione blocca nuove
+chat/Goal e contabilizza il drain senza bufferizzare le risposte SSE.
+
 Limiti noti (vedi docs/CONTINUITY_2026-07-18.md):
 - l'access log di uvicorn registra le URL complete: con auth via query il
   token finisce nei log del server. Preferire il bootstrap una-tantum +
@@ -44,6 +48,8 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from starlette.responses import JSONResponse
+
+from devin.core.calibration_interlock import CalibrationInterlockMiddleware
 
 ROOT = Path(__file__).resolve().parents[2]
 # Stesso file letto da fast_app (che fissa CONFIG_PATH in modo identico);
@@ -138,37 +144,37 @@ def _send_with_bootstrap_cookie(send, secret: str):
 
 
 class TokenGateMiddleware:
-    """ASGI middleware puro (niente BaseHTTPMiddleware: zero buffering dei
-    body e nessuna interferenza con le risposte SSE/streaming).
+    """ASGI puro: auth remota + calibration gate, senza buffering SSE.
 
     Fail-closed sul client host sconosciuto: se scope["client"] manca o non
-    e' loopback e il gate e' attivo, si richiede il token.
+    e' loopback e il token gate e' attivo, si richiede il token.
     """
 
     def __init__(self, app):
         self.app = app
+        self.protected_app = CalibrationInterlockMiddleware(app)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
-            await self.app(scope, receive, send)
+            await self.protected_app(scope, receive, send)
             return
 
         secret = resolve_api_token()
         if not secret:
-            # Gate disabilitato: comportamento identico a prima del gate.
-            await self.app(scope, receive, send)
+            # Token gate disabilitato: l'interlock di calibrazione resta attivo.
+            await self.protected_app(scope, receive, send)
             return
 
         client = scope.get("client") or ("", 0)
         if client[0] in _LOOPBACK_HOSTS:
-            await self.app(scope, receive, send)
+            await self.protected_app(scope, receive, send)
             return
 
         presented, via_query = _extract_presented_token(scope)
         if presented and hmac.compare_digest(presented, secret):
             if via_query:
                 send = _send_with_bootstrap_cookie(send, secret)
-            await self.app(scope, receive, send)
+            await self.protected_app(scope, receive, send)
             return
 
         response = JSONResponse({"error": "unauthorized"}, status_code=401)
