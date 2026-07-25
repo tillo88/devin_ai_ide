@@ -119,6 +119,9 @@ NON un voto in piu'. Sulle discordanze:
 Cosi' l'arbitrato e' basato su prova, non su autorevolezza del modello. (E'
 esattamente il ruolo Tester/Red Team applicato a review-time.)
 
+> Runtime operativo dell'arbiter (com'e' fatto Colibri, endpoint effimero,
+> model-swap, schema del verdetto, vincoli rig): vedi **§11**.
+
 ### 4.5 Capacity & Context Budgeter
 - budget di token/tempo per Council e per reviewer;
 - quota/capacita' per reviewer (Colibri e' lento -> unita' piccole, heartbeat);
@@ -187,7 +190,9 @@ Entrambi passano dagli stessi cancelli anti-contaminazione.
 
 ## 9. Decisioni aperte per l'owner (bloccanti solo quando ci arriviamo)
 - numero massimo di reviewer concorrenti e budget di default (token/tempo);
-- modello/checkpoint e parametri di GLM-Colibri (dopo benchmark);
+- parametri d'esecuzione di GLM-Colibri (runtime/modello identificati in §11:
+  colibri + GLM-5.2 int4/int8-MTP; restano da fissare budget, temperatura,
+  grammatica del verdetto e tier GPU dopo benchmark);
 - quali provider esterni abilitare per primi e in che formato;
 - policy di redazione precisa (cosa esce, come si logga);
 - criteri di "cambio critico" che fanno scattare il Council esteso;
@@ -200,3 +205,90 @@ Fase 1: `ReviewerAdapter` + `LocalDeterministicReviewer` (wrappa i validator gia
 esistenti come reviewer dell'asse vincoli/sicurezza). E' backend puro, offline,
 zero rischio, e da' subito un Council "a un reviewer deterministico" su cui
 innestare router/aggregator/arbiter. Nessun modello, nessuna VRAM.
+
+---
+
+## 11. Runtime dell'arbiter: GLM-Colibri come endpoint effimero (batch)
+
+Questa sezione formalizza **come** l'arbiter di §4.4 gira davvero sul rig. La
+logica del Council (router/aggregator/arbiter/budgeter) resta quella dei §3-§7;
+qui si fissa solo il piano operativo dell'adjudicator.
+
+### 11.1 Cos'e' Colibri, a runtime
+`JustVugg/colibri` (Apache-2.0) e' un motore in C puro, zero dipendenze, che fa
+girare **GLM-5.2 (744B MoE, pesi MIT di Z.ai)** streammando gli esperti da disco
+(dense part ~9.9GB int4 residente in RAM; 19.456 esperti su disco ~372GB,
+staging su gerarchia VRAM/RAM/NVMe). Container **int4 con teste MTP int8**
+(la variante int4-MTP collassa il draft allo 0% -> usare sempre int8-MTP).
+Lento e pesante per definizione (~0.05-0.1 tok/s su 25GB, fino a ~6 tok/s a
+residenza piena su GPU): **e' la forma giusta per un giudice finale** — raro,
+batch, mai nel loop.
+
+### 11.2 Integrazione = un URL, non un embedding
+Colibri **espone un endpoint OpenAI-compatibile** (`coli serve` /
+`openai_server.py`). Quindi DEVIN ci parla **come gia' parla a Ornith su :8080**:
+l'`ExternalReviewer`/arbiter (§4.1, §4.4) punta all'endpoint Colibri, nessuna
+riscrittura. Colibri resta **architetturalmente esterno** e **batch**, coerente
+col runbook AI Rig ("GLM-Colibri = adjudicator batch e generatore di esperimenti,
+non un voto, non un ruolo sempre acceso").
+
+### 11.3 Finestra di adjudication effimera (gemella della Fase 0 OCR)
+Colibri e Ornith **non sono mai co-residenti**. L'arbitrato gira in una finestra
+dedicata, con lo stesso model-swap dell'ingest OCR (secondo utente reale del
+calibration interlock):
+```
+discordanze accumulate come packet append-only (ciechi, redatti)
+  -> apre finestra adjudication
+  -> Ornith DOWN (stable stop, teardown verificato, VRAM libera)
+  -> Colibri UP (rig pieno: GPU come tier VRAM esperti, cosi' non e' glaciale)
+  -> per ogni packet: legge le ragioni contrastanti
+       -> emette PROPOSTA D'ESPERIMENTO + lettura, in JSON grammar-forced
+  -> l'esperimento gira nel GATE DETERMINISTICO (rerun)  <-- verita' qui
+  -> verdetto risolto con evidenza -> reviews.jsonl append-only (provenance)
+  -> Colibri DOWN -> Ornith UP -> health :8080/:5000 verdi
+```
+Mai chat/Goal/Tester durante la finestra; una variabile alla volta; fail-closed;
+`NEEDS_REBOOT` se il teardown non torna pulito; nessun NVML nel tratto CUDA.
+
+### 11.4 Schema del verdetto (grammar-forced JSON)
+Colibri supporta draft forzati da grammatica (GBNF), quindi l'output
+dell'arbiter e' **deterministico nella forma e parsabile**. Il JSON e' la
+*proposta*, NON la verita':
+```json
+{
+  "packet_id": "…",
+  "axis": "correttezza_concettuale|robustezza|vincoli|sicurezza|qualita",
+  "arbiter_reading": "sintesi delle ragioni contrastanti dei reviewer",
+  "proposed_experiment": {
+    "kind": "gold_test|unit|property|concept_check",
+    "spec": "il test discriminante da rieseguire nel gate",
+    "predicted_pass_means": "cosa proverebbe se passa",
+    "predicted_fail_means": "cosa proverebbe se fallisce"
+  },
+  "provisional_verdict": "verified_success|verified_failure|needs_human_review|inconclusive",
+  "confidence": 0.0,
+  "rationale": "ragionamento sul CONCETTO, non sull'output"
+}
+```
+**Il verdetto finale e' l'esito del rerun deterministico dell'esperimento
+proposto**, non `provisional_verdict`. Colibri = adjudicator + generatore di
+esperimenti; l'evidenza rieseguibile resta l'autorita' (coerente con §1, §4.4,
+§5). Il record salvato porta `experiment`, `experiment_result`, `budget_spent`,
+`reviewer_id=glm-colibri`, `family=glm`.
+
+### 11.5 Budget e degrado (rimando a §4.5)
+Colibri e' lento: unita' piccole, heartbeat, una discordanza alla volta. Se sfora
+il budget o non risponde, il Council **degrada** (l'arbitrato resta pendente /
+`needs_human_review`), non si blocca. Nessuna promozione senza copertura minima.
+
+### 11.6 Vincoli e stato
+- **Disco:** ~372GB, idealmente NVMe sullo shared; verificare teste **int8-MTP**
+  (`ls -l <model>/out-mtp-*`).
+- **RAM 32GB:** gira ma disk-bound; il tier GPU (con Ornith spento) lo rende
+  usabile per un batch raro, non per nulla di interattivo.
+- **Motore separato:** build C a parte (`./setup.sh`); `/opt/llama.cpp` (Ornith
+  stabile) non si tocca.
+- **Confine di ruolo:** produce `external_review`/arbitrato, **non** un gate; i
+  validator deterministici + rerun restano la verita'.
+- **Stato:** design; implementazione **post-KVarN** e **dopo** che interlock,
+  controller, installer e rollback saranno validati live. Batch, raro, effimero.
