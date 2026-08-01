@@ -169,12 +169,31 @@ questa provenance (coerente col debito P6 #10, gia' chiuso). Dopo la promozione:
    Regola chiave applicata: **il silenzio non e' un PASS** — scanner assente,
    evidenza d'esecuzione assente o nulla di macchina-verificabile danno
    `needs_evidence`, mai `pass`.
-2. **CouncilRouter + pacchetti ciechi per-asse** (deterministico, bounded,
-   no-duplicati-famiglia). Test: copertura assi, no family-dup.
-3. **Aggregator + rilevamento discordanza** (5 assi). Test: concorde/discorde.
-4. **Arbiter**: generazione esperimento + rerun deterministico che risolve.
-   Test: discordanza -> esperimento stub -> verdetto da evidenza.
-5. **Capacity & Context Budgeter**: budget/quote/heartbeat, degrado su sforo.
+2. ~~**CouncilRouter + pacchetti ciechi per-asse**~~ **FATTA** —
+   `council_router.py`: copertura assi, bounded (`max_per_axis` /
+   `critical_max_per_axis` / `max_total`), **no duplicati di famiglia** sullo
+   stesso asse, lente per-asse (`AXIS_LENS`), assi scoperti **dichiarati** in
+   `uncovered_axes` invece che nascosti, piano deterministico.
+3. ~~**Aggregator + rilevamento discordanza**~~ **FATTA** —
+   `council_aggregator.py`: esito per asse
+   (`pass|fail|discordant|unresolved|uncovered`) e del Council. La discordanza
+   **non** si risolve a maggioranza; la copertura incompleta blocca la
+   promozione; il candidato pass mappa su `pending_review`, **mai**
+   `verified_success`.
+4. ~~**Arbiter**~~ **FATTA** — `council_arbiter.py`: esperimento discriminante
+   con esiti **pre-registrati** (`on_pass`/`on_fail` dichiarati prima; un
+   esperimento che non discrimina e' invalido), eseguito dal runner
+   deterministico. Non generato / non eseguito / inconclusivo ->
+   `needs_evidence`, mai `pass`.
+5. ~~**Capacity & Context Budgeter**~~ **FATTA** — `council_budget.py`: budget
+   di tempo e numero review (totali e per reviewer), heartbeat via `on_event`,
+   degrado che **non blocca** il Council (reviewer rotto, fuori contratto o
+   troppo lento), e degrado -> copertura mancante -> niente promozione.
+
+   **Orchestrazione**: `council_run.py` collega le cinque fasi
+   (route -> dispatch -> aggregate -> arbitra le sole discordanze -> ri-aggrega),
+   con **un solo giro di arbitrato** (niente loop) e `to_review_payload()` pronto
+   per `reviews.jsonl`. Test: `test_council*.py` (87 test offline).
 6. **ExternalReviewer** (OpenAI/Claude) con redazione+consenso (opt-in, gated).
 7. **UI Evidence Council**: pannello con pacchetti, copia guidata, import verdetti,
    stato reviewer, budget. (P7)
