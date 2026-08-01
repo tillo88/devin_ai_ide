@@ -41,6 +41,39 @@ AXES: tuple = (
     AXIS_QUALITY,
 )
 
+# Lente per-asse: cosa deve guardare il reviewer, e cosa NON e' compito suo.
+# Serve al router per costruire il pacchetto mirato e ai reviewer-modello come
+# istruzione. Ogni lente chiede il ragionamento sul CONCETTO prima del codice.
+AXIS_LENS: Dict[str, str] = {
+    AXIS_CONCEPT: (
+        "Valuta se la REGOLA logica/astratta applicata e' corretta, prima di guardare il codice. "
+        "Spiega il concetto con parole tue e indica dove il ragionamento devia (es. '3+3=5' significa "
+        "che non ha capito il conteggio, non che ha sbagliato a digitare). "
+        "NON giudicare stile, sicurezza o copertura dei test: non e' il tuo asse."
+    ),
+    AXIS_ROBUSTNESS: (
+        "Cerca i casi in cui la soluzione si rompe: bordi, input negativi o degeneri, valori vuoti, "
+        "concorrenza, dati malformati. Il tuo obiettivo e' distinguere il 'corretto davvero' dal "
+        "'plausibile ma fragile'. Proponi il caso limite piu' discriminante. "
+        "NON giudicare correttezza concettuale, sicurezza o stile."
+    ),
+    AXIS_CONSTRAINTS: (
+        "Verifica l'aderenza ai vincoli dichiarati: endpoint/allowlist reali, nessuna API inventata, "
+        "nessun hardcoding o mock che aggiri il test invece di soddisfarlo. "
+        "NON giudicare eleganza, prestazioni o sicurezza."
+    ),
+    AXIS_SECURITY: (
+        "Cerca vulnerabilita' reali sfruttabili nel contesto: input non validati, segreti, injection, "
+        "deserializzazione non sicura, permessi. Distingui un rischio reale da un falso positivo di linter. "
+        "NON giudicare correttezza funzionale o stile."
+    ),
+    AXIS_QUALITY: (
+        "Verifica che sia stato fatto ESATTAMENTE il richiesto: niente scope creep, niente lavoro incompleto "
+        "spacciato per finito, codice manutenibile. "
+        "NON giudicare sicurezza ne' correttezza concettuale."
+    ),
+}
+
 # --- verdetti -------------------------------------------------------------
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
