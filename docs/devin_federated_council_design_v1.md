@@ -160,8 +160,15 @@ questa provenance (coerente col debito P6 #10, gia' chiuso). Dopo la promozione:
 ---
 
 ## 7. Piano a fasi (ognuna offline-testabile con reviewer stub)
-1. **Interfaccia `ReviewerAdapter` + `LocalDeterministicReviewer`** (assi 3-4 dai
-   validator esistenti). Test: verdetti su casi noti.
+1. ~~**Interfaccia `ReviewerAdapter` + `LocalDeterministicReviewer`**~~ **FATTA**
+   (2026-08-01) — `devin/core/council.py`, test in `test_council.py` (22 test).
+   Implementa: assi, `ReviewVerdict` (reasoning obbligatorio, family per il
+   no-duplicati), `ReviewPacket` **cieco** (`from_teacher_packet` scarta
+   `known_reviews`/`known_corrections`), reviewer deterministico su assi 3-4 e
+   `coverage_gaps` (dove `needs_evidence` **non** copre l'asse).
+   Regola chiave applicata: **il silenzio non e' un PASS** — scanner assente,
+   evidenza d'esecuzione assente o nulla di macchina-verificabile danno
+   `needs_evidence`, mai `pass`.
 2. **CouncilRouter + pacchetti ciechi per-asse** (deterministico, bounded,
    no-duplicati-famiglia). Test: copertura assi, no family-dup.
 3. **Aggregator + rilevamento discordanza** (5 assi). Test: concorde/discorde.
