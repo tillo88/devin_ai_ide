@@ -142,16 +142,29 @@ class TestConstraintsAxis:
         assert v.verdict == VERDICT_PASS
         assert v.confidence == 1.0
 
-    def test_pass_parziale_abbassa_la_confidence_e_dichiara_i_buchi(self):
-        # Copertura parziale != verdetto pieno (stessa lezione del calibration builder).
+    def test_copertura_parziale_non_e_un_pass(self):
+        # Se restano vincoli del caso che nessun controllo copre, l'asse NON e'
+        # verificato per intero: dire "pass" li dichiarerebbe rispettati senza
+        # averli guardati (stessa fallacia del punteggio su meta' dei pesi).
         def fake_validate(case, result, project_path):
             return {"overall": "pass", "signals": {}, "machine_checked": 1,
                     "not_machine_checkable": ["codice_manutenibile"]}
 
         v = LocalDeterministicReviewer(validate_case=fake_validate).review(_packet(), AXIS_CONSTRAINTS)
-        assert v.verdict == VERDICT_PASS
-        assert v.confidence < 1.0
+        assert v.verdict == VERDICT_NEEDS_EVIDENCE
         assert "codice_manutenibile" in v.reasoning
+        assert v.evidence["not_machine_checkable"] == ["codice_manutenibile"]
+
+    def test_copertura_parziale_ammessa_solo_se_esplicitamente_accettata(self):
+        def fake_validate(case, result, project_path):
+            return {"overall": "pass", "signals": {}, "machine_checked": 1,
+                    "not_machine_checkable": ["codice_manutenibile"]}
+
+        v = LocalDeterministicReviewer(
+            validate_case=fake_validate, strict_coverage=False
+        ).review(_packet(), AXIS_CONSTRAINTS)
+        assert v.verdict == VERDICT_PASS
+        assert v.confidence < 1.0   # e comunque a confidenza ridotta
 
     def test_niente_di_verificabile_e_needs_evidence_non_pass(self):
         def fake_validate(case, result, project_path):

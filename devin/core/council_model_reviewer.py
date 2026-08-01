@@ -85,14 +85,52 @@ def _clip(value: Any, limit: int = MAX_FIELD_CHARS) -> str:
     return text if len(text) <= limit else text[:limit] + f"\n[...troncato, {len(text)} caratteri]"
 
 
+def _balanced_objects(text: str):
+    """Yield delle sottostringhe `{...}` a graffe bilanciate (stringhe escluse).
+
+    Serve perche' i modelli intercalano prosa e JSON, a volte piu' di un oggetto:
+    una regex greedy `\\{.*\\}` prenderebbe dal primo `{` all'ultimo `}` e
+    fallirebbe. Qui si scandisce rispettando stringhe ed escape.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    yield text[start:i + 1]
+                    start = -1
+
+
 def extract_json(raw: str) -> Optional[Dict[str, Any]]:
-    """Estrae il primo oggetto JSON da una risposta, tollerando i code fence."""
+    """Estrae il primo oggetto JSON valido da una risposta, tollerando fence e prosa."""
     if not raw:
         return None
     cleaned = _FENCE.sub("", raw).strip()
-    for candidate in (cleaned, (_JSON_BLOCK.search(cleaned).group(0) if _JSON_BLOCK.search(cleaned) else "")):
-        if not candidate:
-            continue
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+    except (json.JSONDecodeError, ValueError):
+        pass
+    for candidate in _balanced_objects(cleaned):
         try:
             data = json.loads(candidate)
         except (json.JSONDecodeError, ValueError):
@@ -116,12 +154,18 @@ class LocalModelReviewer(ReviewerAdapter):
         spec: ModelReviewSpec,
         *,
         model_identity: Optional[Callable[[], Optional[str]]] = None,
+        include_mechanical_status: bool = True,
     ):
         if not callable(chat):
             raise CouncilError("chat deve essere una callable(messages) -> str|None")
         self._chat = chat
         self._spec = spec
         self._model_identity = model_identity
+        # Anti-anchoring: l'esito meccanico e' evidenza legittima, ma mostrarlo
+        # spinge il reviewer ad allinearsi (piu' pass se il gate diceva success).
+        # Mettere False per un giudizio davvero indipendente — utile soprattutto
+        # quando si CONFRONTANO modelli: un bias comune falserebbe il confronto.
+        self.include_mechanical_status = bool(include_mechanical_status)
         self.reviewer_id = spec.reviewer_id
         self.family = spec.family
         self.supported_axes = tuple(spec.supported_axes)
@@ -148,7 +192,10 @@ class LocalModelReviewer(ReviewerAdapter):
             "- Giudica SOLO il tuo asse: se noti problemi su altri assi, ignorali.\n"
             "- 'needs_evidence' e' una risposta LEGITTIMA e non penalizzata: usala quando "
             "l'evidenza non basta per decidere. Non inventare certezza.\n"
-            "- Non conosci i giudizi degli altri reviewer e non devi ipotizzarli.\n\n"
+            "- Non conosci i giudizi degli altri reviewer e non devi ipotizzarli.\n"
+            "- L'esito meccanico (test passati/falliti) e' un DATO, non un giudizio: i test "
+            "possono passare su codice concettualmente sbagliato e fallire per motivi "
+            "ambientali. Non allinearti a quell'esito per inerzia.\n\n"
             "Rispondi SOLO con un oggetto JSON:\n"
             '{"verdict": "pass|fail|needs_evidence", "reasoning": "<il tuo ragionamento>", '
             '"violations": ["..."], "confidence": 0.0, "proposed_experiment": "<test che '
@@ -159,10 +206,14 @@ class LocalModelReviewer(ReviewerAdapter):
             f"VINCOLI DICHIARATI: {_clip(case.get('expected_signals'), 500)}\n"
             f"TAG: {_clip(case.get('tags'), 300)}\n\n"
             f"RISPOSTA PRODOTTA:\n{_clip(attempt.get('response'))}\n\n"
-            f"ESITO MECCANICO: {_clip(attempt.get('status'), 100)}\n"
-            f"MOTIVO ERRORE (se presente): {_clip(attempt.get('error_reason'), 800)}\n"
             f"FILE SCRITTI: {_clip(packet.files_written, 500)}\n"
         )
+        if self.include_mechanical_status:
+            user += (
+                f"\nESITO MECCANICO (dato grezzo, non un verdetto): "
+                f"{_clip(attempt.get('status'), 100)}\n"
+                f"MOTIVO ERRORE (se presente): {_clip(attempt.get('error_reason'), 800)}\n"
+            )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
     # --- review -----------------------------------------------------------

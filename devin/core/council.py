@@ -256,11 +256,17 @@ class LocalDeterministicReviewer(ReviewerAdapter):
     family = "deterministic"
     supported_axes = (AXIS_CONSTRAINTS, AXIS_SECURITY)
 
-    def __init__(self, *, validate_case=None, security_scan=None, security_available=None):
+    def __init__(self, *, validate_case=None, security_scan=None, security_available=None,
+                 strict_coverage: bool = True):
         # Iniettabili per i test offline; di default usano i moduli reali.
         self._validate_case = validate_case
         self._security_scan = security_scan
         self._security_available = security_available
+        # strict_coverage=True (default onesto): se restano vincoli del caso non
+        # macchina-verificabili, l'asse NON e' dichiarato pass — e' `needs_evidence`
+        # e passa a un reviewer semantico. Con False si torna al pass a confidenza
+        # ridotta (utile solo se si accetta esplicitamente la copertura parziale).
+        self.strict_coverage = bool(strict_coverage)
 
     # --- lazy import: il core non deve dipendere dal training a import-time
     def _get_validate_case(self):
@@ -328,8 +334,26 @@ class LocalDeterministicReviewer(ReviewerAdapter):
                 ),
             )
         if overall == VERDICT_PASS:
-            # PASS deterministico, ma dichiara cosa NON ha potuto controllare:
-            # la copertura parziale non va scambiata per verdetto pieno.
+            checked = validation.get("machine_checked", 0)
+            if unchecked and self.strict_coverage:
+                # Copertura PARZIALE non e' un verdetto pieno sull'asse: alcuni
+                # vincoli del caso non sono stati verificati da nessuno. Dire
+                # "pass" li dichiarerebbe rispettati senza averli guardati —
+                # e' la stessa fallacia del punteggio calcolato su meta' dei pesi.
+                return self._verdict(
+                    AXIS_CONSTRAINTS,
+                    VERDICT_NEEDS_EVIDENCE,
+                    f"I {checked} vincoli macchina-verificabili sono rispettati, ma restano "
+                    f"{len(unchecked)} vincoli del caso che nessun controllo deterministico "
+                    f"copre ({', '.join(unchecked[:5])}). L'asse NON e' verificato per intero: "
+                    "serve un reviewer semantico.",
+                    confidence=1.0,
+                    evidence=evidence,
+                    proposed_experiment=(
+                        "Rendere macchina-verificabili i segnali residui (o assegnarli a un "
+                        "reviewer semantico) e rivalutare l'asse."
+                    ),
+                )
             note = ""
             if unchecked:
                 note = (
@@ -339,8 +363,7 @@ class LocalDeterministicReviewer(ReviewerAdapter):
             return self._verdict(
                 AXIS_CONSTRAINTS,
                 VERDICT_PASS,
-                f"Tutti i {validation.get('machine_checked', 0)} vincoli macchina-verificabili "
-                f"sono rispettati.{note}",
+                f"Tutti i {checked} vincoli macchina-verificabili sono rispettati.{note}",
                 confidence=0.7 if unchecked else 1.0,
                 evidence=evidence,
             )

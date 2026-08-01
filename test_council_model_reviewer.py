@@ -161,6 +161,21 @@ class TestParsing:
         assert extract_json("") is None
         assert extract_json("[1,2,3]") is None      # solo oggetti
 
+    def test_due_oggetti_json_prende_il_primo_valido(self):
+        # Una regex greedy prenderebbe dal primo '{' all'ultimo '}' e fallirebbe.
+        raw = 'Prima: {"verdict": "pass", "reasoning": "ok"} Poi: {"altro": 1}'
+        assert extract_json(raw)["verdict"] == "pass"
+
+    def test_graffe_dentro_le_stringhe_non_confondono(self):
+        raw = '{"verdict": "fail", "reasoning": "il dict {a: 1} e\' sbagliato"}'
+        data = extract_json(raw)
+        assert data["verdict"] == "fail"
+        assert "{a: 1}" in data["reasoning"]
+
+    def test_json_annidato(self):
+        raw = 'testo {"verdict": "pass", "reasoning": "ok", "meta": {"n": 1}} coda'
+        assert extract_json(raw)["meta"]["n"] == 1
+
     def test_confidence_fuori_range_viene_normalizzata(self):
         v = _reviewer(_reply(confidence=42)).review(_packet(), AXIS_CONCEPT)
         assert v.confidence == 1.0
@@ -196,6 +211,28 @@ class TestPrompt:
         blob = json.dumps(r.calls[0])
         assert "known_reviews" not in blob
         assert "verified_success" not in blob
+
+    def test_avviso_anti_anchoring_sull_esito_meccanico(self):
+        # L'esito del gate e' un dato, non un giudizio: il reviewer non deve
+        # allinearsi per inerzia (falserebbe anche il confronto tra modelli).
+        r = _reviewer(_reply())
+        r.review(_packet(), AXIS_CONCEPT)
+        system = r.calls[0][0]["content"].lower()
+        assert "non allinearti" in system
+        assert "dato, non un giudizio" in system
+
+    def test_esito_meccanico_puo_essere_nascosto_del_tutto(self):
+        chat_calls = []
+
+        def chat(messages):
+            chat_calls.append(messages)
+            return _reply()
+
+        r = LocalModelReviewer(chat, _spec(), include_mechanical_status=False)
+        packet = _packet()
+        packet.attempt["status"] = "auto_success"
+        r.review(packet, AXIS_CONCEPT)
+        assert "auto_success" not in chat_calls[0][1]["content"]
 
     def test_campi_lunghi_troncati(self):
         packet = _packet()
