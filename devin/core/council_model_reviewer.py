@@ -51,7 +51,6 @@ from devin.core.council import (
 # `chat(messages) -> str | None`
 ChatFn = Callable[[List[Dict[str, str]]], Optional[str]]
 
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 _FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.MULTILINE)
 
 MAX_FIELD_CHARS = 4000       # tetto difensivo sul contesto speso per campo

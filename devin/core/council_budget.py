@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from devin.core.council import ReviewVerdict
-from devin.core.council_router import Assignment, RoutingPlan
+from devin.core.council_router import RoutingPlan
 
 # motivi di degrado (finiscono nella provenance)
 DEGRADED_BUDGET_TOTAL = "budget_totale_esaurito"
