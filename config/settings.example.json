@@ -109,6 +109,11 @@
     "fetch_note": "2026-07-10: oltre agli snippet, scarica il CONTENUTO dei primi N risultati (User-Agent browser + estrazione testo stdlib, vedi web_search.py). Siti JS-only restituiscono poco: per quelli servira' Playwright/browser headless (futuro, meglio sul rig).",
     "note": "Default pragmatico su TinyFish (key già disponibile via env var). SearXNG (porta 8081, non 8888: corretto, vedi ai-rig-iso-build/templates/hermes-extras.sh.tmpl) gira SOLO quando il rig è avviato nel ruolo 'hermes' — con DEVIN AI IDE il rig è normalmente in ruolo 'devin', quindi searxng_url qui sopra è raggiungibile solo se hai fatto grub-reboot verso hermes apposta. In pratica: resta su 'tinyfish' per l'uso quotidiano di DEVIN; passa a 'searxng' solo per sessioni in cui sai di aver spostato il rig sul ruolo hermes. Swap richiede solo il cambio di questo campo, vedi devin/ai/web_search.py."
   },
+  "council": {
+    "_comment": "Federated Evidence Council. Senza model_reviewers gira SOLO il reviewer deterministico: nessun modello, nessuna VRAM. strict_coverage=true significa che un asse con vincoli non verificabili resta 'needs_evidence' invece di essere dichiarato pass. ATTENZIONE: in model_reviewers la 'family' deve seguire il MODELLO, non il ruolo — se cambi modello lasciando la vecchia family, la regola no-duplicati-di-famiglia smette di proteggere dagli errori correlati senza dare errori.",
+    "strict_coverage": true,
+    "model_reviewers": []
+  },
   "understory": {
     "enabled": true,
     "url": "http://127.0.0.1:3810",

@@ -175,6 +175,7 @@ from devin.ui.routers.diff import router as diff_router
 from devin.ui.routers.autocomplete import router as autocomplete_router
 from devin.ui.routers.plan_terminal import router as plan_terminal_router
 from devin.ui.routers.goal import router as goal_router
+from devin.ui.routers.council import router as council_router
 from devin.ui.routers.pages import (
     router as pages_router,
     # Re-export shim: i test chiamano fast_app.codex_app_page(...).
@@ -234,6 +235,7 @@ app.include_router(diff_router)
 app.include_router(autocomplete_router)
 app.include_router(plan_terminal_router)
 app.include_router(goal_router)
+app.include_router(council_router)
 app.include_router(pages_router)
 app.include_router(projects_router)
 app.include_router(runs_read_router)
