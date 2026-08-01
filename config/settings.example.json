@@ -109,6 +109,12 @@
     "fetch_note": "2026-07-10: oltre agli snippet, scarica il CONTENUTO dei primi N risultati (User-Agent browser + estrazione testo stdlib, vedi web_search.py). Siti JS-only restituiscono poco: per quelli servira' Playwright/browser headless (futuro, meglio sul rig).",
     "note": "Default pragmatico su TinyFish (key già disponibile via env var). SearXNG (porta 8081, non 8888: corretto, vedi ai-rig-iso-build/templates/hermes-extras.sh.tmpl) gira SOLO quando il rig è avviato nel ruolo 'hermes' — con DEVIN AI IDE il rig è normalmente in ruolo 'devin', quindi searxng_url qui sopra è raggiungibile solo se hai fatto grub-reboot verso hermes apposta. In pratica: resta su 'tinyfish' per l'uso quotidiano di DEVIN; passa a 'searxng' solo per sessioni in cui sai di aver spostato il rig sul ruolo hermes. Swap richiede solo il cambio di questo campo, vedi devin/ai/web_search.py."
   },
+  "mcp": {
+    "_comment": "Server MCP esterni. SPENTO di default: aggiungere un server allarga la superficie di prompt-injection del loop, quindi e' una decisione esplicita dell'operatore. allowed_tools e' deny-by-default: scoprire un tool NON autorizza a usarlo, si abilita solo cio' che serve. I server stdio (npx/uvx) non si attaccano direttamente: vanno esposti in HTTP con un bridge (mcpo/supergateway). Vedi docs/devin_mcp-integration-notes_v1.md.",
+    "enabled": false,
+    "max_calls_per_run": 10,
+    "servers": []
+  },
   "understory": {
     "enabled": true,
     "url": "http://127.0.0.1:3810",
