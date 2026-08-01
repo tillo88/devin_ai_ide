@@ -153,6 +153,13 @@ class ReviewPacket:
     attempt: Dict[str, Any] = field(default_factory=dict)
     result: Dict[str, Any] = field(default_factory=dict)
     project_path: str = ""
+    # Evidenza REGISTRATA al momento del run (validators + quality gate). Quando
+    # c'e', ha la precedenza sulla ri-esecuzione: il workspace puo' essere
+    # cambiato dopo, e ri-derivare i controlli darebbe una risposta diversa da
+    # quella che descriveva davvero l'attempt. Stessa regola degli archivi di
+    # calibrazione: l'evidenza e' immutabile, non si ricostruisce a posteriori.
+    validation: Dict[str, Any] = field(default_factory=dict)
+    quality_gate: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not str(self.packet_id).strip():
@@ -296,16 +303,21 @@ class LocalDeterministicReviewer(ReviewerAdapter):
 
     # --- asse 3: aderenza ai vincoli -------------------------------------
     def _review_constraints(self, packet: ReviewPacket) -> ReviewVerdict:
-        if not packet.has_execution_evidence():
-            return self._verdict(
-                AXIS_CONSTRAINTS,
-                VERDICT_NEEDS_EVIDENCE,
-                "Evidenza d'esecuzione assente (quality gate e/o project_path): i controlli "
-                "deterministici non sono eseguibili. Assenza di controllo != conformita'.",
-                confidence=1.0,
-                proposed_experiment="Rieseguire l'attempt catturando quality_gate e files_written, poi rivalutare.",
-            )
-        validation = self._get_validate_case()(packet.case, packet.result, packet.project_path)
+        # 1) evidenza registrata al run (preferita: immutabile e fedele)
+        validation = packet.validation or {}
+        if not validation:
+            # 2) altrimenti ri-esegue, se il progetto e' ancora disponibile
+            if not packet.has_execution_evidence():
+                return self._verdict(
+                    AXIS_CONSTRAINTS,
+                    VERDICT_NEEDS_EVIDENCE,
+                    "Nessuna validazione registrata e nessuna evidenza d'esecuzione "
+                    "(quality gate e/o project_path): i controlli deterministici non sono "
+                    "eseguibili. Assenza di controllo != conformita'.",
+                    confidence=1.0,
+                    proposed_experiment="Rieseguire l'attempt catturando validators e quality_gate, poi rivalutare.",
+                )
+            validation = self._get_validate_case()(packet.case, packet.result, packet.project_path)
         overall = str(validation.get("overall") or "unknown")
         signals = validation.get("signals") or {}
         failed = [
@@ -381,6 +393,43 @@ class LocalDeterministicReviewer(ReviewerAdapter):
 
     # --- asse 4: sicurezza ------------------------------------------------
     def _review_security(self, packet: ReviewPacket) -> ReviewVerdict:
+        # 1) evidenza registrata al run: il gate salva gia' sia i finding sia
+        #    QUALE scanner ha girato ("bandit" o "assente"), quindi si puo'
+        #    distinguere "scansionato e pulito" da "mai scansionato".
+        gate = packet.quality_gate or {}
+        if gate:
+            scanner = str(gate.get("security_scanner") or "").strip().lower()
+            findings = [str(w) for w in (gate.get("security_warnings") or [])]
+            if scanner in ("", "assente", "none"):
+                return self._verdict(
+                    AXIS_SECURITY, VERDICT_NEEDS_EVIDENCE,
+                    "Al momento del run nessuno scanner di sicurezza era attivo "
+                    f"(security_scanner={scanner or 'non registrato'!r}): nessun finding, "
+                    "ma il silenzio non e' prova di pulizia.",
+                    evidence={"scanner": scanner or "non registrato", "recorded": True},
+                    proposed_experiment="Installare lo scanner e rieseguire l'attempt, poi rivalutare.",
+                )
+            if findings:
+                return self._verdict(
+                    AXIS_SECURITY, VERDICT_NEEDS_EVIDENCE,
+                    f"{len(findings)} finding di sicurezza registrati al run da {scanner!r}. "
+                    "I linter hanno falsi positivi: serve un reviewer semantico o umano.",
+                    violations=findings, confidence=0.6,
+                    evidence={"scanner": scanner, "findings": len(findings), "recorded": True},
+                    proposed_experiment=(
+                        "Per ogni finding, un test che dimostri lo sfruttamento reale "
+                        "(o la sua impossibilita') nel contesto del progetto."
+                    ),
+                )
+            return self._verdict(
+                AXIS_SECURITY, VERDICT_PASS,
+                f"Scansione {scanner!r} eseguita al momento del run: nessun finding. "
+                "Copertura limitata ai pattern noti dello scanner.",
+                confidence=0.8,
+                evidence={"scanner": scanner, "findings": 0, "recorded": True},
+            )
+
+        # 2) nessuna evidenza registrata: scansione live, se possibile
         if not packet.has_execution_evidence():
             return self._verdict(
                 AXIS_SECURITY,
