@@ -172,7 +172,13 @@ locale, stop solo del backend avviato dall'app).
 
 ---
 
-## 7. Stato attuale verificato (al 2026-07-23)
+## 7. Stato attuale verificato (al 2026-07-23) — ⚠️ SUPERATO
+
+> **Questa sezione e' ferma al 2026-07-23.** Lo stato aggiornato (Council
+> completo, client MCP, branch aperti, interlock PR#6 **mergiato**, divergenza
+> del repo) e' in **`docs/DEVIN_AI_IDE_CONTINUITY_2026-08-01.md`**, che ha la
+> precedenza. Per tutto cio' che riguarda il rig, la fonte e' il repo operativo
+> `ai-rig-ops`, molto piu' aggiornato di qualunque copia locale.
 - Suite: cresciuta 419 -> 421 -> 429 -> 454 -> **466 passed** (piu' i nostri test Goal Mode, 53, in sandbox). Windows nativo `.venv-win` Python 3.13; sandbox Linux Python 3.10/3.12; rig Python 3.12 (`.venv-rig`).
 - Windows-native milestone raggiunta; installer .msi/.exe prodotti; exe backend ~350MB verificato.
 - Context Steward CS0-CS3 in produzione.
@@ -196,6 +202,11 @@ locale, stop solo del backend avviato dall'app).
 ---
 
 ## 9. Fonti canoniche (leggere PRIMA di ri-derivare)
+- **`ai-rig-ops`** (repo operativo privato) — **precedenza assoluta su tutto cio'
+  che riguarda il rig**: runbook, addenda, evidence, snapshot. Molto piu'
+  aggiornato di qualunque copia locale.
+- `docs/DEVIN_AI_IDE_CONTINUITY_2026-08-01.md` — **stato piu' recente**: Council,
+  MCP, branch aperti, trappole, divergenza del repo.
 - `docs/INDEX.md` — mappa doc; i `CONTINUITY_*` sono la verita' operativa.
 - `DEVIN_AI_IDE_CONTINUITY_2026-07-20.md` — **roadmap P0-P9 + Council** (canonica).
 - `DEVIN_AI_IDE_CONTINUITY_2026-07-21.md` — migrazione Windows, packaging, Context Steward, architettura rig-first.
