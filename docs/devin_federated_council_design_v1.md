@@ -93,8 +93,17 @@ review(packet, axis) -> ReviewVerdict {
 }
 ```
 Implementazioni: `LocalDeterministicReviewer` (wrappa validators/security_critic
-per assi 3-4), `LocalModelReviewer` (TEACHER sul rig), `ExternalReviewer`
-(OpenAI/Claude, con redazione+consenso). Mappabile su `TrainingReviewDecision`.
+per assi 3-4) **FATTA**, `LocalModelReviewer` (modello locale, assi semantici)
+**FATTA**, `ExternalReviewer` (OpenAI/Claude, con redazione+consenso) da fare.
+Mappabile su `TrainingReviewDecision`.
+
+> **Nessun modello e' hardcodato** (`council_model_reviewer.py`). Il modello
+> operativo e' un *placeholder* finche' la Model Evaluation Suite non sceglie il
+> candidato, quindi: `chat` iniettata, identita' del modello **registrata a ogni
+> review** nella provenance (`evidence.model`), e `family` presa dalla config.
+> Attenzione operativa: **la `family` segue il MODELLO, non il ruolo** — se si
+> cambia modello lasciando la vecchia family, la regola no-duplicati-di-famiglia
+> smette di proteggere dagli errori correlati **in silenzio**.
 
 ### 4.2 CouncilRouter
 Dato il caso + la criticita', sceglie i reviewer per **copertura degli assi**:
