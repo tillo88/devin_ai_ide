@@ -80,6 +80,7 @@ app = FastAPI(title="DEVIN AI IDE")
 # comportamento precedente). Loopback sempre esente: la GUI desktop locale
 # resta senza token. Dettagli/threat model: devin/ui/token_gate.py.
 from devin.ui.token_gate import TokenGateMiddleware
+from devin.ui.runtime_bind import resolve_ui_bind
 app.add_middleware(TokenGateMiddleware)
 
 # CORS (app nativa 2026-07-22): la UI desktop e' bundlata nell'app Tauri
@@ -946,11 +947,11 @@ def run_server():
         _ui_cfg = json.loads(Path(CONFIG_PATH).read_text(encoding="utf-8")).get("ui", {})
     except Exception:
         _ui_cfg = {}
-    _host = _ui_cfg.get("host", "127.0.0.1")
+    _host, _port = resolve_ui_bind(_ui_cfg)
     if _host == "0.0.0.0":
         print("[SECURITY] UI esposta su tutta la rete (ui.host=0.0.0.0 in settings.json): "
               "assicurati di essere su una LAN fidata.")
-    config = uvicorn.Config(app, host=_host, port=int(_ui_cfg.get("port", 5000)),
+    config = uvicorn.Config(app, host=_host, port=_port,
                             log_level="info", timeout_graceful_shutdown=3)
     server = uvicorn.Server(config)
     try:
