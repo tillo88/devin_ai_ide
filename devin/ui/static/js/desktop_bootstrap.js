@@ -2,8 +2,9 @@
 //
 // L'app desktop usa SEMPRE il backend LOCALE sul PC: e' quello che legge i TUOI
 // file (un programma vede solo il disco della macchina su cui gira). L'inferenza
-// va poi al modello del rig (Ornith su 8080), gestita DENTRO il backend con
-// fallback al modello locale. Il backend sul rig (:5000) e' un'altra cosa: la
+// va poi allo slot DEVIN del rig tramite endpoint loopback/tunnel SSH, gestito
+// DENTRO il backend con routing fail-closed. Il backend sul rig (:5000) e'
+// un'altra cosa: la
 // web app raggiungibile da fuori per i progetti che stanno sul rig.
 //
 // Quindi qui: prova il backend locale; se non e' su, avvialo (leggero, niente
@@ -63,8 +64,8 @@ async function boot() {
   overlay('<div style="font-size:15px;">Connessione al backend DEVIN…</div>');
   if (await probe(LOCAL_BASE)) { await loadApp(LOCAL_BASE); return; }
 
-  // Backend locale non attivo: avvialo (e' leggero, legge i file; il modello
-  // locale parte solo come fallback se il rig e' giu').
+  // Backend locale non attivo: avvialo (e' leggero e legge i file; il modello
+  // resta sul rig e l'assenza dello slot DEVIN viene mostrata esplicitamente).
   overlay('<div style="font-size:15px;">Avvio del backend locale… (qualche secondo)</div>');
   try {
     const base = await tauriInvoke("start_local_backend");

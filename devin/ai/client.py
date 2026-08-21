@@ -4,6 +4,7 @@ import time
 import subprocess
 import requests
 from pathlib import Path
+from urllib.parse import urlparse
 
 try:
     from openai import OpenAI
@@ -14,9 +15,13 @@ except ImportError:
 # non alla CWD del processo. Prima era "config/settings.json" (relativo): se il
 # server veniva avviato da una directory diversa dalla root del progetto, il file
 # non veniva trovato. _load_config() cattura l'eccezione e ripiega silenziosamente
-# sui default (rig_host 192.168.1.100, ecc.) — comportamento "funzionante ma con
+# sui default (endpoint loopback, policy fail-closed) — comportamento "funzionante ma con
 # la config sbagliata", diagnosticabile solo dal print di warning in console.
 _DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parents[2] / "config" / "settings.json")
+
+
+class RigUnavailableError(RuntimeError):
+    """The required DEVIN model slot is not safely reachable."""
 
 
 class AIClient:
@@ -40,20 +45,64 @@ class AIClient:
     CIRCUIT_BREAKER_THRESHOLD = 3
     CIRCUIT_BREAKER_COOLDOWN = 60  # secondi
 
+    @staticmethod
+    def _bool_value(value, default=False):
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _validated_rig_base_url(value: str) -> str:
+        parsed = urlparse(str(value).rstrip("/"))
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError(
+                "DEVIN rig inference must use an HTTP loopback endpoint "
+                "(directly on the rig or through an SSH tunnel)"
+            )
+        try:
+            if parsed.port is None:
+                raise ValueError("DEVIN rig inference endpoint must declare a port")
+        except ValueError as exc:
+            raise ValueError("invalid DEVIN rig inference port") from exc
+        return str(value).rstrip("/")
+
     def __init__(self, config_path: str = _DEFAULT_CONFIG_PATH):
         # --- CARICA CONFIG ---
         self.config = self._load_config(config_path)
         models_cfg = self.config.get("models", {})
         local_cfg = models_cfg.get("local_models", {})
 
-        # RIG ESTERNO (progetto ai-rig-iso-build): UN SOLO llama-server attivo alla
-        # volta (ruolo DEVIN = Ornith 35B MoE self-scaffolding su porta 8080),
-        # niente split coder/reasoning su porte separate come ipotizzato prima —
-        # lo stesso modello serve entrambi i ruoli in un'unica istanza.
-        self.remote_host = os.getenv("DEVIN_REMOTE_HOST", models_cfg.get("rig_host", "192.168.1.100"))
-        rig_port = models_cfg.get("rig_port", 8080)
-        self.remote_coder_url = f"http://{self.remote_host}:{rig_port}/v1/chat/completions"
+        # Il model-slot del rig e' raggiungibile solo su loopback: direttamente
+        # dal backend sul rig oppure tramite un tunnel SSH dalla workstation.
+        # Il repository non contiene IP LAN, famiglia o nome del modello.
+        configured_base = os.getenv("DEVIN_RIG_BASE_URL") or models_cfg.get("rig_base_url")
+        if not configured_base:
+            remote_host = os.getenv("DEVIN_REMOTE_HOST") or models_cfg.get("rig_host", "127.0.0.1")
+            rig_port = os.getenv("DEVIN_REMOTE_PORT") or models_cfg.get("rig_port", 18081)
+            configured_base = f"http://{remote_host}:{rig_port}"
+        self.remote_base_url = self._validated_rig_base_url(configured_base)
+        self.remote_host = urlparse(self.remote_base_url).hostname or "127.0.0.1"
+        self.remote_coder_url = f"{self.remote_base_url}/v1/chat/completions"
         self.remote_reasoning_url = self.remote_coder_url  # stesso endpoint, stesso modello
+
+        env_rig_required = os.getenv("DEVIN_RIG_REQUIRED")
+        self.rig_required = self._bool_value(
+            env_rig_required if env_rig_required is not None else models_cfg.get("rig_required"),
+            default=True,
+        )
+        self.allow_local_fallback = self._bool_value(
+            models_cfg.get("allow_local_fallback"), default=False
+        ) and not self.rig_required
 
         # Token opzionale per il model server del rig (llama.cpp --api-key).
         # Se presente (env DEVIN_RIG_API_KEY > settings models.rig_api_key), viene
@@ -63,63 +112,54 @@ class AIClient:
 
         # WOL config
         self.rig_mac = models_cfg.get("rig_mac", self.WOL_MAC_FALLBACK)
-        self.wol_enabled = models_cfg.get("wol_enabled", True)
+        self.wol_enabled = models_cfg.get("wol_enabled", False)
         self.wol_port = models_cfg.get("wol_port", 9)
         self.wol_throttle_seconds = models_cfg.get("wol_throttle_seconds", 300)  # 5 min
 
-        # WOL ha senso in UN SOLO scenario: DEVIN sul PC che usa un rig REMOTO
-        # separato, da accendere su richiesta. Va disattivato quando:
-        # - rig_self_hosted: DEVIN gira SUL rig (localhost:8080) — svegliare se
-        #   stessi via WOL e' assurdo;
-        # - local_test_mode: il rig non esiste ancora, aspettarlo 90s ad ogni
-        #   avvio e' solo tempo perso.
+        # Compatibilita' UI/config: il routing modello non dipende piu' da
+        # rig_self_hosted. Il solo endpoint ammesso e' loopback, quindi WOL non
+        # puo' rendere disponibile da solo la destinazione (serve il tunnel).
         self.rig_self_hosted = models_cfg.get("rig_self_hosted", False)
         local_test_mode = models_cfg.get("local_test_mode", False)
-        if self.rig_self_hosted or local_test_mode:
+        if self.rig_self_hosted or local_test_mode or self.remote_host in {"127.0.0.1", "localhost", "::1"}:
             self.wol_enabled = False
 
         # Circuit Breaker config
         self.circuit_breaker_enabled = models_cfg.get("rig_circuit_breaker", {}).get("enabled", True)
 
-        # MODELLO REMOTO (rig) - un solo nome, usato sia per coder che reasoning
-        rig_models = models_cfg.get("rig_models", {})
-        unified_model = rig_models.get("unified", "ornith-1.0-35b-a3b")
-        self.remote_reasoning_model = unified_model
-        self.remote_coder_model = unified_model
+        # Il nome remoto non e' configurabile qui: deve provenire dall'unico ID
+        # realmente servito da /v1/models dopo che il broker ha attivato DEVIN.
+        self.remote_reasoning_model = None
+        self.remote_coder_model = None
 
-        # ENDPOINT LOCALI (fallback) — invariati: il PC locale ha davvero 2 modelli
-        # separati (coder 7B + reasoning MoE/dense), a differenza del rig.
+        # Endpoint locali disponibili soltanto per test/sviluppo con doppio opt-in.
+        # Nessun nome o artifact di modello viene fornito come default.
         self.local_coder_url = "http://localhost:8000/v1/chat/completions"
         self.local_reasoning_url = "http://localhost:8001/v1/chat/completions"
 
-        # MODELLI LOCALI - dai nomi file GGUF nel config
+        # Eventuali ID locali appartengono a una configurazione di sviluppo
+        # esplicita e non fanno parte del profilo operativo DEVIN.
         reasoning_cfg = local_cfg.get("reasoning", {}) or {}
         coder_cfg = local_cfg.get("coder", {}) or {}
-
-        # FIX (bug segnalato in test locale, 2026-07-04): usare `.get(key) or default` invece di
-        # `.get(key, default)`. Se la chiave "file" esiste nel JSON con valore esplicito null
-        # (es. per marcare "nessun modello reasoning locale di default"), `.get(key, default)`
-        # ritorna comunque None -> Path(None).stem esplode con TypeError all'avvio di ogni
-        # richiesta HTTP (perche' _get_ai_client() istanzia AIClient() lazy). `.get(key) or default`
-        # copre sia chiave assente SIA chiave presente-ma-null, senza dipendere da cosa scrive
-        # settings.json in un dato momento (difesa anche se qualcuno rimette null in futuro).
-        self.local_reasoning_model = self._extract_model_name(
-            reasoning_cfg.get("file") or "qwen3-14b-q4_k_m.gguf"
+        self.local_reasoning_model = str(
+            reasoning_cfg.get("model_id")
+            or self._extract_model_name(reasoning_cfg.get("file"))
+            or "local-reasoning"
         )
-        self.local_coder_model = self._extract_model_name(
-            coder_cfg.get("file") or "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+        self.local_coder_model = str(
+            coder_cfg.get("model_id")
+            or self._extract_model_name(coder_cfg.get("file"))
+            or "local-coder"
         )
 
         # OPENAI fallback
-        self.use_openai = bool(os.getenv("OPENAI_API_KEY"))
+        self.use_openai = bool(os.getenv("OPENAI_API_KEY")) and not self.rig_required
         self.openai = None
         if self.use_openai and OpenAI:
             self.openai = OpenAI()
 
-        # Modello REALE servito dal rig, scoperto da /v1/models (future-proof
-        # 2026-07-22): NON hardcodare Ornith. Se sul rig cambia il modello,
-        # DEVIN usa quello effettivamente caricato senza toccare il config.
-        # Il nome in config (rig_models.unified) resta solo come fallback/hint.
+        # Modello REALE servito dal rig, scoperto da /v1/models. Non esiste un
+        # hint/fallback di nome: inventario ambiguo o assente chiude il routing.
         self.remote_model_actual = None
 
         # Stato connessioni
@@ -150,16 +190,11 @@ class AIClient:
 
     def _extract_model_name(self, filename) -> str:
         """
-        Estrae un nome modello pulito dal filename GGUF.
-        Es: 'qwen2.5-coder-7b-instruct-q4_k_m.gguf' -> 'qwen2.5-coder-7b-instruct'
-            'Qwen3.5-14B-A3B-Claude-Opus-Reasoning-Distilled-4.6-MXFP4_MOE.gguf' -> 'qwen3.5-14b-a3b'
-
-        FIX difensivo: filename puo' arrivare None se una config a monte ha un bug
-        (vedi nota nel chiamante). Non deve mai far crashare l'AIClient all'avvio.
+        Estrae un ID da un eventuale filename GGUF configurato esplicitamente
+        per sviluppo. Nessuna famiglia o artifact e' implicita nel client.
         """
         if not filename:
-            print("[AIClient] WARNING: _extract_model_name ricevuto filename vuoto/None, uso placeholder")
-            filename = "unknown-model.gguf"
+            return ""
 
         name = Path(filename).stem  # rimuovi .gguf
 
@@ -331,11 +366,12 @@ class AIClient:
                         self._circuit_breaker_record_success()
 
         if self.remote_coder_ok and self.remote_reasoning_ok:
-            print(f"Rig esterno OK su {self.remote_host} -- uso modelli 32B")
+            print(f"Rig DEVIN disponibile su {self.remote_base_url} -- model ID scoperto dinamicamente")
         elif self.remote_coder_ok or self.remote_reasoning_ok:
             print(f"Rig parziale: coder={self.remote_coder_ok}, reasoning={self.remote_reasoning_ok}")
         else:
-            print(f"Rig non disponibile -- fallback su modelli locali")
+            policy = "fail-closed" if self.rig_required else "fallback locale esplicito"
+            print(f"Rig DEVIN non disponibile -- policy {policy}")
 
     def _health_check(self, url):
         """Ping rapido (2s) a /v1/models."""
@@ -344,37 +380,37 @@ class AIClient:
             r = requests.get(f"{base}/v1/models", timeout=2, headers=self._auth_headers(url))
             if r.status_code != 200:
                 return False
-            # Scopri il modello realmente servito (future-proof: model-agnostic).
-            if self.remote_host in url:
-                self.remote_model_actual = self._parse_served_model(r) or self.remote_model_actual
+            if self._is_remote_url(url):
+                discovered = self._parse_served_model(r)
+                if not discovered:
+                    self.remote_model_actual = None
+                    return False
+                self.remote_model_actual = discovered
             return True
         except Exception:
             return False
 
     @staticmethod
     def _parse_served_model(response):
-        """Estrae il nome del modello servito da /v1/models (formato OpenAI
-        `data[].id`, con fallback allo stile ollama `models[].name`)."""
+        """Richiede esattamente un ID non vuoto nell'inventario OpenAI."""
         try:
             payload = response.json()
         except Exception:
             return None
         data = payload.get("data")
-        if isinstance(data, list) and data and isinstance(data[0], dict):
-            mid = data[0].get("id")
-            if mid:
-                return str(mid)
-        models = payload.get("models")
-        if isinstance(models, list) and models and isinstance(models[0], dict):
-            name = models[0].get("name") or models[0].get("model")
-            if name:
-                return str(name)
-        return None
+        ids = [
+            item.get("id").strip()
+            for item in data
+            if isinstance(item, dict)
+            and isinstance(item.get("id"), str)
+            and item.get("id").strip()
+        ] if isinstance(data, list) else []
+        return ids[0] if len(ids) == 1 else None
 
-    def _remote_model_name(self, fallback):
-        """Nome modello da usare verso il rig: quello scoperto se disponibile,
-        altrimenti il valore di config (hint)."""
-        return self.remote_model_actual or fallback
+    def _remote_model_name(self):
+        if not self.remote_model_actual:
+            raise RigUnavailableError("DEVIN model ID non risolto da /v1/models")
+        return self.remote_model_actual
 
     def health(self):
         """Restituisce stato salute connessioni."""
@@ -382,6 +418,9 @@ class AIClient:
             "remote_coder": self.remote_coder_ok,
             "remote_reasoning": self.remote_reasoning_ok,
             "remote_host": self.remote_host,
+            "remote_base_url": self.remote_base_url,
+            "remote_model": self.remote_model_actual,
+            "routing_policy": "rig_required" if self.rig_required else "explicit_local_fallback",
             "openai": self.use_openai,
             "rig_awakened": self._rig_was_awakened,
             "circuit_breaker": {
@@ -392,35 +431,35 @@ class AIClient:
             }
         }
 
+    def _is_remote_url(self, url):
+        return str(url).startswith(self.remote_base_url + "/")
+
     def _auth_headers(self, url):
         """Authorization Bearer per l'endpoint del modello del rig, se il token
         e' configurato e l'URL e' remoto. Le richieste locali non lo ricevono."""
-        if self.rig_api_key and self.remote_host in url:
+        if self.rig_api_key and self._is_remote_url(url):
             return {"Authorization": f"Bearer {self.rig_api_key}"}
         return {}
 
     def _get_endpoints(self, mode="reasoning"):
         """Seleziona URL e modello in base a disponibilita rig.
 
-        Routing robusto (2026-07-22): quando DEVIN gira SUL rig
-        (rig_self_hosted=true) il modello E' quello remoto (Ornith su 8080) —
-        non esiste un modello locale separato. In quel caso si usa SEMPRE
-        l'endpoint remoto: niente fallback silenzioso su un eventuale
-        localhost:8000 (che sarebbe il modello sbagliato). Se Ornith e' giu',
-        la richiesta fallisce in modo esplicito invece di rispondere col
-        modello sbagliato."""
-        if self.rig_self_hosted:
-            if mode == "reasoning":
-                return self.remote_reasoning_url, self._remote_model_name(self.remote_reasoning_model)
-            return self.remote_coder_url, self._remote_model_name(self.remote_coder_model)
+        Per default il rig e' obbligatorio. Un fallback locale esiste soltanto
+        quando `rig_required=false` E `allow_local_fallback=true` sono entrambi
+        dichiarati; non viene mai selezionato implicitamente."""
         if mode == "reasoning":
             if self.remote_reasoning_ok:
-                return self.remote_reasoning_url, self._remote_model_name(self.remote_reasoning_model)
-            return self.local_reasoning_url, self.local_reasoning_model
+                return self.remote_reasoning_url, self._remote_model_name()
+            if self.allow_local_fallback:
+                return self.local_reasoning_url, self.local_reasoning_model
         else:
             if self.remote_coder_ok:
-                return self.remote_coder_url, self._remote_model_name(self.remote_coder_model)
-            return self.local_coder_url, self.local_coder_model
+                return self.remote_coder_url, self._remote_model_name()
+            if self.allow_local_fallback:
+                return self.local_coder_url, self.local_coder_model
+        raise RigUnavailableError(
+            "slot DEVIN non disponibile: attiva il ruolo tramite broker e verifica il tunnel loopback"
+        )
 
     # ============================================================
     # TASK 12: RETRY CON BACKOFF ESPONENZIALE (COMPLETO)
@@ -443,7 +482,7 @@ class AIClient:
 
     def _record_rig_failure(self, url: str):
         """Registra un fallimento del rig se l'URL è remoto."""
-        if self.remote_host in url:
+        if self._is_remote_url(url):
             self._circuit_breaker_record_failure()
 
     def local(self, messages, mode="reasoning", timeout=None):
@@ -457,8 +496,9 @@ class AIClient:
         last_exception = None
 
         for attempt in range(self.MAX_RETRIES):
-            url, model = self._get_endpoints(mode)
+            url = ""
             try:
+                url, model = self._get_endpoints(mode)
                 print(f"[AIClient] POST {url} (mode={mode}, model={model}, timeout={timeout}s, attempt={attempt+1}/{self.MAX_RETRIES})")
                 r = requests.post(
                     url,
@@ -475,11 +515,14 @@ class AIClient:
                 content = data["choices"][0]["message"]["content"]
 
                 # Successo: registra per circuit breaker
-                if self.remote_host in url:
+                if self._is_remote_url(url):
                     self._circuit_breaker_record_success()
 
                 return content
 
+            except RigUnavailableError as e:
+                print(f"[AIClient] Routing fail-closed: {e}")
+                return None
             except Exception as e:
                 last_exception = f"{type(e).__name__}: {e}"
                 print(f"[AIClient] {last_exception} (mode={mode})")
@@ -490,7 +533,8 @@ class AIClient:
                     break
 
                 # Registra fallimento rig per circuit breaker
-                self._record_rig_failure(url)
+                if url:
+                    self._record_rig_failure(url)
 
                 # Backoff esponenziale prima di retry
                 if attempt < self.MAX_RETRIES - 1:
@@ -523,10 +567,10 @@ class AIClient:
             return None
 
     def ask(self, messages, mode="reasoning"):
-        """Entry point unico: rig -> locale -> cloud."""
+        """Entry point unico: rig richiesto, fallback solo se opt-in esplicito."""
         result = self.local(messages, mode=mode)
 
-        if result is None and self.use_openai:
+        if result is None and self.use_openai and not self.rig_required:
             print("Fallback su OpenAI...")
             result = self.cloud(messages)
 
@@ -549,9 +593,8 @@ class AIClient:
                 print(f"Errore OpenAI: {e}")
                 return None
 
-        url, model = self._get_endpoints(mode)
-
         try:
+            url, model = self._get_endpoints(mode)
             r = requests.post(
                 url,
                 json={
@@ -576,9 +619,9 @@ class AIClient:
         Streaming token-by-token -- con retry e backoff.
         """
         for attempt in range(self.MAX_RETRIES):
-            url, model = self._get_endpoints(mode)
-
+            url = ""
             try:
+                url, model = self._get_endpoints(mode)
                 with requests.post(
                     url,
                     json={
@@ -604,7 +647,7 @@ class AIClient:
                             pass
                         print(f"[AIClient] {mode} HTTP {r.status_code} — richiesta rifiutata dal server: {body}")
                         looks_like_ctx = any(k in body.lower() for k in ("context", "exceed", "n_ctx", "too long", "token"))
-                        hint = ("Contesto troppo lungo per il modello locale: spegni il 🌐 web search "
+                        hint = ("Contesto troppo lungo per il modello DEVIN: spegni il 🌐 web search "
                                 "o inizia una nuova conversazione." if (looks_like_ctx or r.status_code == 400)
                                 else "")
                         yield f"\n[Richiesta rifiutata dal modello (HTTP {r.status_code}). {hint} Dettaglio server: {body[:200]}]"
@@ -631,11 +674,15 @@ class AIClient:
                         except json.JSONDecodeError:
                             continue
 
+            except RigUnavailableError as e:
+                yield f"\n[Slot DEVIN non disponibile: {e}]"
+                return
             except Exception as e:
                 print(f"[AIClient] Stream error {mode} (attempt {attempt+1}/{self.MAX_RETRIES}): {e}")
 
                 # Registra fallimento per circuit breaker
-                self._record_rig_failure(url)
+                if url:
+                    self._record_rig_failure(url)
 
                 if attempt < self.MAX_RETRIES - 1:
                     backoff = self.BASE_BACKOFF * (2 ** attempt)

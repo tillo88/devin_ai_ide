@@ -6,9 +6,9 @@
 //   legge i FILE del PC (un processo vede solo il disco della sua macchina).
 //   Il bootstrap del frontend prova il backend locale e, se non e' attivo,
 //   chiama start_local_backend qui sotto per avviarlo (leggero, niente VRAM);
-// - l'inferenza va al modello del rig (Ornith), gestita DENTRO il backend con
-//   fallback al modello locale: la scelta rig-vs-locale riguarda il MODELLO,
-//   non il backend;
+// - l'inferenza va allo slot DEVIN del rig, raggiunto solo via loopback
+//   (diretto sul rig o tunnel SSH). Il backend scopre il singolo model ID e
+//   fallisce chiuso: non sceglie un modello locale/cloud in silenzio;
 // - il backend sul rig (:5000) e' un'altra cosa: la web app da fuori per i
 //   progetti che stanno sul rig.
 
