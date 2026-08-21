@@ -508,35 +508,25 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert package["scripts"]["desktop:dev"] == "node_modules\\\\.bin\\\\tauri.cmd dev"
     assert package["scripts"]["desktop:build"] == "node_modules\\\\.bin\\\\tauri.cmd build"
     assert package["scripts"]["desktop:info"] == "node_modules\\\\.bin\\\\tauri.cmd info"
-    assert package["scripts"]["desktop:launch"].endswith("./scripts/devin-tauri-dev.ps1")
-    assert package["scripts"]["backend:headless"].endswith("./scripts/devin-tauri-dev.ps1 -SkipTauri")
     assert package["scripts"]["desktop:preflight"].endswith("./scripts/check-tauri-env.ps1")
-    assert package["scripts"]["desktop:open"].endswith("./scripts/devin-tauri-dev.ps1 -BrowserFallback")
-    assert package["scripts"]["desktop:windows-host"].endswith("./scripts/launch-windows-desktop-host.ps1 -BrowserFallback")
+    assert package["scripts"]["desktop:windows-host"].endswith("./scripts/launch-windows-desktop-host.ps1")
     assert package["scripts"]["desktop:prepare-host"].endswith("./scripts/prepare-windows-desktop-host.ps1")
+    assert package["scripts"]["desktop:configure"].endswith("./scripts/configure-windows-desktop.ps1")
     assert package["scripts"]["desktop:windows-info"].endswith("./scripts/launch-windows-desktop-host.ps1 -Info -SkipNpmInstall")
     assert Path("scripts/run-tauri-desktop.ps1").exists()
     assert Path("scripts/DEVIN Desktop.cmd").exists()
     assert Path("scripts/prepare-windows-desktop-host.ps1").exists()
     assert Path("scripts/launch-windows-desktop-host.ps1").exists()
-    assert Path("scripts/start-fastapi-headless.sh").exists()
+    assert Path("scripts/configure-windows-desktop.ps1").exists()
     assert Path("src-tauri/icons/icon.ico").exists()
 
-    launcher = Path("scripts/devin-tauri-dev.ps1").read_text(encoding="utf-8")
-    start_script = Path("scripts/start-fastapi-headless.sh").read_text(encoding="utf-8")
     host_launcher = Path("scripts/launch-windows-desktop-host.ps1").read_text(encoding="utf-8")
     host_prepare = Path("scripts/prepare-windows-desktop-host.ps1").read_text(encoding="utf-8")
+    desktop_configure = Path("scripts/configure-windows-desktop.ps1").read_text(encoding="utf-8")
     desktop_cmd = Path("scripts/DEVIN Desktop.cmd").read_text(encoding="utf-8")
+    bootstrap = Path("devin/ui/static/js/desktop_bootstrap.js").read_text(encoding="utf-8")
+    main_rs = Path("src-tauri/src/main.rs").read_text(encoding="utf-8")
 
-    # 2026-07-16: il backend headless esporta l'opt-in per l'auto-stop alla
-    # chiusura della GUI (vedi /api/desktop/close_cleanup).
-    assert "venv/bin/python devin/ui/fast_app.py" in start_script
-    assert "DEVIN_DESKTOP_CLOSE_STOPS_BACKEND=1" in start_script
-    assert "logs/fast_app_headless.log" in launcher
-    assert "scripts/start-fastapi-headless.sh" in launcher
-    assert "-WindowStyle Hidden" in launcher
-    assert "--cd" in launcher
-    assert "Get-NpmCommand" in launcher
     assert "desktop-host" in host_launcher
     assert "$Info" in host_launcher
     assert "$tauriCommand = \"info\"" in host_launcher
@@ -547,47 +537,41 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert "tauri output follows" in host_launcher
     assert "& $node $tauriJs $tauriCommand" in host_launcher
     assert "prepare-windows-desktop-host.ps1" in host_launcher
+    assert "devin-tauri-dev.ps1" not in host_launcher
+    assert "127.0.0.1:5000" not in host_launcher
     assert "src-tauri" in host_prepare
     assert "package-lock.json" in host_prepare
-    assert "start-fastapi-headless.sh" in host_prepare
-    assert "DEVIN Desktop.cmd" in host_prepare
+    assert "start-fastapi-headless.sh" not in host_prepare
+    assert "configure-windows-desktop.ps1" in host_prepare
     assert "nativeLauncher" in host_prepare
+    assert "[Security.SecureString]$AccessToken" in desktop_configure
+    assert '"/inheritance:r"' in desktop_configure
     assert "prepare-windows-desktop-host.ps1" in desktop_cmd
     assert r"%LOCALAPPDATA%\DEVIN\DEVIN Desktop.cmd" in desktop_cmd
     assert "start """ in desktop_cmd
-    assert "/api/health" in launcher
+    assert 'tauriInvoke("connect_frontdoor")' in bootstrap
+    assert "connect_frontdoor" in main_rs
+    assert "DEVIN_FRONTDOOR_TOKEN" in main_rs
+    assert "start_local_backend" not in main_rs
+    assert "CloseRequested" not in main_rs
 
     html = Path("devin/ui/templates/codex_app.html").read_text(encoding="utf-8")
     css = Path("devin/ui/static/css/codex_app.css").read_text(encoding="utf-8")
     assert "topbar-command" in html
     assert "active-scope-label" in html
     assert "Modern desktop polish layer" in css
-    # App nativa (2026-07-22): la UI e' bundlata come file locali (frontendDist
-    # = "frontend"), non piu' servita dal backend via URL. La shell Rust scopre
-    # il backend (rig-first) e inietta l'API base; la finestra non ha piu' un
-    # `url` che punta al backend.
+    # The local bundle is only a protected connection screen. Rust then
+    # navigates the webview to the authenticated front door on the rig.
     assert config["build"]["frontendDist"] == "frontend"
     assert "devUrl" not in config["build"]
     assert "url" not in config["app"]["windows"][0]
+    assert "resources" not in config["bundle"]
     assert capability["permissions"] == ["core:default"]
-    assert "brownfield" in docs
-    assert "sidecar" in docs
-    assert "headless" in docs.lower()
+    assert "thin client" in docs
+    assert "front door" in docs
+    assert "%APPDATA%\\DEVIN\\desktop.json" in docs
     assert "DEVIN Desktop.cmd" in docs
     assert "Windows-native" in docs
-    main_rs = Path("src-tauri/src/main.rs").read_text(encoding="utf-8")
-    fast_app_text = Path("devin/ui/fast_app.py").read_text(encoding="utf-8")
-    models_desktop_text = Path("devin/ui/routers/models_desktop.py").read_text(encoding="utf-8")
-    status_text = Path("devin/ui/routers/status.py").read_text(encoding="utf-8")
-    assert "/api/desktop/close_cleanup" in main_rs
-    assert "CloseRequested" in main_rs
-    assert "CLOSE_CLEANUP_SENT" in main_rs
-    # close_cleanup vive nel router models_desktop, readiness nel router status
-    # (split plan fette 5-6); gli helper restano in fast_app.
-    assert "/api/desktop/close_cleanup" in models_desktop_text
-    assert "/api/desktop/readiness" in status_text
-    assert "_known_local_model_servers" in fast_app_text
-    assert "DEVIN_DESKTOP_CLOSE_KILLS_LOCAL_MODELS" in models_desktop_text
 
 
 

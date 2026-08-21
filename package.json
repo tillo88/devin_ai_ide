@@ -2,7 +2,7 @@
   "name": "devin-ai-ide-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "DEVIN AI IDE desktop wrapper for the local FastAPI workspace shell.",
+  "description": "DEVIN AI IDE desktop client for the authenticated rig front door.",
   "type": "module",
   "scripts": {
     "desktop:dev": "node_modules\\\\.bin\\\\tauri.cmd dev",
@@ -13,8 +13,9 @@
     "backend:headless": "powershell -ExecutionPolicy Bypass -File ./scripts/devin-tauri-dev.ps1 -SkipTauri",
     "desktop:preflight": "powershell -ExecutionPolicy Bypass -File ./scripts/check-tauri-env.ps1",
     "desktop:open": "powershell -ExecutionPolicy Bypass -File ./scripts/devin-tauri-dev.ps1 -BrowserFallback",
-    "desktop:windows-host": "powershell -ExecutionPolicy Bypass -File ./scripts/launch-windows-desktop-host.ps1 -BrowserFallback",
+    "desktop:windows-host": "powershell -ExecutionPolicy Bypass -File ./scripts/launch-windows-desktop-host.ps1",
     "desktop:prepare-host": "powershell -ExecutionPolicy Bypass -File ./scripts/prepare-windows-desktop-host.ps1",
+    "desktop:configure": "powershell -ExecutionPolicy Bypass -File ./scripts/configure-windows-desktop.ps1",
     "desktop:windows-info": "powershell -ExecutionPolicy Bypass -File ./scripts/launch-windows-desktop-host.ps1 -Info -SkipNpmInstall"
   },
   "devDependencies": {

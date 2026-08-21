@@ -15,8 +15,8 @@
 
 ## Desktop Wrapper
 
-### Tauri 2 brownfield shell
-**Purpose**: First desktop wrapper for DEVIN. The desktop window loads the already-tested workspace shell at `http://127.0.0.1:5000/app`.
+### Tauri 2 rig-frontdoor client
+**Purpose**: Windows-native thin client for the workspace shell served by the authenticated DEVIN front door on the rig.
 
 **Files**:
 - `package.json`
@@ -24,9 +24,10 @@
 - `src-tauri/Cargo.toml`
 - `src-tauri/src/main.rs`
 - `src-tauri/capabilities/default.json`
-- `scripts/devin-tauri-dev.ps1`
+- `scripts/configure-windows-desktop.ps1`
+- `scripts/launch-windows-desktop-host.ps1`
 
-**Current backend model**: FastAPI is started separately in WSL `Ubuntu`; sidecar startup is deferred to the next phase.
+**Current backend model**: FastAPI, workspaces, training jobs and model lifecycle stay on the rig. Rust reads `%APPDATA%\DEVIN\desktop.json`, validates the front-door URL/token and navigates the webview without exposing the token to JavaScript. No local backend or sidecar is started by the normal desktop launcher.
 
 ## Web/Tauri Shell Routes
 

@@ -79,7 +79,7 @@ if ($LASTEXITCODE -ge 8) {
 
 $hostScripts = Join-Path $HostDir "scripts"
 New-Item -ItemType Directory -Force -Path $hostScripts | Out-Null
-foreach ($scriptName in @("check-tauri-env.ps1", "devin-tauri-dev.ps1", "prepare-windows-desktop-host.ps1", "launch-windows-desktop-host.ps1", "start-fastapi-headless.sh")) {
+foreach ($scriptName in @("check-tauri-env.ps1", "configure-windows-desktop.ps1", "prepare-windows-desktop-host.ps1", "launch-windows-desktop-host.ps1")) {
     Copy-Item -LiteralPath (Join-Path (Join-Path $SourceRepo "scripts") $scriptName) -Destination (Join-Path $hostScripts $scriptName) -Force
 }
 
@@ -88,11 +88,11 @@ $nativeLauncher = Join-Path $nativeLauncherDir "DEVIN Desktop.cmd"
 $nativeLauncherContent = @"
 @echo off
 setlocal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\DEVIN\desktop-host\scripts\launch-windows-desktop-host.ps1" -SourceRepo "$SourceRepo" -HostDir "%LOCALAPPDATA%\DEVIN\desktop-host" -BrowserFallback
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LOCALAPPDATA%\DEVIN\desktop-host\scripts\launch-windows-desktop-host.ps1" -HostDir "%LOCALAPPDATA%\DEVIN\desktop-host"
 set EXITCODE=%ERRORLEVEL%
 if not "%EXITCODE%"=="0" (
   echo.
-  echo [DEVIN] Avvio desktop fallito. Controlla il backend log in WSL: /home/tillo/devin_ai_ide/logs/fast_app_headless.log
+  echo [DEVIN] Avvio desktop fallito. Controlla %%LOCALAPPDATA%%\DEVIN\logs\ e %%APPDATA%%\DEVIN\desktop.json
   pause
 )
 exit /b %EXITCODE%
@@ -107,7 +107,7 @@ $silentLauncher = Join-Path $nativeLauncherDir "DEVIN Desktop (silenzioso).vbs"
 $silentLauncherContent = @"
 ' DEVIN Desktop senza console. Log: %LOCALAPPDATA%\DEVIN\logs\ (desktop-launch.log, tauri-dev.log)
 Set sh = CreateObject("WScript.Shell")
-cmd = sh.ExpandEnvironmentStrings("powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""%LOCALAPPDATA%\DEVIN\desktop-host\scripts\launch-windows-desktop-host.ps1"" -SourceRepo ""$SourceRepo"" -HostDir ""%LOCALAPPDATA%\DEVIN\desktop-host"" -BrowserFallback -Silent")
+cmd = sh.ExpandEnvironmentStrings("powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""%LOCALAPPDATA%\DEVIN\desktop-host\scripts\launch-windows-desktop-host.ps1"" -HostDir ""%LOCALAPPDATA%\DEVIN\desktop-host"" -Silent")
 sh.Run cmd, 0, False
 "@
 Set-Content -LiteralPath $silentLauncher -Value $silentLauncherContent -Encoding ASCII

@@ -1,54 +1,57 @@
-# Roadmap — DEVIN come app Windows installabile (.exe/.msi)
+# Roadmap — DEVIN come app Windows installabile
 
-Obiettivo: doppio-click → app desktop, senza far gestire WSL/backend all'utente.
-Con **wizard al primo avvio**: "Hai un rig esterno?" → rig remoto (leggero) o
-tutto locale sullo stesso PC.
+Goal: double-click to open the DEVIN workspace while all backend, training and
+model work remains on the rig.
 
-## Decisione chiave (da fissare in FASE 0)
-Il backend FastAPI e' Python. Impacchettarlo con PyInstaller e' fattibile, ma le
-librerie ML pesanti (torch, ecc.) lo rendono enorme e fragile. Mitigazione:
-DUE profili, decisi dal wizard.
-- **Profilo RIG** (consigliato per Alessandro): il PC fa solo GUI + backend
-  LEGGERO che parla al rig via HTTP (:8080). NIENTE torch/llama locali → sidecar
-  piccolo e robusto. Tutta la potenza sta sul rig.
-- **Profilo LOCALE**: il backend serve anche i modelli in locale (llama-server
-  Windows + GGUF) → sidecar piu' pesante, dipendenze ML incluse.
-La stessa UI/UX; cambia solo cosa gira sotto.
+## Architecture decision
 
-## FASE 1 — Backend come sidecar (il pezzo tecnico centrale)
-- [ ] Snellire i requirements del backend per il profilo RIG (togliere torch/
-      sentence-transformers/crawl4ai dal bundle; restano fastapi, uvicorn,
-      requests, i client HTTP). Fallback keyword per il vector store senza ML.
-- [ ] PyInstaller → un exe Windows-native del backend (`devin-backend.exe`).
-- [ ] Test: l'exe parte standalone e serve `http://127.0.0.1:5000/app` SENZA WSL.
+The supported profile is rig-first and thin-client-only:
 
-## FASE 2 — Tauri avvia il sidecar
-- [ ] `src-tauri`: registrare `devin-backend.exe` come sidecar (externalBin);
-      avvio all'apertura, stop alla chiusura (riusa il close_cleanup gia' fatto).
-- [ ] Rimuovere la dipendenza dai launcher WSL per l'uso "installato".
-- [ ] Test: `tauri dev` → il backend parte da solo, l'app funziona senza WSL.
+- Tauri/WebView2 runs on Windows;
+- the authenticated front door and FastAPI run on the rig;
+- project workspaces are linked on the rig and synchronized through GitHub;
+- the front door activates DEVIN lazily and returns to Clippy only when idle;
+- no Python, llama-server, GGUF model or backend sidecar is bundled on Windows.
 
-## FASE 3 — Wizard onboarding (local vs rig)
-- [ ] Schermata primo avvio: "Hai un rig esterno?"
-      - Si' → IP:porta del rig (default 192.168.1.100:8080) → salva rig_host +
-        rig_self_hosted=false.
-      - No → setup locale (path modelli, avvio llama-server locale).
-- [ ] Persistenza in settings.json sotto `%APPDATA%\DEVIN` (non nel repo).
-- [ ] Bandierina "gia' configurato" → i successivi avvii saltano il wizard;
-      re-editabile da Impostazioni.
-- [ ] I flag esistono gia' (rig_self_hosted, rig_host): e' UI sopra logica pronta.
+A future local profile is a separate product decision, not an automatic
+fallback. The desktop must fail visibly if its configured rig is unavailable.
 
-## FASE 4 — Build installer
-- [ ] `tauri build` → `.msi` (WiX) e/o `.exe` (NSIS): icona, voce Start, uninstall.
-- [ ] Includere il sidecar + asset. Verificare che parta su una macchina PULITA
-      (senza Python/WSL) → doppio-click → app viva.
+## Phase 1 — thin client foundation (complete)
 
-## FASE 5 — Rifiniture (opzionali, dopo)
-- [ ] Firma del codice (evita l'avviso SmartScreen di Windows).
-- [ ] Auto-update (updater Tauri).
-- [ ] Vendoring Monaco/font offline (uso senza internet).
+- [x] Bundled connection/retry screen.
+- [x] Rust-side URL/token validation and front-door reachability check.
+- [x] Token kept out of JavaScript and converted by the front door to an
+      `HttpOnly` cookie.
+- [x] Protected `%APPDATA%\DEVIN\desktop.json` configurator.
+- [x] Windows-native cached development host.
+- [x] Removal of automatic WSL/local-backend startup and sidecar resources.
 
-## Ordine consigliato
-0 (decisione profili) → 1 (sidecar RIG, leggero) → 2 (Tauri lo avvia) →
-3 (wizard) → 4 (installer .msi). Il profilo LOCALE si aggiunge dopo, quando il
-RIG e' solido: cosi' il primo installer e' piccolo e affidabile.
+## Phase 2 — release build
+
+- [ ] Run `tauri build` with the existing Windows MSVC toolchain.
+- [ ] Produce and smoke-test an NSIS `.exe` installer.
+- [ ] Install Start-menu/Desktop entries and a clean uninstall path.
+- [ ] Confirm the release executable opens the configured rig front door from
+      a normal, non-developer Windows account.
+
+## Phase 3 — onboarding
+
+- [ ] Native first-run form for front-door URL and secret.
+- [ ] Save through a Rust command with the same validation/ACL contract as the
+      PowerShell configurator.
+- [ ] Add a connection test that does not activate the DEVIN model.
+- [ ] Allow editing connection settings from the failure screen.
+
+## Phase 4 — hardening
+
+- [ ] Code-sign executable and installer to reduce SmartScreen warnings.
+- [ ] Define a signed auto-update channel.
+- [ ] Add release-build tests for token redaction, cookie bootstrap and remote
+      navigation policy.
+- [ ] Verify the installer on a clean Windows VM with WebView2.
+
+## Rule
+
+Packaging must not reintroduce a local backend, model fallback or remote cleanup
+on window close. The rig front door remains the single owner of activation,
+busy detection and idle release.
