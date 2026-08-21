@@ -56,10 +56,15 @@ def _make_client(remote_ok=False):
     with patch("devin.ai.client.requests.get") as mock_get, \
          patch.object(AIClient, "_send_wol", return_value=False):
         if remote_ok:
-            mock_get.return_value = MagicMock(status_code=200)
+            response = MagicMock(status_code=200)
+            response.json.return_value = {"data": [{"id": "served-model"}]}
+            mock_get.return_value = response
         else:
             mock_get.side_effect = requests.exceptions.ConnectionError("rig down")
         client = AIClient()
+    if not remote_ok:
+        client.rig_required = False
+        client.allow_local_fallback = True
     # No-op the mid-retry refresh(); its behavior is tested separately.
     client.refresh = MagicMock()
     return client

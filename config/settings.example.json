@@ -31,17 +31,20 @@
     "note": "review = i test girano nella sandbox e le modifiche restano pending finche' l'utente non le approva. legacy_auto_apply resta disponibile solo come compatibilita' temporanea."
   },
   "models": {
-    "rig_host": "192.168.1.100",
-    "rig_port": 8080,
-    "rig_mac": "2c:f0:5d:56:08:bc",
+    "rig_base_url": "http://127.0.0.1:18081",
+    "rig_host": "127.0.0.1",
+    "rig_port": 18081,
+    "rig_mac": "00:00:00:00:00:00",
     "rig_primary": true,
+    "rig_required": true,
+    "allow_local_fallback": false,
     "rig_self_hosted": false,
-    "rig_self_hosted_note": "METTI true quando DEVIN AI IDE gira SUL rig stesso (deploy via deploy-devin-webapp.sh): il modello e' in localhost:8080, niente WOL (non ha senso svegliare se stessi) e niente attesa all'avvio. Su PC che usa un rig REMOTO separato, lascia false.",
+    "rig_self_hosted_note": "Sul rig l'endpoint e' loopback diretto. Sul PC lo stesso URL richiede un tunnel SSH locale verso la porta model-slot del rig. Il routing resta fail-closed in entrambi i casi.",
     "local_role": "chat_and_autocomplete_only",
     "local_test_mode": false,
-    "local_test_mode_note": "TEMPORANEO: rig non ancora arrivato. Con true, il locale avvia anche il planner/reasoning (oltre al coder) per poter testare Mantenimento + Zero-Shot Scaffolding end-to-end. Rimettere false quando il rig e' online. NB: con local_test_mode=true il WOL verso il rig e' disattivato automaticamente (il rig non esiste ancora, inutile aspettarlo).",
+    "local_test_mode_note": "Solo sviluppo esplicito. Non abilita fallback finche' rig_required non e' false e allow_local_fallback non e' true.",
 
-    "wol_enabled": true,
+    "wol_enabled": false,
     "wol_port": 9,
     "wol_throttle_seconds": 300,
     "rig_circuit_breaker": {
@@ -54,48 +57,16 @@
     "vram_swap_threshold_mb": 2048,
     "vram_watchdog_interval": 30,
 
-    "rig_models": {
-      "unified": "Ornith-1.0-35B-A3B-MXFP4_MOE_Q8_0_F16-Imatrix",
-      "vision_enabled": false,
-      "note": "Un solo llama-server sul rig (porta 8080, ruolo DEVIN del progetto ai-rig-iso-build): Ornith serve coding+reasoning nella stessa istanza (self-scaffolding, non serve splittare per ruolo). Niente vision qui: e' compito dei ruoli Hermes/Teacher (altro disco, non attivo insieme a DEVIN)."
-    },
-    "rig_ctx_size": 12288,
-    "rig_engine_note": "Motore: beellama (fork llama.cpp con KV cache TurboQuant, vedi ai-rig-iso-build/config/rig.env) o mainline — intercambiabili via swap-llama-flavor.sh sul rig, trasparente per DEVIN (stessa API OpenAI-compatible). --jinja richiesto per il chat template di Ornith.",
+    "rig_engine_note": "Il modello e il runtime sono selezionati e attestati dal model-slot broker. DEVIN richiede esattamente un ID da /v1/models e non duplica nome, famiglia o artifact path nel proprio config.",
 
     "rig_api_key": "",
-    "rig_api_key_note": "Token opzionale per il model server del rig (llama.cpp avviato con --api-key). Se valorizzato (o via env DEVIN_RIG_API_KEY), DEVIN lo invia come 'Authorization: Bearer' alle richieste verso il modello. Vuoto = nessun header (rete fidata). Parte del routing robusto 2026-07-22.",
-    "local_models_dir": "/home/tillo/devin_ai_ide/devin/devin_models",
-    "llama_server_path": "/home/tillo/.unsloth/llama.cpp/build/bin/llama-server",
-    "local_models_dir_windows": "D:\\devin_ai_ide\\devin\\devin_models",
-    "llama_server_path_windows": "C:\\Users\\tillo\\AppData\\Local\\DEVIN\\llama.cpp\\llama-server.exe",
-    "auto_start_local": true,
-    "local_models": {
-      "coder": {
-        "file": "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-        "fallback_file": "qwen2.5-coder-7b-instruct-q5_k_m.gguf",
-        "port": 8000,
-        "ctx_size": 8192,
-        "n_gpu_layers": -1,
-        "description": "Backup locale: SOLO autocomplete + chat leggera quando il rig (primario) è offline. Non usato per scaffolding/debug pesante."
-      },
-      "reasoning": {
-        "file": "Qwen3.5-14B-A3B-Claude-Opus-Reasoning-Distilled-4.6-MXFP4_MOE.gguf",
-        "fallback_file": "qwen3-14b-q4_k_m.gguf",
-        "port": 8001,
-        "ctx_size": 8192,
-        "n_gpu_layers": -1,
-        "description": "Non avviato di default (rig primario). Parte in locale SOLO se local_test_mode=true (vedi sopra) — usato per testare Mantenimento/Scaffolding finche' il rig non e' online.",
-        "vision": {
-          "enabled": false,
-          "note": "Vision rimosso da DEVIN il 2026-07-09: per coding serve poco, e Hermes (ruolo dedicato del rig) copre gia' quel caso d'uso. mmproj non piu' caricato (vedi local_model_launcher.py)."
-        }
-      }
-    }
+    "rig_api_key_note": "Token opzionale per il model server. Viene inviato soltanto all'origine loopback configurata; mai agli endpoint locali di sviluppo.",
+    "auto_start_local": false
   },
   "web_search": {
     "provider": "tinyfish",
     "tinyfish_api_key_env": "TINYFISH_API_KEY",
-    "searxng_url": "http://192.168.1.100:8081",
+    "searxng_url": "http://127.0.0.1:8081",
     "fetch_pages": true,
     "fetch_max_pages": 3,
     "fetch_chars_per_page": 2500,
@@ -110,18 +81,18 @@
     "note": "Default pragmatico su TinyFish (key già disponibile via env var). SearXNG (porta 8081, non 8888: corretto, vedi ai-rig-iso-build/templates/hermes-extras.sh.tmpl) gira SOLO quando il rig è avviato nel ruolo 'hermes' — con DEVIN AI IDE il rig è normalmente in ruolo 'devin', quindi searxng_url qui sopra è raggiungibile solo se hai fatto grub-reboot verso hermes apposta. In pratica: resta su 'tinyfish' per l'uso quotidiano di DEVIN; passa a 'searxng' solo per sessioni in cui sai di aver spostato il rig sul ruolo hermes. Swap richiede solo il cambio di questo campo, vedi devin/ai/web_search.py."
   },
   "understory": {
-    "enabled": true,
-    "url": "http://127.0.0.1:3810",
+    "enabled": false,
+    "url": "",
     "timeout_seconds": 15,
     "agentic_recall": true,
     "bundle_path": "",
-    "note": "Librarian MCP con quality gate davanti a Understory. Da workstation aprire: ssh -L 3810:localhost:3810 tillo@192.168.1.100. La porta 3800 e' amministrativa e bypassa il quality gate. Sul rig impostare bundle_path=/mnt/ai-rig-shared/understory/bundle per recall semantico locale. Se irraggiungibile, fallback automatico ad AutoMem."
+    "note": "Disabilitato finche' non esiste un namespace Understory privato DEVIN. Non usare bundle, endpoint o credenziali della memoria Clippy."
   },
   "automem": {
-    "enabled": true,
-    "url": "http://192.168.1.100:8001",
+    "enabled": false,
+    "url": "",
     "timeout_seconds": 2.5,
-    "note": "AutoMem gira su TUTTI i ruoli del rig (localhost:8001 sul rig, dati sul 4° disco condiviso -> memoria unica cross-ruolo). Da questa workstation e' raggiungibile solo a rig acceso: ogni chiamata e' fail-soft (timeout corto, la chat continua senza memoria se il rig e' spento). Tag usati: 'devin' + 'project:<nome>' — stessi tag filtrabili dall'harness futuro. Quando DEVIN girera' SUL rig (rig_self_hosted=true), cambia url in http://localhost:8001. ⚠️ Nomi campi API da verificare al primo uso reale: vedi devin/ai/automem_client.py.",
+    "note": "Disabilitato finche' non esiste una collection AutoMem privata DEVIN. Non puntare mai alla collection o allo storage Clippy; gli scambi futuri passano da artifact promossi e revisionati.",
     "recall_max_chars": 800
   },
   "project_space": {
