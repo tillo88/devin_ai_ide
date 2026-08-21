@@ -30,9 +30,6 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.ico"],
-    "resources": {
-      "../dist/devin-backend": "devin-backend"
-    }
+    "icon": ["icons/icon.ico"]
   }
 }

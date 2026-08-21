@@ -1,9 +1,6 @@
 param(
     [string]$SourceRepo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).ProviderPath,
     [string]$HostDir = (Join-Path $env:LOCALAPPDATA "DEVIN\desktop-host"),
-    [string]$Distro = "Ubuntu",
-    [string]$WslRepo = "/home/tillo/devin_ai_ide",
-    [switch]$BrowserFallback,
     [switch]$SkipNpmInstall,
     [switch]$Info,
     [switch]$Silent
@@ -63,14 +60,21 @@ Write-Host "====================================="
 Write-Host "[source] $SourceRepo"
 Write-Host "[host]   $HostDir"
 Write-Host "[logs]   $LogDir"
+Write-Host "[config] $(Join-Path $env:APPDATA 'DEVIN\desktop.json')"
 
-$prepareScript = Join-Path (Join-Path $SourceRepo "scripts") "prepare-windows-desktop-host.ps1"
-& $prepareScript -SourceRepo $SourceRepo -HostDir $HostDir -SkipNpmInstall:$SkipNpmInstall
-if (-not $?) { exit 1 }
-
-$backendScript = Join-Path (Join-Path $SourceRepo "scripts") "devin-tauri-dev.ps1"
-& $backendScript -Repo $WslRepo -Distro $Distro -SkipTauri
-if (-not $?) { exit 1 }
+$resolvedSource = (Resolve-Path -LiteralPath $SourceRepo).ProviderPath.TrimEnd("\")
+$resolvedHost = if (Test-Path -LiteralPath $HostDir) {
+    (Resolve-Path -LiteralPath $HostDir).ProviderPath.TrimEnd("\")
+} else {
+    [System.IO.Path]::GetFullPath($HostDir).TrimEnd("\")
+}
+if ($resolvedSource -ine $resolvedHost) {
+    $prepareScript = Join-Path (Join-Path $SourceRepo "scripts") "prepare-windows-desktop-host.ps1"
+    & $prepareScript -SourceRepo $SourceRepo -HostDir $HostDir -SkipNpmInstall:$SkipNpmInstall
+    if (-not $?) { exit 1 }
+} else {
+    Write-Host "[prepare] installed desktop host already synchronized"
+}
 
 $node = Get-NodeCommand
 $tauriJs = Get-TauriCliScript
@@ -105,11 +109,6 @@ try {
         $code = $LASTEXITCODE
     }
     Write-Host "[desktop] tauri exit code: $code"
-    if ((-not $Info) -and $code -ne 0 -and $BrowserFallback) {
-        Write-Host "[fallback] opening browser http://127.0.0.1:5000/app"
-        Start-Process "http://127.0.0.1:5000/app" | Out-Null
-        exit 0
-    }
     exit $code
 } finally {
     Pop-Location

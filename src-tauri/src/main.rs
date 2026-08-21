@@ -1,152 +1,229 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// App nativa (owner, 2026-07-22, architettura chiarita):
-// - la UI e' BUNDLATA nell'app (frontendDist locale): e' una vera app desktop;
-// - l'app usa SEMPRE il backend LOCALE sul PC (127.0.0.1:5000): e' quello che
-//   legge i FILE del PC (un processo vede solo il disco della sua macchina).
-//   Il bootstrap del frontend prova il backend locale e, se non e' attivo,
-//   chiama start_local_backend qui sotto per avviarlo (leggero, niente VRAM);
-// - l'inferenza va allo slot DEVIN del rig, raggiunto solo via loopback
-//   (diretto sul rig o tunnel SSH). Il backend scopre il singolo model ID e
-//   fallisce chiuso: non sceglie un modello locale/cloud in silenzio;
-// - il backend sul rig (:5000) e' un'altra cosa: la web app da fuori per i
-//   progetti che stanno sul rig.
+// DEVIN Desktop is a thin client for the authenticated, always-on front door
+// on the rig. The backend, workspaces and model lifecycle all remain on the
+// rig; this process only validates local connection settings and navigates the
+// native webview. No local backend or model is spawned, and closing the window
+// does not stop a remote session (the front door owns its idle policy).
 
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::fs;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::process::{Child, Command};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 use std::time::Duration;
 
-const LOCAL_BACKEND: &str = "127.0.0.1:5000";
+use serde_json::Value;
+use tauri::Manager;
 
-static CLOSE_CLEANUP_SENT: AtomicBool = AtomicBool::new(false);
-// Il backup locale, se avviato da noi (comando start_local_backend), va spento
-// alla chiusura. Un backend preesistente (rig o gia' attivo) non si tocca.
-static SPAWNED_BACKEND: Mutex<Option<Child>> = Mutex::new(None);
+const CONFIG_SCHEMA: &str = "devin_desktop_frontdoor_v1";
+const CONFIG_FILE: &str = "desktop.json";
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(1200);
 
-fn backend_reachable() -> bool {
-    let address: SocketAddr = match LOCAL_BACKEND.parse() {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    TcpStream::connect_timeout(&address, Duration::from_millis(400)).is_ok()
+#[derive(Debug)]
+struct DesktopConfig {
+    frontdoor_url: tauri::Url,
+    access_token: String,
 }
 
-fn find_backend_exe() -> Option<PathBuf> {
-    // Override esplicito (utile in dev per puntare a dist\devin-backend).
-    if let Ok(custom) = std::env::var("DEVIN_BACKEND_EXE") {
+fn configured_path() -> Result<PathBuf, String> {
+    if let Some(custom) = std::env::var_os("DEVIN_DESKTOP_CONFIG") {
         let path = PathBuf::from(custom);
-        if path.is_file() {
-            return Some(path);
+        if path.as_os_str().is_empty() {
+            return Err("DEVIN_DESKTOP_CONFIG e' vuota".to_string());
         }
+        return Ok(path);
     }
-    // Layout installato: il bundle backend sta accanto all'exe dell'app
-    // (bundle.resources -> devin-backend/).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for candidate in [
-                dir.join("devin-backend").join("devin-backend.exe"),
-                dir.join("devin-backend.exe"),
-            ] {
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    None
+    let appdata = std::env::var_os("APPDATA")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "APPDATA non disponibile; impossibile trovare la configurazione DEVIN".to_string()
+        })?;
+    Ok(PathBuf::from(appdata).join("DEVIN").join(CONFIG_FILE))
 }
 
-/// Avvia il backend di backup locale (comando invocato dal prompt del frontend
-/// quando il rig e' offline e l'utente sceglie "Si', in locale"). Attende la
-/// readiness e ritorna l'URL base.
-#[tauri::command]
-fn start_local_backend() -> Result<String, String> {
-    let base = format!("http://{LOCAL_BACKEND}");
-    if backend_reachable() {
-        return Ok(base);
-    }
-    let exe = find_backend_exe()
-        .ok_or_else(|| "devin-backend.exe non trovato (DEVIN_BACKEND_EXE o accanto all'app)".to_string())?;
+fn optional_string(document: &Value, key: &str) -> Option<String> {
+    document
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+}
 
-    let mut command = Command::new(&exe);
-    command.env("DEVIN_NO_BROWSER", "1");
-    if let Some(dir) = exe.parent() {
-        command.current_dir(dir);
+fn validate_frontdoor_url(raw: &str) -> Result<tauri::Url, String> {
+    if raw.trim() != raw {
+        return Err("frontdoor_url contiene spazi iniziali o finali".to_string());
     }
-    #[cfg(windows)]
+    let mut url =
+        tauri::Url::parse(raw).map_err(|_| "frontdoor_url non e' un URL valido".to_string())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("frontdoor_url deve usare http oppure https".to_string());
+    }
+    if url.host_str().is_none() {
+        return Err("frontdoor_url non contiene un host".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("frontdoor_url non puo' contenere credenziali".to_string());
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("frontdoor_url non puo' contenere query o frammenti".to_string());
+    }
+    if !matches!(url.path(), "" | "/") {
+        return Err("frontdoor_url deve indicare la radice del frontdoor".to_string());
+    }
+    url.set_path("/");
+    Ok(url)
+}
+
+fn validate_token(raw: &str) -> Result<String, String> {
+    if !(32..=256).contains(&raw.len()) {
+        return Err("access_token deve contenere da 32 a 256 caratteri".to_string());
+    }
+    if raw
+        .chars()
+        .any(|character| character.is_control() || character.is_whitespace())
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
+        return Err("access_token contiene spazi o caratteri di controllo".to_string());
     }
-    let child = command
-        .spawn()
-        .map_err(|err| format!("avvio backend fallito: {err}"))?;
-    *SPAWNED_BACKEND.lock().unwrap() = Some(child);
+    Ok(raw.to_string())
+}
 
-    // Cold start PyInstaller: fino a ~40s.
-    for _ in 0..80 {
-        if backend_reachable() {
-            return Ok(base);
+fn load_config() -> Result<DesktopConfig, String> {
+    let path = configured_path()?;
+    let document = match fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str::<Value>(&raw).map_err(|err| {
+            format!(
+                "Configurazione DEVIN non valida ({}): {err}",
+                path.display()
+            )
+        })?,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Value::Null,
+        Err(err) => {
+            return Err(format!(
+                "Impossibile leggere la configurazione DEVIN ({}): {err}",
+                path.display()
+            ))
         }
-        std::thread::sleep(Duration::from_millis(500));
+    };
+
+    if !document.is_null() && !document.is_object() {
+        return Err(format!(
+            "La configurazione DEVIN deve essere un oggetto JSON ({})",
+            path.display()
+        ));
     }
-    Err("backend locale non pronto entro 40s".to_string())
+    if let Some(schema) = optional_string(&document, "schema") {
+        if schema != CONFIG_SCHEMA {
+            return Err(format!(
+                "Schema configurazione DEVIN non supportato: {schema} (atteso {CONFIG_SCHEMA})"
+            ));
+        }
+    }
+
+    let frontdoor = std::env::var("DEVIN_FRONTDOOR_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| optional_string(&document, "frontdoor_url"))
+        .ok_or_else(|| format!("frontdoor_url mancante in {}", path.display()))?;
+    let token = std::env::var("DEVIN_FRONTDOOR_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| optional_string(&document, "access_token"))
+        .ok_or_else(|| format!("access_token mancante in {}", path.display()))?;
+
+    Ok(DesktopConfig {
+        frontdoor_url: validate_frontdoor_url(&frontdoor)?,
+        access_token: validate_token(&token)?,
+    })
 }
 
-fn stop_spawned_backend() {
-    if let Some(mut child) = SPAWNED_BACKEND.lock().unwrap().take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+fn frontdoor_reachable(url: &tauri::Url) -> bool {
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let Some(port) = url.port_or_known_default() else {
+        return false;
+    };
+    let Ok(addresses) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    addresses
+        .take(4)
+        .any(|address| TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).is_ok())
 }
 
-fn post_desktop_close_cleanup() {
-    // Il cleanup di chiusura riguarda solo il backend LOCALE (modelli in VRAM
-    // del PC): il rig e' always-on e non va spento dalla GUI.
-    let address: SocketAddr = match LOCAL_BACKEND.parse() {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-    let mut stream = match TcpStream::connect_timeout(&address, Duration::from_millis(700)) {
-        Ok(value) => value,
-        Err(_) => return,
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(700)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(700)));
+fn access_url(config: &DesktopConfig) -> tauri::Url {
+    let mut url = config.frontdoor_url.clone();
+    url.set_path("/app");
+    url.query_pairs_mut()
+        .append_pair("token", &config.access_token);
+    url
+}
 
-    let request = concat!(
-        "POST /api/desktop/close_cleanup HTTP/1.1\r\n",
-        "Host: 127.0.0.1:5000\r\n",
-        "Content-Type: application/json\r\n",
-        "Content-Length: 2\r\n",
-        "Connection: close\r\n",
-        "\r\n",
-        "{}"
-    );
-    if stream.write_all(request.as_bytes()).is_ok() {
-        let mut buffer = [0_u8; 256];
-        let _ = stream.read(&mut buffer);
+#[tauri::command]
+fn connect_frontdoor(app: tauri::AppHandle) -> Result<(), String> {
+    let config = load_config()?;
+    if !frontdoor_reachable(&config.frontdoor_url) {
+        return Err(format!(
+            "Frontdoor DEVIN non raggiungibile su {}. Controlla rete, rig e configurazione.",
+            config.frontdoor_url.origin().ascii_serialization()
+        ));
     }
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Finestra DEVIN non disponibile".to_string())?;
+    window
+        .navigate(access_url(&config))
+        .map_err(|err| format!("Navigazione verso DEVIN fallita: {err}"))
 }
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![start_local_backend])
-        .on_window_event(|window, event| {
-            if window.label() == "main"
-                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
-            {
-                if !CLOSE_CLEANUP_SENT.swap(true, Ordering::SeqCst) {
-                    post_desktop_close_cleanup();
-                    stop_spawned_backend();
-                }
-            }
-        })
+        .invoke_handler(tauri::generate_handler![connect_frontdoor])
         .run(tauri::generate_context!())
         .expect("error while running DEVIN AI IDE desktop shell");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token() -> String {
+        "0123456789abcdef0123456789abcdef".to_string()
+    }
+
+    #[test]
+    fn builds_bootstrap_url_without_string_concatenation() {
+        let config = DesktopConfig {
+            frontdoor_url: validate_frontdoor_url("http://192.0.2.10:5000").unwrap(),
+            access_token: format!("{}+/=", token()),
+        };
+        let target = access_url(&config);
+        assert_eq!(target.path(), "/app");
+        assert_eq!(
+            target
+                .query_pairs()
+                .find(|(key, _)| key == "token")
+                .map(|(_, value)| value.into_owned()),
+            Some(config.access_token)
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_unsafe_frontdoor_urls() {
+        for value in [
+            "file:///tmp/devin",
+            "http://user:secret@example.test:5000",
+            "http://example.test:5000/nested",
+            "http://example.test:5000?token=secret",
+            " http://example.test:5000",
+        ] {
+            assert!(validate_frontdoor_url(value).is_err(), "accepted {value}");
+        }
+    }
+
+    #[test]
+    fn token_rules_match_frontdoor_contract() {
+        assert!(validate_token(&token()).is_ok());
+        assert!(validate_token("short").is_err());
+        assert!(validate_token(&format!("{} bad", token())).is_err());
+    }
 }
