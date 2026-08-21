@@ -28,10 +28,11 @@ because the rig or tunnel happens to be unavailable.
 ## Role lifecycle
 
 The AI Rig model-slot broker remains the only lifecycle authority. A rig-hosted
-DEVIN backend service must bind to `ai-rig-model-slot@devin.service` and start
-only after a successful broker lease. When that role unit stops, systemd stops
-the backend as well; this prevents the long-lived frontend from talking to the
-resident Clippy role after the shared port changes ownership.
+DEVIN backend service uses `Requisite=ai-rig-model-slot@devin.service`, an exact
+lease condition, and `PartOf=ai-rig-model-slot@devin.service`. `Requisite` does
+not start an inactive model unit, while `PartOf` propagates role teardown to the
+backend. This prevents both a broker bypass and a long-lived frontend talking
+to resident Clippy after the shared port changes ownership.
 
 The desktop backend remains local so it can read workstation files. Opening the
 SSH tunnel does not switch roles. Role acquisition/release stays a separate,
