@@ -1,7 +1,7 @@
 # DEVIN AI IDE — continuity brief
 
-**Updated:** 2026-07-15  
-**Primary workspace:** `/home/tillo/devin_ai_ide` on WSL distro `Ubuntu`.
+**Updated:** 2026-08-22
+**Primary workspace:** il checkout Git verificato con `git rev-parse`; WSL è opzionale.
 
 DEVIN AI IDE is a local-first coding-agent workspace: FastAPI backend, Codex-like `/app` prototype UI, local/rig model routing, safe memory, project-aware chat, scaffold/maintenance runs, and an early training/eval loop.
 
@@ -9,17 +9,15 @@ DEVIN AI IDE is a local-first coding-agent workspace: FastAPI backend, Codex-lik
 
 If you are resuming this project, start here:
 
-1. Read [`docs/CONTINUITY_2026-07-15.md`](docs/CONTINUITY_2026-07-15.md).
+1. Read [`docs/CURRENT_ARCHITECTURE.md`](docs/CURRENT_ARCHITECTURE.md).
 2. Then read [`ROADMAP_DEVIN_UI.md`](ROADMAP_DEVIN_UI.md) for UI/Tauri direction.
-3. Use [`README_DEVIN_AI_IDE.md`](README_DEVIN_AI_IDE.md) for the broader architecture and historical notes.
+3. Use [`README_DEVIN_AI_IDE.md`](README_DEVIN_AI_IDE.md) and the dated continuity logs as historical context.
 
 ## Quick start
 
-```bash
-cd ~/devin_ai_ide
-source venv/bin/activate
-venv/bin/python devin/ui/fast_app.py
-```
+Run `devin/ui/fast_app.py` with the active repository venv. In the rig profile
+the always-on frontdoor owns on-demand backend/model activation; do not launch a
+second backend beside it.
 
 Open:
 
@@ -33,7 +31,9 @@ Open:
 venv/bin/python -m pytest -q --capture=no
 ```
 
-Expected current baseline: `72 passed, 1 skipped`.
+The exact count evolves; the required baseline is zero failures in the current
+checkout. Linux-only integration tests may run in an isolated workspace on the
+rig without touching live services or models.
 
 ## Current safety rule
 

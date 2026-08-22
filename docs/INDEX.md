@@ -1,9 +1,11 @@
 # DEVIN AI IDE — Indice della documentazione
 
-Mappa di tutti i doc del progetto. Punto d'ingresso: **[../README_DEVIN_AI_IDE.md](../README_DEVIN_AI_IDE.md)**.
-Fonte di verità operativa giorno-per-giorno: i file `CONTINUITY_*` (log datati).
+Mappa di tutti i doc del progetto. Punto d'ingresso corrente:
+**[CURRENT_ARCHITECTURE.md](CURRENT_ARCHITECTURE.md)**. I file `CONTINUITY_*`
+sono log storici datati, non binding runtime.
 
 ## Panoramica e stato
+- **[CURRENT_ARCHITECTURE.md](CURRENT_ARCHITECTURE.md)** — fonte canonica corrente: Desktop↔rig, lifecycle Clippy/DEVIN, web fallback e federazione memoria.
 - **[../README_DEVIN_AI_IDE.md](../README_DEVIN_AI_IDE.md)** — cos'è, hardware, struttura, avvio, stato.
 - **[CONTINUITY_2026-07-18.md](CONTINUITY_2026-07-18.md)** — reliability hardening: resume esplicito, no-progress guard, cache JSON, filtri memoria, evidence tier (più recente).
 - **[CONTINUITY_2026-07-15.md](CONTINUITY_2026-07-15.md)** — log operativo datato (storico, non modificare a ritroso).

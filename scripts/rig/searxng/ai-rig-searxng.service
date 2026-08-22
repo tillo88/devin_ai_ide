@@ -1,0 +1,17 @@
+[Unit]
+Description=SearXNG loopback fallback for AI Rig agents
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/ai-rig-searxng/searxng_control start
+ExecStop=/usr/local/lib/ai-rig-searxng/searxng_control stop
+TimeoutStartSec=90
+TimeoutStopSec=90
+SendSIGKILL=no
+
+[Install]
+WantedBy=multi-user.target

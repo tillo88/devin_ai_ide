@@ -54,6 +54,27 @@
 
 ## Health & Models
 
+### GET /api/operations/active
+**Purpose**: Fail-closed lifecycle contract consumed by the rig frontdoor before
+an idle release. It aggregates background run/scaffold, training and Goal Mode
+operations. Normal synchronous/streaming requests are tracked separately by the
+frontdoor for their complete proxy lifetime.
+
+**Response**:
+```json
+{
+  "schema": "devin_active_operations_v1",
+  "busy": true,
+  "operations": [
+    {"operation_id": "goal_...", "kind": "goal", "status": "running"}
+  ],
+  "counts": {"goal": 1}
+}
+```
+
+Missing/malformed state must be interpreted as busy or unverifiable, never as
+permission to stop the backend.
+
 ### GET /api/mind/status
 **Purpose**: Lightweight structured state for the Codex-like right-side Mind panel. This endpoint must not perform slow remote health checks; use `/api/health` and `/api/models/status` for deeper probes.
 

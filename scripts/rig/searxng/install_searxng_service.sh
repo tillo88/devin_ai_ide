@@ -1,99 +1,78 @@
 #!/usr/bin/env bash
-# install_searxng_service.sh - abilita SearXNG (shared) sul RUOLO corrente del rig.
-#
-# Modello: la config di SearXNG vive UNA VOLTA SOLA sul disco shared
-# (/mnt/ai-rig-shared/searxng), condivisa da devin/hermes/teacher. Qui si
-# installa solo l'unit systemd, da rieseguire una volta su ciascun ruolo
-# (systemd e' per-OS, sul disco del ruolo). Nessuna copia della config per ruolo.
-#
-# Uso (sul ruolo, dopo aver popolato il disco shared — vedi README):
-#   bash install_searxng_service.sh [SHARED_DIR]
-# default SHARED_DIR = /mnt/ai-rig-shared/searxng
-set -euo pipefail
+set -Eeuo pipefail
+umask 077
 
-SHARED_DIR="${1:-/mnt/ai-rig-shared/searxng}"
-UNIT=/etc/systemd/system/ai-rig-searxng.service
+SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_DIR=/var/lib/ai-rig/searxng/runtime
+CONTROL_DIR=/usr/local/lib/ai-rig-searxng
+UNIT_PATH=/etc/systemd/system/ai-rig-searxng.service
+LEGACY_SETTINGS=/mnt/ai-rig-shared/searxng/config/settings.yml
 
-echo ">> SearXNG shared dir: $SHARED_DIR"
+fail() { printf 'SEARXNG_INSTALL=FAIL %s\n' "$*" >&2; exit 1; }
+[[ $EUID -eq 0 ]] || fail "root required"
 
-# --- 1. prerequisiti: la config shared deve gia' esserci ---------------------
-if [ ! -f "$SHARED_DIR/docker-compose.yml" ]; then
-    echo "ERRORE: $SHARED_DIR/docker-compose.yml assente." >&2
-    echo "Popola il disco shared UNA VOLTA (da un ruolo qualsiasi):" >&2
-    echo "  mkdir -p $SHARED_DIR" >&2
-    echo "  cp -r ~/devin_ai_ide/scripts/rig/searxng/{docker-compose.yml,config} $SHARED_DIR/" >&2
-    echo "  cp $SHARED_DIR/config/settings.yml.example $SHARED_DIR/config/settings.yml" >&2
-    echo "  # metti un secret in config/settings.yml (server.secret_key): openssl rand -hex 32" >&2
-    exit 1
-fi
-if [ ! -f "$SHARED_DIR/config/settings.yml" ]; then
-    echo "ERRORE: manca $SHARED_DIR/config/settings.yml." >&2
-    echo "  cp $SHARED_DIR/config/settings.yml.example $SHARED_DIR/config/settings.yml" >&2
-    echo "  # poi metti il secret: openssl rand -hex 32" >&2
-    exit 1
-fi
-if grep -q "CAMBIAMI" "$SHARED_DIR/config/settings.yml"; then
-    echo "ERRORE: secret non impostato in $SHARED_DIR/config/settings.yml (server.secret_key)." >&2
-    echo "  openssl rand -hex 32   # poi incollalo al posto di CAMBIAMI_..." >&2
-    exit 1
-fi
+install_files() {
+  for source in docker-compose.yml config/settings.yml.example searxng_control.sh ai-rig-searxng.service; do
+    [[ -f "$SOURCE_DIR/$source" && ! -L "$SOURCE_DIR/$source" ]] \
+      || fail "source missing or unsafe: $source"
+  done
 
-# 'docker compose' (v2) o 'docker-compose' (v1)?
-if docker compose version >/dev/null 2>&1; then
-    COMPOSE="/usr/bin/docker compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE="$(command -v docker-compose)"
-else
-    echo "ERRORE: ne' 'docker compose' ne' 'docker-compose' disponibili." >&2
-    exit 1
-fi
-echo ">> compose: $COMPOSE"
+  install -d -m 0755 -o root -g root "$RUNTIME_DIR" "$CONTROL_DIR"
+  install -d -m 0700 -o root -g root "$RUNTIME_DIR/config"
+  install -m 0644 -o root -g root "$SOURCE_DIR/docker-compose.yml" "$RUNTIME_DIR/docker-compose.yml"
+  install -m 0600 -o root -g root "$SOURCE_DIR/config/settings.yml.example" "$RUNTIME_DIR/config/settings.yml.example"
+  install -m 0755 -o root -g root "$SOURCE_DIR/searxng_control.sh" "$CONTROL_DIR/searxng_control"
+  install -m 0644 -o root -g root "$SOURCE_DIR/ai-rig-searxng.service" "$UNIT_PATH"
 
-# --- 2. unit systemd (idempotente) -------------------------------------------
-echo ">> Installo unit $UNIT"
-sudo tee "$UNIT" > /dev/null <<UNITEOF
-[Unit]
-Description=SearXNG for DEVIN (shared, privacy-first web search)
-After=docker.service network-online.target
-# Wants (soft), non Requires: su un ruolo senza docker attivo il servizio
-# degrada (fallisce ExecStart) invece di impallare il boot con un dependency job.
-Wants=docker.service network-online.target
-RequiresMountsFor=/mnt/ai-rig-shared
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-WorkingDirectory=$SHARED_DIR
-ExecStart=$COMPOSE up -d
-ExecStop=$COMPOSE down
-TimeoutStartSec=180
-
-[Install]
-WantedBy=multi-user.target
-UNITEOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now ai-rig-searxng.service
-echo ">> Stato: $(sudo systemctl is-active ai-rig-searxng.service || true)"
-# docker richiede root se l'utente non e' nel gruppo 'docker' -> sudo.
-echo ">> docker: $(cd "$SHARED_DIR" && sudo $COMPOSE ps --format '{{.Name}} {{.State}}' 2>/dev/null | tr '\n' ' ')"
-
-echo ">> Verifica JSON (SearXNG ci mette qualche secondo a caricare)..."
-ok=0
-for i in $(seq 1 10); do
-    body="$(curl -s --max-time 8 "http://127.0.0.1:8081/search?q=test&format=json" 2>/dev/null || true)"
-    if printf '%s' "$body" | grep -q '"results"'; then
-        echo "   OK: JSON ricevuto (SearXNG risponde)."
-        ok=1
-        break
+  if [[ ! -e "$RUNTIME_DIR/config/settings.yml" ]]; then
+    if [[ -f "$LEGACY_SETTINGS" && ! -L "$LEGACY_SETTINGS" ]]; then
+      install -m 0600 -o root -g root "$LEGACY_SETTINGS" "$RUNTIME_DIR/config/settings.yml"
+    else
+      secret="$(openssl rand -hex 32)"
+      template="$(<"$SOURCE_DIR/config/settings.yml.example")"
+      printf '%s\n' "${template/CAMBIAMI_openssl_rand_hex_32/$secret}" \
+        >"$RUNTIME_DIR/config/settings.yml"
+      chown root:root "$RUNTIME_DIR/config/settings.yml"
+      chmod 0600 "$RUNTIME_DIR/config/settings.yml"
     fi
-    if printf '%s' "$body" | grep -qi "429\|Too Many\|Forbidden\|403"; then
-        echo "   ATTENZIONE: 403/429 -> manca format json o limiter attivo nel settings.yml." >&2
-        break
-    fi
-    sleep 3
-done
-[ "$ok" = 1 ] || echo "   Non ancora pronto. Controlla: (cd $SHARED_DIR && sudo $COMPOSE logs --tail 40 searxng)"
-echo ""
-echo "Fatto su QUESTO ruolo. Per gli altri, dopo aver bootato nel ruolo:"
-echo "  bash $SHARED_DIR/install_searxng_service.sh"
+  fi
+
+  [[ -f "$RUNTIME_DIR/config/settings.yml" && ! -L "$RUNTIME_DIR/config/settings.yml" ]] \
+    || fail "runtime settings missing or unsafe"
+  grep -q CAMBIAMI "$RUNTIME_DIR/config/settings.yml" \
+    && fail "runtime settings still contain placeholder"
+
+  systemctl daemon-reload
+  systemd-analyze verify "$UNIT_PATH" >/dev/null
+  printf 'SEARXNG_INSTALL=PASS action=install runtime=%s service_mutation=false\n' "$RUNTIME_DIR"
+}
+
+check_files() {
+  [[ -f "$RUNTIME_DIR/docker-compose.yml" ]] || fail "runtime compose missing"
+  [[ -x "$CONTROL_DIR/searxng_control" ]] || fail "runtime control missing"
+  [[ -f "$RUNTIME_DIR/config/settings.yml" ]] || fail "runtime settings missing"
+  grep -Fq '127.0.0.1:8081:8080' "$RUNTIME_DIR/docker-compose.yml" \
+    || fail "loopback port binding missing"
+  grep -q CAMBIAMI "$RUNTIME_DIR/config/settings.yml" \
+    && fail "runtime settings still contain placeholder"
+  (cd "$RUNTIME_DIR" && docker compose config --quiet)
+  printf 'SEARXNG_INSTALL=PASS action=check\n'
+}
+
+case "${1:---check}" in
+  --install)
+    install_files
+    check_files
+    ;;
+  --activate)
+    install_files
+    check_files
+    systemctl enable ai-rig-searxng.service >/dev/null
+    systemctl restart ai-rig-searxng.service
+    systemctl is-active --quiet ai-rig-searxng.service || fail "service not active"
+    /usr/local/lib/ai-rig-searxng/searxng_control status
+    printf 'SEARXNG_INSTALL=PASS action=activate\n'
+    ;;
+  --check) check_files ;;
+  *) fail "usage: $0 --install|--activate|--check" ;;
+esac

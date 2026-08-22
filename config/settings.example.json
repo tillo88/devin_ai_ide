@@ -64,7 +64,9 @@
     "auto_start_local": false
   },
   "web_search": {
-    "provider": "tinyfish",
+    "provider": "searxng",
+    "fallback": "tinyfish",
+    "providers": ["searxng", "tinyfish"],
     "tinyfish_api_key_env": "TINYFISH_API_KEY",
     "searxng_url": "http://127.0.0.1:8081",
     "fetch_pages": true,
@@ -78,7 +80,7 @@
     },
     "fetch_engine_note": "playwright = browser headless: rende anche i siti JS-only (skysport ecc.) e supera molti blocchi anti-scraper; fallback automatico a requests se non installato o se una pagina fallisce. Setup una volta: pip install playwright && playwright install chromium. Metti 'requests' per il fetch leggero senza browser.",
     "fetch_note": "2026-07-10: oltre agli snippet, scarica il CONTENUTO dei primi N risultati (User-Agent browser + estrazione testo stdlib, vedi web_search.py). Siti JS-only restituiscono poco: per quelli servira' Playwright/browser headless (futuro, meglio sul rig).",
-    "note": "Default pragmatico su TinyFish (key già disponibile via env var). SearXNG (porta 8081, non 8888: corretto, vedi ai-rig-iso-build/templates/hermes-extras.sh.tmpl) gira SOLO quando il rig è avviato nel ruolo 'hermes' — con DEVIN AI IDE il rig è normalmente in ruolo 'devin', quindi searxng_url qui sopra è raggiungibile solo se hai fatto grub-reboot verso hermes apposta. In pratica: resta su 'tinyfish' per l'uso quotidiano di DEVIN; passa a 'searxng' solo per sessioni in cui sai di aver spostato il rig sul ruolo hermes. Swap richiede solo il cambio di questo campo, vedi devin/ai/web_search.py."
+    "note": "Fallback web esplicito sul rig: SearXNG locale e privacy-first è il primario, TinyFish è usato solo se il primario fallisce. Inverti l'ordine di providers per casi d'uso che richiedono TinyFish come primario. Una risposta valida ma vuota non passa silenziosamente al provider successivo."
   },
   "understory": {
     "enabled": false,

@@ -13,25 +13,30 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from devin.core.goal_mode import Goal, GoalError, parse_acceptance
 from devin.core.goal_runner import Attempt, run_goal
 
 router = APIRouter()
 
-# Store in memoria dei goal-run (id -> record). Semplice come active_runs.
+# Store in memoria dei goal-run (id -> record). Lo snapshot attivo e' incluso
+# nel registro operativo unificato usato dal frontdoor: un goal in background
+# impedisce quindi il rilascio idle del backend anche senza richieste HTTP in
+# corso. La persistenza/resume completa resta una fase separata di Goal Mode.
 _goal_runs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
+ACTIVE_GOAL_STATUSES = frozenset({"starting", "running", "stopping"})
 
 
 class GoalRunRequest(BaseModel):
     project_path: str
     objective: str = ""
-    acceptance: list = []          # lista di {type, params} oppure stringhe DSL
+    acceptance: list = Field(default_factory=list)  # {type, params} o stringhe DSL
     mode: str = "scaffold"
     approval_policy: str = "auto"
     budget_steps: int = 20
@@ -45,6 +50,39 @@ VALID_ROLES = {"scaffolder", "tester", "swarm"}
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def goal_operations_snapshot() -> list[dict[str, Any]]:
+    """Ritorna soltanto i goal che possiedono ancora lavoro in background.
+
+    La forma e' intenzionalmente piccola e stabile: viene aggregata da
+    ``/api/operations/active`` senza esporre prompt, risultati o altri dati del
+    progetto al control plane.
+    """
+    with _lock:
+        return [
+            {
+                "operation_id": str(record["goal_run_id"]),
+                "kind": "goal",
+                "status": str(record["status"]),
+                "started_at": record.get("started_at"),
+                "updated_at": record.get("updated_at"),
+            }
+            for record in _goal_runs.values()
+            if record.get("status") in ACTIVE_GOAL_STATUSES
+        ]
+
+
+def _resolve_goal_project_path(project_path: str) -> str:
+    """Applica lo stesso gate e lo stesso routing ``work_dir`` dei run normali."""
+    from devin.core.project_space import ProjectSpace
+    from devin.ui.fast_app import _validated_project_path
+
+    project = _validated_project_path(project_path, allow_general=False)
+    work_dir = ProjectSpace(project).get_work_dir()
+    if work_dir:
+        project = _validated_project_path(work_dir, allow_general=False)
+    return project
 
 
 def goal_from_request(req: GoalRunRequest) -> Goal:
@@ -83,6 +121,7 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
     def on_attempt(attempt: Attempt) -> None:
         with _lock:
             rec["attempts"].append(_attempt_record(attempt))
+            rec["updated_at"] = _now()
 
     try:
         result = run_goal(goal, project_path, executor, verifier=verifier, on_attempt=on_attempt)
@@ -91,11 +130,13 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
             rec["reason"] = result.reason
             rec["result"] = result.to_dict()
             rec["finished_at"] = _now()
+            rec["updated_at"] = rec["finished_at"]
     except Exception as exc:  # difensivo: il thread non deve morire in silenzio
         with _lock:
             rec["status"] = "error"
             rec["reason"] = f"{type(exc).__name__}: {exc}"
             rec["finished_at"] = _now()
+            rec["updated_at"] = rec["finished_at"]
 
 
 def _build_actors(role: str, config_path: str | None = None, auto_apply: bool = False):
@@ -150,18 +191,18 @@ async def api_goal_run(req: GoalRunRequest):
 
     role = req.role if req.role in VALID_ROLES else "scaffolder"
 
-    # Risolvi SEMPRE a path assoluto: un project_path relativo verrebbe risolto
-    # rispetto alla CWD del servizio (imprevedibile) e non sapremmo dove sono
-    # finiti i file. Lo store e la risposta riportano il path assoluto reale.
-    from pathlib import Path
-    project = str(Path(req.project_path).expanduser().resolve())
+    # Stesso allowlist gate dei run/scaffold e stesso routing verso l'eventuale
+    # linked work_dir. In precedenza Goal Mode accettava e creava qualunque path
+    # assoluto, aggirando il contratto di progetto del resto del backend.
+    project = _resolve_goal_project_path(req.project_path)
     Path(project).mkdir(parents=True, exist_ok=True)
 
     goal_run_id = datetime.now().strftime("goal_%Y%m%d_%H%M%S_%f")
+    started_at = _now()
     with _lock:
         _goal_runs[goal_run_id] = {
             "goal_run_id": goal_run_id,
-            "status": "running",
+            "status": "starting",
             "reason": "",
             "objective": goal.objective,
             "mode": goal.mode,
@@ -171,7 +212,8 @@ async def api_goal_run(req: GoalRunRequest):
             "project_path": project,
             "attempts": [],
             "result": None,
-            "started_at": _now(),
+            "started_at": started_at,
+            "updated_at": started_at,
             "finished_at": None,
         }
 
@@ -183,12 +225,25 @@ async def api_goal_run(req: GoalRunRequest):
         with _lock:
             _goal_runs[goal_run_id]["status"] = "error"
             _goal_runs[goal_run_id]["reason"] = f"avvio esecutore fallito: {exc}"
+            _goal_runs[goal_run_id]["finished_at"] = _now()
+            _goal_runs[goal_run_id]["updated_at"] = _goal_runs[goal_run_id]["finished_at"]
         return {"error": str(exc), "goal_run_id": goal_run_id}
 
     t = threading.Thread(
         target=execute_goal_run, args=(goal_run_id, goal, project, executor, verifier), daemon=True,
     )
-    t.start()
+    try:
+        with _lock:
+            _goal_runs[goal_run_id]["status"] = "running"
+            _goal_runs[goal_run_id]["updated_at"] = _now()
+        t.start()
+    except Exception as exc:
+        with _lock:
+            _goal_runs[goal_run_id]["status"] = "error"
+            _goal_runs[goal_run_id]["reason"] = f"thread goal non avviato: {exc}"
+            _goal_runs[goal_run_id]["finished_at"] = _now()
+            _goal_runs[goal_run_id]["updated_at"] = _goal_runs[goal_run_id]["finished_at"]
+        return {"error": str(exc), "goal_run_id": goal_run_id}
     return {"goal_run_id": goal_run_id, "status": "started"}
 
 
