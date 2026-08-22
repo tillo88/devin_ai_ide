@@ -12,6 +12,9 @@ artefatto generato dal repository, non va modificata come fonte primaria.
 Gli intermedi Rust sono anch'essi generati, ma vivono nella sola cache
 `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`: non devono ricomparire nel
 checkout né essere confusi con il peso dell'app installata.
+Il bootstrap locale `0.2` gestisce prima configurazione e retry: Rust conserva
+il token sotto ACL utente/SYSTEM, mentre il probe “Test senza attivare” verifica
+soltanto la raggiungibilità TCP del frontdoor e non può cambiare ruolo GPU.
 
 Sul rig il frontdoor è sempre attivo e leggero. Quando nessun frontend è
 collegato, Clippy può restare residente. Alla prima richiesta DEVIN il frontdoor

@@ -208,6 +208,8 @@ knowledge governance superfici reali e coerenti con il routing backend.
 
 - build MSI/NSIS della thin client senza Python, WSL o modelli locali;
 - configurazione `%APPDATA%\\DEVIN\\desktop.json` con ACL utente/SYSTEM;
+- onboarding nativo, modifica impostazioni dal failure screen e probe TCP-only
+  che non invia credenziali e non attiva DEVIN;
 - cache Cargo unica fuori da checkout/host in
   `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`, con pulizia validata su
   percorsi esatti (le cache Tauri non vengono migrate perche' contengono path
@@ -218,6 +220,8 @@ knowledge governance superfici reali e coerenti con il routing backend.
 Receipt C5: NSIS e MSI generati da `main`; installazione/disinstallazione NSIS
 verificate senza avviare il modello e con configurazione utente invariata. Vedi
 [`WINDOWS_RELEASE_RECEIPT_2026-08-22.md`](WINDOWS_RELEASE_RECEIPT_2026-08-22.md).
+L'onboarding nativo entra nella release `0.2.0`; i dati persistiti restano
+interamente Rust-side e il token non viene mai riletto dalla UI.
 
 ## Ordine di verifica
 
