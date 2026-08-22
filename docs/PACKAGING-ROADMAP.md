@@ -33,8 +33,11 @@ fallback. The desktop must fail visibly if its configured rig is unavailable.
 - [x] Produce and artifact-verify NSIS `.exe` and MSI installers.
 - [x] Exercise current-user NSIS install, Start-menu/Desktop shortcuts and
       clean uninstall while preserving `%APPDATA%\DEVIN\desktop.json`.
-- [ ] Confirm the release executable opens the configured rig front door from
-      a normal, non-developer Windows account.
+- [x] Confirm the installed release executable opens the configured rig front
+      door from the owner's normal Windows session and completes one real
+      Clippy -> DEVIN -> cockpit connection.
+- [ ] Repeat install/onboarding on a clean non-developer Windows VM with
+      WebView2 before declaring distribution hardening complete.
 
 Release intermediates use the single external cache
 `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`. Only installers and a redacted
@@ -44,6 +47,8 @@ state enter the release directory. A normal release refuses a dirty Git tree;
 
 The exact build and install/uninstall evidence is recorded in
 [`WINDOWS_RELEASE_RECEIPT_2026-08-22.md`](WINDOWS_RELEASE_RECEIPT_2026-08-22.md).
+The live installed-client lifecycle and chat evidence is recorded separately in
+[`WINDOWS_FUNCTIONAL_RECEIPT_2026-08-22.md`](WINDOWS_FUNCTIONAL_RECEIPT_2026-08-22.md).
 
 ## Phase 3 — onboarding
 

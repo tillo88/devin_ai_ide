@@ -225,6 +225,39 @@ interamente Rust-side e il token non viene mai riletto dalla UI.
 Receipt dedicata:
 [`WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md`](WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md).
 
+Il collaudo funzionale della release installata ha verificato una transizione
+reale Clippy -> DEVIN, il cockpit e una chat SSE persistita. La ricevuta include
+tempi e finding senza ripetere probe modello/hardware:
+[`WINDOWS_FUNCTIONAL_RECEIPT_2026-08-22.md`](WINDOWS_FUNCTIONAL_RECEIPT_2026-08-22.md).
+
+## C6 — interaction polish dopo il primo collaudo live
+
+Stato: **next**, derivato dal collaudo funzionale della release `0.2.0`.
+
+- sostituire “web sempre attiva” con `web auto`: il backend attiva la ricerca
+  solo per intento esplicito e sceglie la catena SearXNG/TinyFish secondo il
+  routing configurato; deve restare possibile forzare la ricerca dalla UI;
+- durante un'inferenza lunga, un singolo poll `/api/mind/status` fallito non deve
+  trasformare il cockpit in `Error`: preservare l'ultimo snapshot buono e
+  distinguere `busy`, `aggiornamento` e fault reale;
+- mostrare nel flusso chat l'alias/profilo del modello, non il path GGUF assoluto;
+- separare `<think>` dalla risposta finale in un pannello Reasoning richiudibile;
+- esporre tempo al primo token e tempo totale dello stream con telemetria
+  derivata dagli eventi reali, senza percentuali inventate.
+
+Acceptance C6:
+
+- una richiesta senza intento web non chiama alcun provider e non inietta
+  risultati web nel prompt;
+- una richiesta web esplicita usa il provider ordinato/fallback e rende la fonte
+  osservabile;
+- la barra resta `DEVIN ready/busy` durante una chat riuscita e mostra `Error`
+  soltanto con un fault verificato;
+- risposta finale pulita, reasoning consultabile e identita' modello senza path
+  interno nella superficie primaria;
+- test offline dei contratti frontend/backend prima di un nuovo smoke live; una
+  sola ulteriore attivazione modello, senza SHA, 32K, NVML o probe USB.
+
 ## Ordine di verifica
 
 Ogni milestone segue: test offline -> PR/CI -> source deploy controllato -> smoke
