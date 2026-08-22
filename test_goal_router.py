@@ -141,6 +141,66 @@ def test_execute_goal_run_cattura_eccezioni(tmp_path: Path):
     rec = goal_router._goal_runs[gid]
     assert rec["status"] == "error"
     assert "executor rotto" in rec["reason"]
+    assert "active_dispatch" not in rec
+
+
+def test_goal_operations_snapshot_espone_solo_actor_realmente_in_flight(tmp_path: Path):
+    from devin.core.goal_mode import Criterion, Goal
+
+    gid = "goal_dispatch_live"
+    goal = Goal(
+        objective="crea main",
+        acceptance=[Criterion("file_exists", {"path": "main.py"})],
+        mode=MODE_SCAFFOLD,
+    )
+    goal_router._goal_runs[gid] = {
+        "goal_run_id": gid,
+        "status": "running",
+        "role": "swarm",
+        "reason": "",
+        "attempts": [],
+        "result": None,
+        "started_at": "now",
+        "updated_at": "now",
+        "finished_at": None,
+    }
+    entered = goal_router.threading.Event()
+    release = goal_router.threading.Event()
+
+    def slow_builder(g, root, ctx):
+        entered.set()
+        assert release.wait(2)
+        (Path(root) / "main.py").write_text("x=1\n", encoding="utf-8")
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    thread = goal_router.threading.Thread(
+        target=goal_router.execute_goal_run,
+        args=(gid, goal, str(tmp_path), slow_builder),
+    )
+    try:
+        thread.start()
+        assert entered.wait(2)
+        operation = goal_router.goal_operations_snapshot()[0]
+        assert operation["requested_role"] == "swarm"
+        assert operation["dispatch"] == {
+            "actor": "scaffolder",
+            "phase": "execute",
+            "attempt_index": 0,
+            "status": "running",
+            "started_at": operation["dispatch"]["started_at"],
+        }
+        release.set()
+        thread.join(2)
+        assert not thread.is_alive()
+        assert goal_router._goal_runs[gid]["last_dispatch"]["actor"] == "scaffolder"
+        assert "active_dispatch" not in goal_router._goal_runs[gid]
+        event_types = [event["type"] for event in goal_router._goal_runs[gid]["events"]]
+        assert "goal_dispatch_started" in event_types
+        assert "goal_dispatch_finished" in event_types
+    finally:
+        release.set()
+        thread.join(2)
+        goal_router._goal_runs.pop(gid, None)
 
 
 def test_goal_operations_snapshot_include_solo_lavoro_attivo():

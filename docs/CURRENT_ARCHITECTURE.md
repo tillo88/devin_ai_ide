@@ -86,6 +86,12 @@ built-in non sono presentati come MCP e il registro MCP esterno resta
 `unconfigured` con zero server. Le memorie raw non sono federate né esposte,
 mentre la copertura reviewer è disponibilità di revisione e non un PASS.
 
+La telemetria C4.2 non confonde i ruoli modello con gli actor del mini-swarm.
+`/api/operations/active` aggiunge a un Goal il ruolo richiesto e il dispatch
+in-flight di Scaffolder, Debugger o Tester; il campo esiste soltanto mentre la
+chiamata actor è realmente aperta e viene rimosso anche su eccezione. Run e
+training senza una sorgente actor restano esplicitamente “non osservati”.
+
 ## 3. Ricerca web: SearXNG e TinyFish
 
 I provider formano una catena esplicita e ordinata. Profilo locale/privacy:

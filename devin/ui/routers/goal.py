@@ -105,17 +105,24 @@ def goal_operations_snapshot() -> list[dict[str, Any]]:
     progetto al control plane.
     """
     with _lock:
-        return [
-            {
+        operations = []
+        for record in _goal_runs.values():
+            if record.get("status") not in ACTIVE_GOAL_STATUSES:
+                continue
+            operation = {
                 "operation_id": str(record["goal_run_id"]),
                 "kind": "goal",
                 "status": str(record["status"]),
                 "started_at": record.get("started_at"),
                 "updated_at": record.get("updated_at"),
             }
-            for record in _goal_runs.values()
-            if record.get("status") in ACTIVE_GOAL_STATUSES
-        ]
+            if record.get("role"):
+                operation["requested_role"] = str(record["role"])
+            dispatch = record.get("active_dispatch")
+            if isinstance(dispatch, dict) and dispatch.get("actor"):
+                operation["dispatch"] = dict(dispatch)
+            operations.append(operation)
+        return operations
 
 
 def _resolve_goal_project_path(project_path: str) -> str:
@@ -187,12 +194,88 @@ def _goal_panel_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _instrument_goal_actor(goal_run_id: str, actor, requested_role: str, phase: str):
+    """Publish the actor only for the exact lifetime of a real Goal step.
+
+    The production swarm uses ``default_build_policy`` inside its dispatcher;
+    resolving the same deterministic policy here makes the in-flight actor
+    observable before the blocking model call.  The completed outcome remains
+    authoritative and can refine the selected strategy afterwards.
+    """
+    if actor is None:
+        return None
+
+    def instrumented(goal: Goal, project_root: Path, ctx):
+        selected = requested_role
+        if phase == "verify":
+            selected = "tester"
+        elif requested_role == "swarm":
+            from devin.core.goal_executors import default_build_policy
+
+            selected = default_build_policy(goal, project_root, ctx)
+        if selected not in {"scaffolder", "debugger", "tester"}:
+            selected = "executor"
+
+        dispatch = {
+            "actor": selected,
+            "phase": phase,
+            "attempt_index": int(ctx.attempt_index),
+            "status": "running",
+            "started_at": _now(),
+        }
+        with _lock:
+            record = _goal_runs.get(goal_run_id)
+            if record is not None:
+                record["active_dispatch"] = dict(dispatch)
+                record["updated_at"] = dispatch["started_at"]
+        _append_goal_event(
+            goal_run_id,
+            "goal_dispatch_started",
+            message=f"Dispatch {selected}",
+            data=dispatch,
+        )
+
+        outcome = None
+        final_status = "finished"
+        try:
+            outcome = actor(goal, project_root, ctx)
+            return outcome
+        except Exception:
+            final_status = "error"
+            raise
+        finally:
+            finished = {
+                **dispatch,
+                "actor": str(getattr(outcome, "strategy", "") or selected),
+                "status": final_status,
+                "finished_at": _now(),
+            }
+            with _lock:
+                record = _goal_runs.get(goal_run_id)
+                if record is not None:
+                    record.pop("active_dispatch", None)
+                    record["last_dispatch"] = dict(finished)
+                    record["updated_at"] = finished["finished_at"]
+            _append_goal_event(
+                goal_run_id,
+                "goal_dispatch_finished",
+                level="error" if final_status == "error" else "info",
+                message=f"Dispatch {finished['actor']} concluso",
+                data=finished,
+            )
+
+    return instrumented
+
+
 def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, verifier=None) -> None:
     """Esegue il loop e aggiorna il record in memoria. Sincrona: il chiamante la
     mette su thread. `executor` (e opzionale `verifier`) iniettati -> testabile
     con stub."""
     rec = _goal_runs[goal_run_id]
     stop_event = _goal_stop_events.get(goal_run_id)
+    requested_role = str(rec.get("role") or ("swarm" if verifier is not None else "scaffolder"))
+    observed_executor = _instrument_goal_actor(goal_run_id, executor, requested_role, "execute")
+    observed_verifier = _instrument_goal_actor(goal_run_id, verifier, requested_role, "verify")
 
     def on_attempt(attempt: Attempt) -> None:
         attempt_record = _attempt_record(attempt)
@@ -212,8 +295,8 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
         result = run_goal(
             goal,
             project_path,
-            executor,
-            verifier=verifier,
+            observed_executor,
+            verifier=observed_verifier,
             on_attempt=on_attempt,
             should_stop=stop_event.is_set if stop_event is not None else None,
         )

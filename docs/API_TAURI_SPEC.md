@@ -149,7 +149,18 @@ frontdoor for their complete proxy lifetime.
   "schema": "devin_active_operations_v1",
   "busy": true,
   "operations": [
-    {"operation_id": "goal_...", "kind": "goal", "status": "running"}
+    {
+      "operation_id": "goal_...",
+      "kind": "goal",
+      "status": "running",
+      "requested_role": "swarm",
+      "dispatch": {
+        "actor": "scaffolder",
+        "phase": "execute",
+        "attempt_index": 0,
+        "status": "running"
+      }
+    }
   ],
   "counts": {"goal": 1}
 }
@@ -157,6 +168,11 @@ frontdoor for their complete proxy lifetime.
 
 Missing/malformed state must be interpreted as busy or unverifiable, never as
 permission to stop the backend.
+
+The optional `requested_role` and `dispatch` fields exist only for Goal Mode.
+`dispatch` is present solely while a real actor call is in flight and is
+removed at step completion, including exceptions. Ordinary run/training items
+do not acquire a guessed actor. No project path, prompt or raw log is exposed.
 
 ### GET /api/mind/status
 **Purpose**: Lightweight structured state for the Codex-like right-side Mind panel. This endpoint must not perform slow remote health checks; use `/api/health` and `/api/models/status` for deeper probes.

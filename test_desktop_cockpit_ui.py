@@ -129,15 +129,19 @@ def test_cockpit_exposes_honest_central_governance_workspace():
         "governance-policy-badge",
         "governance-mcp-status",
         "governance-agent-grid",
+        "governance-dispatch-summary",
+        "governance-dispatch-list",
         "governance-tool-list",
         "governance-knowledge-counts",
         "governance-council-axes",
     ):
         assert f'id="{element_id}"' in html
     assert 'fetchJson("/api/tools/status")' in script
+    assert 'fetchJson("/api/operations/active")' in script
     assert "renderCentralGovernance" in script
     assert "future-disabled" in script
     assert "needs_evidence" in script
+    assert "nessun ruolo dedotto" in script
     assert "built-in ≠ MCP" in html
     assert '.workstream-panel[data-center-view="governance"]' in css
     assert "/api/terminal/input" not in script

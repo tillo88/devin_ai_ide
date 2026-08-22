@@ -188,8 +188,21 @@ knowledge governance superfici reali e coerenti con il routing backend.
   revisionato;
 - Council rende ogni asse come `reviewer disponibile` oppure `needs_evidence`:
   la copertura del roster non viene mai mostrata come verdetto PASS;
-- shell/PWA aggiornata a `v12`. C4.2 potrà aggiungere telemetria di dispatch
-  soltanto quando esisterà una sorgente runtime autorevole.
+- shell/PWA aggiornata a `v12`.
+
+### C4.2 — telemetria dispatch Goal consegnata (2026-08-22)
+
+- il registro operativo espone `requested_role` per i Goal e un blocco
+  `dispatch` soltanto durante la chiamata reale di Scaffolder, Debugger o Tester;
+- lo stato in-flight viene rimosso in `finally`, quindi anche un actor che solleva
+  eccezione non rimane falsamente “running”;
+- il cockpit elenca tutte le operazioni background, ma non attribuisce un actor
+  a run o training che non forniscono quella telemetria;
+- il mini-swarm Goal e i ruoli modello del rig restano due livelli distinti:
+  Clippy/DEVIN/Hermes/Teacher sono eleggibilità lifecycle, mentre
+  Scaffolder/Debugger/Tester sono dispatch del loop Goal;
+- eventi `goal_dispatch_started`/`goal_dispatch_finished` non contengono path,
+  prompt o log raw; shell/PWA aggiornata a `v13`.
 
 ## C5 — packaging Windows
 
