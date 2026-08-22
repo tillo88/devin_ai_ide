@@ -79,6 +79,13 @@ rig, chiavi mancanti e altri warning operativi non vengono nascosti. Il cockpit
 non collega il placeholder `/api/terminal/input` finché non esiste ownership
 reale del processo e di stdin.
 
+La superficie Governance C4.1 legge quattro contratti separati: routing dei
+ruoli, registro tool, knowledge exchange e Council. `enabled` significa soltanto
+eleggibile, non residente; la UI non inventa telemetria di dispatch. I tool HTTP
+built-in non sono presentati come MCP e il registro MCP esterno resta
+`unconfigured` con zero server. Le memorie raw non sono federate né esposte,
+mentre la copertura reviewer è disponibilità di revisione e non un PASS.
+
 ## 3. Ricerca web: SearXNG e TinyFish
 
 I provider formano una catena esplicita e ordinata. Profilo locale/privacy:

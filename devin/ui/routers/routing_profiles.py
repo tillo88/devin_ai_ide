@@ -24,6 +24,7 @@ async def api_routing_status():
                 "enabled": bool(config.get("enabled")),
                 "future": bool(config.get("future", False)),
                 "capabilities": config.get("capabilities", []),
+                "lifecycle_owner": config.get("lifecycle_owner", "unassigned"),
             }
             for role, config in profile.roles.items()
         },

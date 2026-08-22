@@ -60,6 +60,8 @@
 - `GET /api/council/status` for Evidence Council coverage
 - `GET /api/routing/status` and `POST /api/routing/plan` for the no-auto-switch
   role-routing preview
+- `GET /api/tools/status` for the deny-by-default built-in tool inventory and
+  the explicit external MCP registry state
 
 ### Goal Mode control
 
@@ -115,6 +117,22 @@ content-addressed experiment result.
 Routing is a planning contract. `activation_required=true` means the existing
 rig orchestrator must perform a separately authorized transition. The API never
 starts, stops or swaps a model and always reports `automatic_switch=false`.
+
+### Tool governance registry
+
+- `GET /api/tools/status`
+
+The response schema is `devin_tool_registry_v1`. It is a read-only inventory
+and never probes or starts a model. `policy.default` is `deny`; only listed
+surfaces are admitted. `external_mcp` is separate from built-in HTTP tools and
+reports `unconfigured`, zero registered servers and invocation disabled until
+an actual MCP registry exists.
+
+Every built-in entry declares its access class, actual endpoints, guards and
+bounded limits. In particular, change-manifest mutation remains digest/review
+gated, project files and run logs are read-only, knowledge ingestion requires
+an explicit project-scoped user action, routing is plan-only, and the terminal
+input placeholder is disabled and absent from the cockpit.
 
 
 ## Health & Models
