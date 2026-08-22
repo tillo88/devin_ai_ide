@@ -33,7 +33,7 @@ percentuale, nessun completamento dedotto dal testo del modello.
 
 ## C1 — cockpit strutturato
 
-Stato: implementato nel branch `codex/devin-windows-app-v1`.
+Stato: merged in `main` con PR `#14` (`540ad4ded635992794f1a9e45f698f6dedc461e0`).
 
 - barra superiore con GPU slot, modello attivo e Context Steward;
 - Goal panel read-only da `/api/goal` con criteri, esito, step e tempo;
@@ -49,6 +49,28 @@ Acceptance:
 - modello/slot non risultano ready senza health reale;
 - bundle Tauri locale piccolo e riproducibile;
 - `/`, `/chat` e `/history` restano fallback.
+
+Validazione reale del 2026-08-22:
+
+- thin client Tauri nativo avviato su Windows e finestra responsiva;
+- frontdoor autenticato passato da Clippy a DEVIN tramite il model-slot broker;
+- modello DEVIN pronto in 8m37s sul supporto USB attuale;
+- health, training, run, workspace, knowledge exchange, council, routing, goal e
+  mind status tutti HTTP 200;
+- TinyFish presente e SearXNG, AutoMem e Understory attivi;
+- nessun `nvidia-smi`, hash GGUF o probe 32K eseguito dal frontend o dallo
+  smoke test;
+- chiusura Windows inviata come normale evento finestra; il frontdoor mantiene
+  il run remoto e applica il rilascio solo dopo i gate idle/busy.
+- dopo 600 secondi idle il backend e il modello DEVIN sono diventati inattivi;
+  Clippy è tornato unico residente e healthy, senza stop manuale, SIGKILL o
+  processo `nvidia-smi`.
+
+La prova ha anche evidenziato un requisito UI vincolante: una unità systemd
+`active` non equivale a un modello pronto. La barra superiore deve mostrare
+`loading_devin_model` finché la health del trasporto dichiarato nell'envelope
+non risponde; se la stima viene superata deve mostrare “stima in aggiornamento”,
+mai un falso `ETA 0`.
 
 ## C2 — Goal operativo
 
