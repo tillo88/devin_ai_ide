@@ -54,6 +54,9 @@ The exact build and install/uninstall evidence is recorded in
 - [x] Allow editing connection settings from the failure screen without
       returning the stored token to the UI.
 
+Release and validation evidence:
+[`WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md`](WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md).
+
 ## Phase 4 — hardening
 
 - [ ] Code-sign executable and installer to reduce SmartScreen warnings.

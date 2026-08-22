@@ -222,6 +222,8 @@ verificate senza avviare il modello e con configurazione utente invariata. Vedi
 [`WINDOWS_RELEASE_RECEIPT_2026-08-22.md`](WINDOWS_RELEASE_RECEIPT_2026-08-22.md).
 L'onboarding nativo entra nella release `0.2.0`; i dati persistiti restano
 interamente Rust-side e il token non viene mai riletto dalla UI.
+Receipt dedicata:
+[`WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md`](WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md).
 
 ## Ordine di verifica
 
