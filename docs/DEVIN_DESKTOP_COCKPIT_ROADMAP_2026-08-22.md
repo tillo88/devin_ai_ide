@@ -110,6 +110,25 @@ esplicito di continuità.
 - terminale/log come superficie secondaria, filtrando warning noti dai fault;
 - nessuna scrittura fuori dal project/work_dir autorizzato.
 
+### C3.1 — file tree e viewer read-only consegnati (2026-08-22)
+
+- la rail sinistra mostra un albero bounded del progetto selezionato; se esiste
+  un `work_dir`, anche la lettura viene instradata a quella root dopo una
+  seconda validazione allowlist;
+- il browser riceve soltanto path relativi: niente root assoluta, runtime
+  `.devin`, cache, virtualenv, segreti comuni, chiavi o certificati;
+- la scansione non segue symlink ed è limitata a 1500 file, 30000 elementi e
+  profondità 12;
+- il tab centrale Editor legge soltanto testo UTF-8, con massimo 256 KiB per
+  anteprima, binari disabilitati e stato di troncamento visibile;
+- non esiste un endpoint project-scoped di salvataggio e la UI non richiama il
+  writer legacy: le modifiche restano nel flusso diff/review/apply;
+- la cache della shell passa a `v9`; l'overview destra non ripete più la
+  scansione file e riusa il tree già caricato.
+
+Resta C3.2: portare il diff verificato nello stesso spazio centrale con vista
+affiancata, mantenendo Apply/Reject legati al manifest del run.
+
 ## C4 — agenti, strumenti e conoscenza
 
 - Agent Swarm mostra ruoli logici e stato reale del dispatch;
