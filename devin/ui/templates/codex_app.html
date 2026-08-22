@@ -207,6 +207,69 @@
           <h2>Goal Mode</h2>
           <span class="goal-status-badge" id="goal-status-badge">idle</span>
         </div>
+        <details class="goal-launcher" id="goal-launcher" open>
+          <summary>
+            <span>Nuovo goal</span>
+            <small id="goal-project-label">Seleziona un progetto</small>
+          </summary>
+          <div class="goal-form">
+            <label class="goal-field goal-field-wide">
+              <span>Obiettivo</span>
+              <textarea id="goal-objective-input" rows="3" maxlength="1200" placeholder="Descrivi il risultato concreto da ottenere"></textarea>
+            </label>
+            <div class="goal-form-grid">
+              <label class="goal-field">
+                <span>Modalità</span>
+                <select id="goal-mode-select">
+                  <option value="maintenance">Maintenance</option>
+                  <option value="scaffold">Scaffold autonomo</option>
+                </select>
+              </label>
+              <label class="goal-field">
+                <span>Ruolo</span>
+                <select id="goal-role-select">
+                  <option value="scaffolder">Scaffolder</option>
+                  <option value="swarm">Swarm + verifica</option>
+                  <option value="tester">Tester</option>
+                </select>
+              </label>
+              <label class="goal-field">
+                <span>Approvazione</span>
+                <select id="goal-approval-select">
+                  <option value="manual">Manuale</option>
+                  <option value="auto">Automatica</option>
+                </select>
+              </label>
+              <label class="goal-field">
+                <span>Budget</span>
+                <span class="goal-budget-inputs">
+                  <input id="goal-budget-steps" type="number" min="1" max="100" value="12" title="Numero massimo di step">
+                  <input id="goal-budget-minutes" type="number" min="1" max="480" value="30" title="Minuti massimi">
+                </span>
+              </label>
+            </div>
+            <div class="goal-criteria-builder">
+              <span class="goal-builder-label">Criteri verificabili</span>
+              <div class="goal-criterion-entry">
+                <select id="goal-criterion-type" title="Tipo criterio">
+                  <option value="tests_pass">Test verdi</option>
+                  <option value="file_exists">File presente</option>
+                  <option value="absence_of_pattern">Pattern assente</option>
+                  <option value="contains_text">Testo presente</option>
+                </select>
+                <input id="goal-criterion-value" type="text" placeholder="Nessun parametro richiesto">
+                <button class="tiny-button" id="goal-add-criterion" type="button">Aggiungi</button>
+              </div>
+              <div class="goal-preset-row">
+                <button type="button" data-goal-preset="tests">+ Test verdi</button>
+                <button type="button" data-goal-preset="no-todos">+ Niente TODO/FIXME</button>
+              </div>
+              <div class="goal-criteria-draft" id="goal-criteria-draft"></div>
+            </div>
+            <p class="goal-form-feedback" id="goal-form-feedback">I criteri vengono verificati sul progetto selezionato.</p>
+            <button class="goal-start-button" id="goal-start-button" type="button">Avvia Goal</button>
+          </div>
+        </details>
         <div class="goal-empty" id="goal-empty">
           Nessun goal attivo. I run normali restano disponibili dalla chat.
         </div>
@@ -216,6 +279,7 @@
             <strong id="goal-objective">—</strong>
           </div>
           <div class="goal-meta" id="goal-meta"></div>
+          <div class="goal-reason" id="goal-reason" hidden></div>
           <div class="goal-checklist" id="goal-checklist"></div>
           <div class="goal-budget-grid">
             <div class="goal-budget">
@@ -227,6 +291,7 @@
               <span class="goal-budget-track"><span id="goal-time-fill"></span></span>
             </div>
           </div>
+          <button class="goal-stop-button" id="goal-stop-button" type="button" hidden>Ferma dopo lo step corrente</button>
         </div>
       </section>
 

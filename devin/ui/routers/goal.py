@@ -29,6 +29,7 @@ router = APIRouter()
 # impedisce quindi il rilascio idle del backend anche senza richieste HTTP in
 # corso. La persistenza/resume completa resta una fase separata di Goal Mode.
 _goal_runs: dict[str, dict[str, Any]] = {}
+_goal_stop_events: dict[str, threading.Event] = {}
 _lock = threading.Lock()
 ACTIVE_GOAL_STATUSES = frozenset({"starting", "running", "stopping"})
 
@@ -39,8 +40,8 @@ class GoalRunRequest(BaseModel):
     acceptance: list = Field(default_factory=list)  # {type, params} o stringhe DSL
     mode: str = "scaffold"
     approval_policy: str = "auto"
-    budget_steps: int = 20
-    budget_seconds: int = 3600
+    budget_steps: int = Field(default=20, ge=1, le=100)
+    budget_seconds: int = Field(default=3600, ge=1, le=28800)
     role: str = "scaffolder"        # scaffolder | tester | swarm (build + verify)
     goal: Optional[dict] = None     # alternativa: intero goal_v1
 
@@ -99,6 +100,10 @@ def goal_from_request(req: GoalRunRequest) -> Goal:
             budget_seconds=req.budget_seconds,
         )
     goal.validate()
+    if goal.budget_steps > 100:
+        raise GoalError("budget_steps supera il massimo di 100")
+    if goal.budget_seconds > 28800:
+        raise GoalError("budget_seconds supera il massimo di 28800")
     return goal
 
 
@@ -129,6 +134,7 @@ def _goal_panel_record(record: dict[str, Any]) -> dict[str, Any]:
             "budget_steps",
             "budget_seconds",
             "attempts",
+            "evaluation",
             "reason",
             "started_at",
             "updated_at",
@@ -142,18 +148,28 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
     mette su thread. `executor` (e opzionale `verifier`) iniettati -> testabile
     con stub."""
     rec = _goal_runs[goal_run_id]
+    stop_event = _goal_stop_events.get(goal_run_id)
 
     def on_attempt(attempt: Attempt) -> None:
         with _lock:
             rec["attempts"].append(_attempt_record(attempt))
+            rec["evaluation"] = dict(attempt.evaluation)
             rec["updated_at"] = _now()
 
     try:
-        result = run_goal(goal, project_path, executor, verifier=verifier, on_attempt=on_attempt)
+        result = run_goal(
+            goal,
+            project_path,
+            executor,
+            verifier=verifier,
+            on_attempt=on_attempt,
+            should_stop=stop_event.is_set if stop_event is not None else None,
+        )
         with _lock:
             rec["status"] = result.status
             rec["reason"] = result.reason
             rec["result"] = result.to_dict()
+            rec["evaluation"] = dict(result.evaluation)
             rec["finished_at"] = _now()
             rec["updated_at"] = rec["finished_at"]
     except Exception as exc:  # difensivo: il thread non deve morire in silenzio
@@ -162,6 +178,9 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
             rec["reason"] = f"{type(exc).__name__}: {exc}"
             rec["finished_at"] = _now()
             rec["updated_at"] = rec["finished_at"]
+    finally:
+        with _lock:
+            _goal_stop_events.pop(goal_run_id, None)
 
 
 def _build_actors(role: str, config_path: str | None = None, auto_apply: bool = False):
@@ -214,6 +233,18 @@ async def api_goal_run(req: GoalRunRequest):
     except (GoalError, ValueError, KeyError) as exc:
         return {"error": f"goal non valido: {exc}"}
 
+    with _lock:
+        active = next(
+            (record for record in _goal_runs.values() if record.get("status") in ACTIVE_GOAL_STATUSES),
+            None,
+        )
+        if active:
+            return {
+                "error": "un goal-run e' gia' in esecuzione",
+                "goal_run_id": active.get("goal_run_id"),
+                "status": active.get("status"),
+            }
+
     role = req.role if req.role in VALID_ROLES else "scaffolder"
 
     # Stesso allowlist gate dei run/scaffold e stesso routing verso l'eventuale
@@ -225,6 +256,7 @@ async def api_goal_run(req: GoalRunRequest):
     goal_run_id = datetime.now().strftime("goal_%Y%m%d_%H%M%S_%f")
     started_at = _now()
     with _lock:
+        _goal_stop_events[goal_run_id] = threading.Event()
         _goal_runs[goal_run_id] = {
             "goal_run_id": goal_run_id,
             "status": "starting",
@@ -239,6 +271,7 @@ async def api_goal_run(req: GoalRunRequest):
             "budget_seconds": goal.budget_seconds,
             "project_path": project,
             "attempts": [],
+            "evaluation": {},
             "result": None,
             "started_at": started_at,
             "updated_at": started_at,
@@ -251,6 +284,7 @@ async def api_goal_run(req: GoalRunRequest):
         executor, verifier = _build_actors(role, auto_apply=not goal.requires_checkpoint())
     except Exception as exc:
         with _lock:
+            _goal_stop_events.pop(goal_run_id, None)
             _goal_runs[goal_run_id]["status"] = "error"
             _goal_runs[goal_run_id]["reason"] = f"avvio esecutore fallito: {exc}"
             _goal_runs[goal_run_id]["finished_at"] = _now()
@@ -267,12 +301,46 @@ async def api_goal_run(req: GoalRunRequest):
         t.start()
     except Exception as exc:
         with _lock:
+            _goal_stop_events.pop(goal_run_id, None)
             _goal_runs[goal_run_id]["status"] = "error"
             _goal_runs[goal_run_id]["reason"] = f"thread goal non avviato: {exc}"
             _goal_runs[goal_run_id]["finished_at"] = _now()
             _goal_runs[goal_run_id]["updated_at"] = _goal_runs[goal_run_id]["finished_at"]
         return {"error": str(exc), "goal_run_id": goal_run_id}
     return {"goal_run_id": goal_run_id, "status": "started"}
+
+
+@router.post("/api/goal/{goal_run_id}/stop")
+async def api_goal_stop(goal_run_id: str):
+    """Richiede uno stop cooperativo, effettivo alla fine dello step corrente."""
+    with _lock:
+        rec = _goal_runs.get(goal_run_id)
+        if not rec:
+            return {"error": "goal-run non trovato", "goal_run_id": goal_run_id}
+        if rec.get("status") == "stopped":
+            return {
+                "goal_run_id": goal_run_id,
+                "status": "stopped",
+                "reason": rec.get("reason", ""),
+            }
+        if rec.get("status") not in ACTIVE_GOAL_STATUSES:
+            return {
+                "error": f"goal-run non arrestabile nello stato {rec.get('status')}",
+                "goal_run_id": goal_run_id,
+                "status": rec.get("status"),
+            }
+        stop_event = _goal_stop_events.get(goal_run_id)
+        if stop_event is None:
+            return {"error": "controllo stop non disponibile", "goal_run_id": goal_run_id}
+        stop_event.set()
+        rec["status"] = "stopping"
+        rec["reason"] = "stop richiesto; attendo la fine dello step corrente"
+        rec["updated_at"] = _now()
+        return {
+            "goal_run_id": goal_run_id,
+            "status": rec["status"],
+            "reason": rec["reason"],
+        }
 
 
 @router.get("/api/goal/{goal_run_id}")

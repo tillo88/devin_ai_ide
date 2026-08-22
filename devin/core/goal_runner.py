@@ -37,6 +37,7 @@ RESULT_SUCCESS = "success"
 RESULT_BLOCKED = "blocked"
 RESULT_BUDGET = "budget_exhausted"
 RESULT_NEEDS_APPROVAL = "needs_approval"
+RESULT_STOPPED = "stopped"
 
 
 @dataclass
@@ -111,6 +112,7 @@ def run_goal(
     max_no_progress: int = 4,
     clock: Callable[[], float] = time.monotonic,
     on_attempt: Callable[[Attempt], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> GoalRunResult:
     """Esegue il loop della Goal Mode fino a successo / blocco / budget / pausa.
 
@@ -132,7 +134,16 @@ def run_goal(
     goal.validate()
     root = Path(project_root)
 
+    # Stop cooperativo: non si uccide mai il thread mentre un attore o un
+    # verificatore sta scrivendo. La richiesta viene osservata prima di ogni
+    # fase costosa e subito dopo lo step corrente.
+    stop_requested = should_stop or (lambda: False)
+    if stop_requested():
+        return GoalRunResult(RESULT_STOPPED, "stop richiesto dall'utente", [], {})
+
     ev: GoalEvaluation = evaluate_goal(goal, root)
+    if stop_requested():
+        return GoalRunResult(RESULT_STOPPED, "stop richiesto dall'utente", [], ev.to_dict())
     if ev.satisfied and verifier is None:
         return GoalRunResult(RESULT_SUCCESS, "gia' soddisfatto all'avvio", [], ev.to_dict())
 
@@ -143,6 +154,8 @@ def run_goal(
     start = clock()
 
     for step in range(goal.budget_steps):
+        if stop_requested():
+            return GoalRunResult(RESULT_STOPPED, "stop richiesto dall'utente", attempts, ev.to_dict())
         if clock() - start >= goal.budget_seconds:
             return GoalRunResult(RESULT_BUDGET, "tempo esaurito", attempts, ev.to_dict())
 
@@ -167,6 +180,14 @@ def run_goal(
                 on_attempt(attempt)
             except Exception:
                 pass  # un observer non deve mai far cadere il loop
+
+        if stop_requested():
+            return GoalRunResult(
+                RESULT_STOPPED,
+                "stop richiesto dall'utente dopo la fine dello step corrente",
+                attempts,
+                ev.to_dict(),
+            )
 
         if verifying:
             if ev.satisfied:

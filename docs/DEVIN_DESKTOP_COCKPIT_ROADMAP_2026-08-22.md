@@ -80,6 +80,19 @@ mai un falso `ETA 0`.
 - evidenza di ogni criterio collegata a test, comando o manifest;
 - stato live via stream, non solo polling.
 
+### C2.1 — controllo locale consegnato (2026-08-22)
+
+- form cockpit collegato a `POST /api/goal/run`, con progetto/`work_dir`
+  validato, objective, criteri tipizzati, ruolo, policy e budget limitati;
+- un solo goal background alla volta e stato live con polling mirato a 2 secondi;
+- `POST /api/goal/{goal_run_id}/stop` cooperativo: lo stato diventa `stopping`
+  e l'arresto avviene soltanto dopo la fine dello step corrente, senza kill;
+- checklist, valutazione finale, motivazione e consumo budget restano visibili.
+
+Restano C2.2: stream eventi dedicato ed evidenze navigabili. Il resume non viene
+esposto finché non esiste un checkpoint Goal persistente: riavviare da zero e
+chiamarlo “ripresa” violerebbe il contratto esplicito di continuità.
+
 ## C3 — editor e diff centrali
 
 - file tree del workspace validato sul rig;
