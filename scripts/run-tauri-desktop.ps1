@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = (Get-Location).ProviderPath
+. (Join-Path $PSScriptRoot "desktop-build-env.ps1")
+$CargoTarget = Initialize-DevinDesktopBuildEnvironment -SourceRepo $repo
 
 function Show-Tool($Name) {
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
@@ -41,6 +43,7 @@ function Get-NpxCommand {
 Write-Host "DEVIN Tauri desktop launcher"
 Write-Host "============================"
 Write-Host "[repo] $repo"
+Write-Host "[cache] $CargoTarget"
 
 Show-Tool "node"
 Show-Tool "npm"

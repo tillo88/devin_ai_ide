@@ -505,9 +505,11 @@ def test_tauri_desktop_shell_targets_workspace_app():
     capability = json.loads(Path("src-tauri/capabilities/default.json").read_text(encoding="utf-8"))
     docs = Path("docs/TAURI_DESKTOP.md").read_text(encoding="utf-8")
 
-    assert package["scripts"]["desktop:dev"] == "node_modules\\\\.bin\\\\tauri.cmd dev"
-    assert package["scripts"]["desktop:build"] == "node_modules\\\\.bin\\\\tauri.cmd build"
-    assert package["scripts"]["desktop:info"] == "node_modules\\\\.bin\\\\tauri.cmd info"
+    assert package["scripts"]["desktop:dev"].endswith("./scripts/run-tauri-desktop.ps1 -SkipPreflight")
+    assert package["scripts"]["desktop:build"].endswith("./scripts/build-windows-installer.ps1")
+    assert package["scripts"]["desktop:info"].endswith("./scripts/run-tauri-desktop.ps1 -Info -SkipPreflight")
+    assert package["scripts"]["desktop:test"].endswith("./scripts/test-tauri-desktop.ps1")
+    assert package["scripts"]["desktop:cache"].endswith("./scripts/manage-desktop-build-cache.ps1 -Action status")
     assert package["scripts"]["desktop:preflight"].endswith("./scripts/check-tauri-env.ps1")
     assert package["scripts"]["desktop:windows-host"].endswith("./scripts/launch-windows-desktop-host.ps1")
     assert package["scripts"]["desktop:prepare-host"].endswith("./scripts/prepare-windows-desktop-host.ps1")
@@ -518,6 +520,9 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert Path("scripts/prepare-windows-desktop-host.ps1").exists()
     assert Path("scripts/launch-windows-desktop-host.ps1").exists()
     assert Path("scripts/configure-windows-desktop.ps1").exists()
+    assert Path("scripts/build-windows-installer.ps1").exists()
+    assert Path("scripts/manage-desktop-build-cache.ps1").exists()
+    assert Path("scripts/desktop-build-env.ps1").exists()
     assert Path("src-tauri/icons/icon.ico").exists()
 
     host_launcher = Path("scripts/launch-windows-desktop-host.ps1").read_text(encoding="utf-8")
@@ -540,6 +545,7 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert "devin-tauri-dev.ps1" not in host_launcher
     assert "127.0.0.1:5000" not in host_launcher
     assert "src-tauri" in host_prepare
+    assert "desktop-build-env.ps1" in host_prepare
     assert "package-lock.json" in host_prepare
     assert "start-fastapi-headless.sh" not in host_prepare
     assert "configure-windows-desktop.ps1" in host_prepare
@@ -564,6 +570,7 @@ def test_tauri_desktop_shell_targets_workspace_app():
     # navigates the webview to the authenticated front door on the rig.
     assert config["build"]["frontendDist"] == "frontend"
     assert "devUrl" not in config["build"]
+    assert config["bundle"]["targets"] == ["nsis", "msi"]
     assert "url" not in config["app"]["windows"][0]
     assert "resources" not in config["bundle"]
     assert capability["permissions"] == ["core:default"]

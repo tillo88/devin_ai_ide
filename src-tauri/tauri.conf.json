@@ -29,7 +29,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": ["icons/icon.ico"]
+    "targets": ["nsis", "msi"],
+    "icon": ["icons/icon.ico"],
+    "shortDescription": "Client Windows per il workspace DEVIN sul rig.",
+    "longDescription": "DEVIN AI IDE e' un thin client Windows. Backend, workspace, training e modelli restano sul rig.",
+    "windows": {
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Italian", "English"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "DEVIN"
+      }
+    }
   }
 }

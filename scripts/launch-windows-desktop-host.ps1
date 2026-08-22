@@ -54,6 +54,8 @@ function Get-TauriCliScript {
 }
 
 Initialize-DesktopToolPath
+. (Join-Path $PSScriptRoot "desktop-build-env.ps1")
+$CargoTarget = Initialize-DevinDesktopBuildEnvironment -SourceRepo $HostDir
 
 Write-Host "DEVIN Windows-native desktop launcher"
 Write-Host "====================================="
@@ -61,6 +63,7 @@ Write-Host "[source] $SourceRepo"
 Write-Host "[host]   $HostDir"
 Write-Host "[logs]   $LogDir"
 Write-Host "[config] $(Join-Path $env:APPDATA 'DEVIN\desktop.json')"
+Write-Host "[cache]  $CargoTarget"
 
 $resolvedSource = (Resolve-Path -LiteralPath $SourceRepo).ProviderPath.TrimEnd("\")
 $resolvedHost = if (Test-Path -LiteralPath $HostDir) {

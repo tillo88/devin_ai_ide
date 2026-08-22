@@ -28,11 +28,19 @@ fallback. The desktop must fail visibly if its configured rig is unavailable.
 
 ## Phase 2 — release build
 
-- [ ] Run `tauri build` with the existing Windows MSVC toolchain.
-- [ ] Produce and smoke-test an NSIS `.exe` installer.
-- [ ] Install Start-menu/Desktop entries and a clean uninstall path.
+- [x] Run the guarded `npm run desktop:build` release on the existing Windows
+      MSVC toolchain.
+- [x] Produce and artifact-verify NSIS `.exe` and MSI installers.
+- [x] Configure a current-user NSIS install, Start-menu group and uninstall
+      path; installation smoke remains pending.
 - [ ] Confirm the release executable opens the configured rig front door from
       a normal, non-developer Windows account.
+
+Release intermediates use the single external cache
+`%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`. Only installers and a redacted
+hash manifest are copied to `dist\windows`; neither credentials nor runtime
+state enter the release directory. A normal release refuses a dirty Git tree;
+`-AllowDirty` exists only for local build experiments.
 
 ## Phase 3 — onboarding
 

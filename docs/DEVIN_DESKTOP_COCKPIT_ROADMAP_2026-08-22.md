@@ -208,7 +208,10 @@ knowledge governance superfici reali e coerenti con il routing backend.
 
 - build MSI/NSIS della thin client senza Python, WSL o modelli locali;
 - configurazione `%APPDATA%\\DEVIN\\desktop.json` con ACL utente/SYSTEM;
-- cache Cargo unica sotto l'host nativo e comando esplicito di pulizia;
+- cache Cargo unica fuori da checkout/host in
+  `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`, con pulizia validata su
+  percorsi esatti (le cache Tauri non vengono migrate perche' contengono path
+  assoluti);
 - test su avvio pulito, retry frontdoor, aggiornamento shell e disinstallazione;
 - eventuale firma e auto-update solo dopo l'accettazione funzionale.
 
