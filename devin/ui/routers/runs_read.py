@@ -37,6 +37,58 @@ from devin.core.log_retention import (
 router = APIRouter()
 
 
+def active_operations_snapshot() -> dict:
+    """Aggrega ogni lavoro background che vieta il rilascio del backend.
+
+    Le richieste sincrone/streaming sono protette anche dal contatore in-flight
+    del frontdoor. Qui registriamo i lavori che continuano dopo la risposta HTTP:
+    run/scaffold, training e Goal Mode.
+    """
+    from devin.ui.fast_app import active_runs, runs_lock, starting_runs
+    from devin.ui.routers.goal import goal_operations_snapshot
+    from devin.ui.routers.training import _training_job_snapshot
+
+    with runs_lock:
+        starting = set(starting_runs)
+        running = set(active_runs)
+
+    operations = [
+        {
+            "operation_id": run_id,
+            "kind": "run",
+            "status": "starting" if run_id in starting else "running",
+        }
+        for run_id in sorted(starting | running)
+    ]
+    operations.extend(goal_operations_snapshot())
+    operations.extend(
+        {
+            "operation_id": str(job.get("job_id", "")),
+            "kind": "training",
+            "status": str(job.get("status", "unknown")),
+            "started_at": job.get("created_at"),
+        }
+        for job in _training_job_snapshot()
+        if isinstance(job, dict) and job.get("status") in {"queued", "running"}
+    )
+    operations.sort(key=lambda item: (str(item.get("kind")), str(item.get("operation_id"))))
+    counts: dict[str, int] = {}
+    for operation in operations:
+        kind = str(operation.get("kind", "unknown"))
+        counts[kind] = counts.get(kind, 0) + 1
+    return {
+        "schema": "devin_active_operations_v1",
+        "busy": bool(operations),
+        "operations": operations,
+        "counts": counts,
+    }
+
+
+@router.get("/api/operations/active")
+async def api_operations_active():
+    return active_operations_snapshot()
+
+
 @router.get("/api/runs/active")
 async def api_runs_active():
     """

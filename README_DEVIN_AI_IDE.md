@@ -1,15 +1,20 @@
 # DEVIN AI IDE — Stato del Progetto
-**Ultimo aggiornamento:** 2026-07-17
+**Ultimo aggiornamento:** 2026-08-22
 
 📚 **Indice completo della documentazione: [`docs/INDEX.md`](docs/INDEX.md)**
+
+> **Nota di stato:** la fonte corrente per Desktop↔rig, lifecycle, web e memoria
+> è [`docs/CURRENT_ARCHITECTURE.md`](docs/CURRENT_ARCHITECTURE.md). Le sezioni
+> hardware/modelli e la roadmap lunga qui sotto sono inventario storico: non
+> devono essere usate per selezionare unit, modello o indirizzi runtime.
 
 Punti chiave attuali:
 
 - target prodotto: app desktop **Tauri** stile Codex/Claude Desktop; `/app` è la superficie web/dev; verso l'**eseguibile Windows** (vedi [`docs/PACKAGING-ROADMAP.md`](docs/PACKAGING-ROADMAP.md));
 - training: **quality gate multi-livello implementato** (pytest reale + gold test + tree-sitter + bandit + validator semantici), review Teacher/umana, niente promozione automatica di materiale non verificato — dettaglio in [`docs/TRAINING.md`](docs/TRAINING.md);
-- baseline test suite: ~122 passed, 1 skipped; baseline MBPP col gate severo ~53% (numero da battere post-LoRA);
+- test suite: il gate corrente è zero failure nel checkout, non un conteggio storico hardcoded;
 - UI Tkinter e web_app Flask **archiviati** in `archive/legacy/` (2026-07-17): l'unico entry vivo è `devin/ui/fast_app.py`;
-- repo DEVIN corretto: `/home/tillo/devin_ai_ide` su WSL `Ubuntu`; non confondere con ISO rig su `Ubuntu-24.04`.
+- repo DEVIN corretto: il checkout Git verificato con `git rev-parse`; WSL è opzionale e la copia Tauri è generata;
 - log operativo datato: `docs/CONTINUITY_*.md`.
 
 ---
@@ -21,7 +26,7 @@ Agente AI che automatizza lo sviluppo software: legge il progetto, pianifica, ge
 
 ---
 
-## Infrastruttura Hardware
+## Infrastruttura Hardware (inventario storico, non binding runtime)
 
 ### Macchina primaria (WSL2 Ubuntu)
 - **GPU:** NVIDIA GeForce RTX 5070 Ti 16GB (Blackwell, CUDA 12.8, SM 12.0)
@@ -35,7 +40,7 @@ Agente AI che automatizza lo sviluppo software: legge il progetto, pianifica, ge
 - **IP fisso:** 192.168.1.100, porta 8080 (un solo ruolo attivo alla volta, boot triplo)
 - **CPU:** Intel i9-10900X (X299), 32GB DDR4 (espandibile a 64GB) — *corretto: non è un i5-9600K, refuso della prima stesura*
 - **GPU:** 2× GTX 1080 8GB, 1× GTX 1080Ti 11GB, 1× RTX A2000 6GB, 2× GTX 1660Super 6GB, 1× GTX 1660Ti 6GB → ~51GB VRAM totale (solo la A2000 ha Tensor Core reali: le 1660 sono TU116, senza)
-- **Ruolo usato da DEVIN AI IDE:** `devin` — Ornith-1.0-35B-A3B (MoE, coding+reasoning nella stessa istanza), vedi `config/roles/devin.env` nel progetto ai-rig-iso-build
+- **Ruolo usato da DEVIN AI IDE:** `devin`; il modello effettivo è scelto dal profilo/broker corrente, mai da questo documento.
 - **Gestione:** llama-server nativo (beellama/mainline intercambiabili), WOL abilitato, switch di ruolo via bot Telegram (`/devin`) o `grub-reboot devin && reboot`
 - ⚠️ **Vincolo importante:** il rig esegue UN SOLO ruolo alla volta (devin/hermes/teacher). Se il rig è in ruolo `hermes` o `teacher` (es. mentre usi ForgeStudio), DEVIN AI IDE non trova il modello su :8080 e va in fallback locale — serve passare a `/devin` prima di lavorare qui.
 

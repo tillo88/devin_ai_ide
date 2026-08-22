@@ -126,3 +126,42 @@ def test_execute_goal_run_cattura_eccezioni(tmp_path: Path):
     rec = goal_router._goal_runs[gid]
     assert rec["status"] == "error"
     assert "executor rotto" in rec["reason"]
+
+
+def test_goal_operations_snapshot_include_solo_lavoro_attivo():
+    goal_router._goal_runs.clear()
+    goal_router._goal_runs.update({
+        "goal_running": {
+            "goal_run_id": "goal_running", "status": "running",
+            "started_at": "2026-08-22T00:00:00", "updated_at": "2026-08-22T00:00:01",
+        },
+        "goal_done": {
+            "goal_run_id": "goal_done", "status": "success",
+            "started_at": "2026-08-22T00:00:00", "updated_at": "2026-08-22T00:00:02",
+        },
+    })
+
+    try:
+        assert goal_router.goal_operations_snapshot() == [{
+            "operation_id": "goal_running",
+            "kind": "goal",
+            "status": "running",
+            "started_at": "2026-08-22T00:00:00",
+            "updated_at": "2026-08-22T00:00:01",
+        }]
+    finally:
+        goal_router._goal_runs.clear()
+
+
+def test_goal_project_usa_allowlist_e_linked_work_dir(monkeypatch, tmp_path: Path):
+    project = tmp_path / "project"
+    linked = tmp_path / "linked"
+    project.mkdir()
+    linked.mkdir()
+
+    import devin.ui.fast_app as fast_app
+    monkeypatch.setattr(fast_app, "_validated_project_path", lambda value, allow_general=False: str(Path(value).resolve()))
+    from devin.core.project_space import ProjectSpace
+    ProjectSpace(str(project)).set_work_dir(str(linked))
+
+    assert goal_router._resolve_goal_project_path(str(project)) == str(linked.resolve())

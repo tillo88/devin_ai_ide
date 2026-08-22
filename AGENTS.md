@@ -1,13 +1,17 @@
 # AGENTS.md - DEVIN AI IDE working rules
 
-These instructions are intentionally practical. This project is usually edited from Codex Desktop while the real repo lives in WSL `Ubuntu` at `/home/tillo/devin_ai_ide`; the visible Codex cwd may point at a confusing Windows/UNC/Ubuntu-24.04 path.
+These instructions are intentionally practical. The authoritative development
+checkout is the clean Git worktree selected by the operator/Codex Desktop. The
+Tauri copy under `%LOCALAPPDATA%\DEVIN\desktop-host` is generated runtime output,
+not a second source repository.
 
 ## Environment routing
 
-- Treat `/home/tillo/devin_ai_ide` inside WSL distro `Ubuntu` as the real DEVIN repo.
-- Do not mix this repo with the ai-rig ISO repo in WSL `Ubuntu-24.04` at `/home/tillo/ai-rig-iso-build`.
-- When Codex shell sandboxing/UNC paths get in the way, run commands against the real repo with:
-  `/init /mnt/c/WINDOWS/system32/cmd.exe /C wsl.exe -d Ubuntu --cd /home/tillo/devin_ai_ide --exec ...`
+- Verify the repository root with `git rev-parse --show-toplevel`; never infer it
+  from an old WSL path recorded in historical continuity notes.
+- Keep DEVIN and `ai-rig-ops` in separate Git worktrees and separate PRs.
+- WSL is optional. When it is absent, edit/test on Windows and use an isolated
+  workspace on the rig for Linux-only tests.
 
 ## Windows/WSL quoting rules
 
@@ -22,11 +26,12 @@ These instructions are intentionally practical. This project is usually edited f
 - Keep changes incremental and commit after a green test point.
 - Preserve local secrets and runtime state. Do not read or commit `tinyfish api.txt`, `.env`, live memory JSONL, logs, models, or workspace runtime outputs.
 - For UI shell work, keep `/`, `/chat`, and `/history` as fallbacks while `/app` matures.
-- After UI/backend changes, run at least:
-  - `venv/bin/python -m py_compile devin/ui/fast_app.py`
-  - `venv/bin/python -m pytest -q --capture=no test_understory_hybrid.py test_scaffold_resilience.py`
+- After UI/backend changes, run at least the equivalent commands with the
+  active repository venv (Windows or Linux):
+  - `python -m py_compile devin/ui/fast_app.py`
+  - `python -m pytest -q --capture=no test_understory_hybrid.py test_scaffold_resilience.py`
 - Before committing broad changes, run the full suite when practical:
-  - `venv/bin/python -m pytest -q --capture=no`
+  - `python -m pytest -q --capture=no`
 - For the new `/app` assets, check that `devin/ui/templates/codex_app.html`, `devin/ui/static/js/codex_app.js`, and `devin/ui/static/css/codex_app.css` do not contain mojibake/non-ASCII surprises unless intentionally added.
 
 ## Product direction reminders
