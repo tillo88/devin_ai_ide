@@ -1155,7 +1155,7 @@ function renderToolBudgets(budgets) {
   }).join(" · ");
 }
 
-function renderCentralGovernance(knowledge, council, routing, tools) {
+function renderCentralGovernance(knowledge, council, routing, tools, operations) {
   const policy = tools?.policy ?? {};
   setText("governance-policy-badge", policy.default || "unavailable");
   setText(
@@ -1188,6 +1188,29 @@ function renderCentralGovernance(knowledge, council, routing, tools) {
         <div class="governance-capabilities">${capabilities || "<span>nessuna capacità</span>"}</div>
       </div>`;
     }).join("") || '<div class="governance-empty">Profilo ruoli non disponibile.</div>';
+  }
+
+  const activeOperations = operations?.operations ?? [];
+  const observedActors = activeOperations.filter((operation) => operation?.dispatch?.actor);
+  setText(
+    "governance-dispatch-summary",
+    observedActors.length
+      ? `${observedActors.length} actor osservati · ${activeOperations.length} operazioni`
+      : activeOperations.length ? `${activeOperations.length} operazioni · actor non osservato` : "idle · nessuna operazione",
+  );
+  const dispatchList = $("governance-dispatch-list");
+  if (dispatchList) {
+    dispatchList.innerHTML = activeOperations.map((operation) => {
+      const dispatch = operation.dispatch ?? {};
+      const role = operation.requested_role ? ` · richiesto ${operation.requested_role}` : "";
+      const actor = dispatch.actor
+        ? `<strong>${escapeHtml(dispatch.actor)}</strong><span>${escapeHtml(dispatch.phase || "step")} · step ${Number(dispatch.attempt_index ?? 0) + 1}</span>`
+        : '<strong>actor non osservato</strong><span>nessun ruolo dedotto</span>';
+      return `<div class="governance-dispatch-row" data-observed="${dispatch.actor ? "true" : "false"}">
+        <div><code>${escapeHtml(truncateText(operation.operation_id, 24))}</code><small>${escapeHtml(operation.kind)} · ${escapeHtml(operation.status)}${escapeHtml(role)}</small></div>
+        <div>${actor}</div>
+      </div>`;
+    }).join("") || '<div class="governance-empty">Nessuna operazione background: nessun actor dichiarato.</div>';
   }
 
   const toolList = $("governance-tool-list");
@@ -1241,7 +1264,7 @@ function renderCentralGovernance(knowledge, council, routing, tools) {
   );
 }
 
-function renderGovernanceStatus(knowledge, council, routing, tools) {
+function renderGovernanceStatus(knowledge, council, routing, tools, operations) {
   const knowledgeCard = $("knowledge-exchange-card");
   if (knowledgeCard) {
     const counts = knowledge?.counts ?? {};
@@ -1270,7 +1293,7 @@ function renderGovernanceStatus(knowledge, council, routing, tools) {
       <span>abilitati: ${escapeHtml(enabled.join(", ") || "nessuno")}</span>
       <small>futuri disabilitati: ${escapeHtml(future.join(", ") || "nessuno")} · switch manuale</small>`;
   }
-  renderCentralGovernance(knowledge, council, routing, tools);
+  renderCentralGovernance(knowledge, council, routing, tools, operations);
 }
 
 function openGovernanceView(focus = "") {
@@ -2820,7 +2843,7 @@ async function refresh() {
   try {
     const projectQuery = state.selectedProjectPath
       ? `?project_path=${encodeURIComponent(state.selectedProjectPath)}` : "";
-    const [mind, health, workspace, knowledge, council, routing, tools, goals] = await Promise.all([
+    const [mind, health, workspace, knowledge, council, routing, tools, operations, goals] = await Promise.all([
       fetchJson("/api/mind/status"),
       fetchJson("/api/health").catch(() => ({})),
       fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
@@ -2828,13 +2851,14 @@ async function refresh() {
       fetchJson("/api/council/status").catch(() => ({})),
       fetchJson("/api/routing/status").catch(() => ({})),
       fetchJson("/api/tools/status").catch(() => ({})),
+      fetchJson("/api/operations/active").catch(() => ({ operations: [] })),
       fetchJson("/api/goal").catch(() => ({ goal_runs: [] })),
     ]);
 
     state.mindLoaded = true;
     renderMind(mind, health);
     renderGoalPanel(goals);
-    renderGovernanceStatus(knowledge, council, routing, tools);
+    renderGovernanceStatus(knowledge, council, routing, tools, operations);
     renderProjects(workspace);
     renderSteward();  // fail-soft, non blocca il refresh
     if (!state.chatLoaded) {
