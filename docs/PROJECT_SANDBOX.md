@@ -74,9 +74,11 @@ POST /api/run/changes/reject
 POST /api/run/changes/rollback
 ```
 
-Le decisioni POST ricevono `path`, `run_id` e, per apply, `commit`. Apply
-ricontrolla integralmente gli hash del progetto e del sandbox prima della
-prima scrittura: una modifica esterna rende il manifest stale e blocca tutto.
+Apply e Reject ricevono `path`, `run_id`, `expected_entry_digest` restituito
+dalla preview e, per apply, `commit`. Senza il digest revisionato la decisione
+è rifiutata. Apply ricontrolla integralmente digest e hash del progetto e del
+sandbox dentro il lock decisionale prima della prima scrittura: una modifica
+esterna rende il manifest stale e blocca tutto.
 Le scritture usano replace atomico per file, mantengono backup verificati e
 fanno rollback automatico se l'applicazione fallisce. Il rollback esplicito
 rifiuta di sovrascrivere cambiamenti effettuati dopo l'approvazione.

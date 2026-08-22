@@ -379,22 +379,22 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert '/api/chat/history' in js
     assert '/api/project/chats/new' in js
     assert 'chat_id' in js
-    assert '/api/diff/preview' in js
-    assert '/api/diff/apply' in js
+    assert '/api/run/changes/' in js
+    assert 'expected_entry_digest' in js
+    assert '/api/diff/apply' not in js
     assert 'window.confirm' in js
-    assert 'diff-input' in html
-    assert 'diff-apply-button' in html
+    assert 'manifest-diff-workspace' in html
+    assert 'manifest-diff-apply' in html
     assert '/api/terminal/output' in js
     assert 'run-log-output' in html
     assert 'run-list' not in html
     assert 'id="timeline"' in html
     assert 'function applyRunEventToActivity' in js
     assert 'showRunStatus(payload.run_id, "starting")' in js
-    # Home Claude-like (2026-07-16): hero di benvenuto al posto del finto
-    # messaggio assistant e del banner runs; il link a Diagnostics resta
-    # (asserito sopra), la diff preview e' collassabile.
+    # Home Claude-like: hero di benvenuto e diff verificato come workspace
+    # centrale dedicato (non textarea arbitraria collassabile).
     assert 'chat-hero' in html
-    assert 'collapsible-panel' in html
+    assert 'manifest-diff-layout' in html
     assert 'Runs' in diagnostics
     assert '/static/js/codex_diagnostics.js' in diagnostics
     assert '/api/training/overview' in diagnostics_js

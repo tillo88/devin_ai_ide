@@ -8,6 +8,7 @@ approved manifest, and keeps enough evidence to roll the application back.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import difflib
 import json
 import os
@@ -248,7 +249,21 @@ def build_change_manifest(
     return manifest
 
 
-def load_change_manifest(project_path: str | Path, run_id: str) -> dict[str, Any]:
+def _require_entry_digest(manifest: dict[str, Any], expected_entry_digest: str | None) -> None:
+    if expected_entry_digest is None:
+        return
+    expected = str(expected_entry_digest).strip().lower()
+    actual = str(manifest.get("entry_digest", "")).strip().lower()
+    if len(expected) != 64 or not hmac.compare_digest(actual, expected):
+        raise ChangeManifestError("manifest digest changed since review")
+
+
+def load_change_manifest(
+    project_path: str | Path,
+    run_id: str,
+    *,
+    expected_entry_digest: str | None = None,
+) -> dict[str, Any]:
     project = Path(project_path).expanduser().resolve()
     path = manifest_path(project, run_id)
     try:
@@ -264,6 +279,7 @@ def load_change_manifest(project_path: str | Path, run_id: str) -> dict[str, Any
     entries = manifest.get("entries")
     if not isinstance(entries, list) or manifest.get("entry_digest") != _canonical_digest(entries):
         raise ChangeManifestError("manifest entries failed integrity check")
+    _require_entry_digest(manifest, expected_entry_digest)
     return manifest
 
 
@@ -369,11 +385,17 @@ def _assert_pending_inputs(project: Path, manifest: dict[str, Any]) -> Path:
     return sandbox
 
 
-def apply_change_manifest(project_path: str | Path, run_id: str) -> dict[str, Any]:
+def apply_change_manifest(
+    project_path: str | Path,
+    run_id: str,
+    *,
+    expected_entry_digest: str | None = None,
+) -> dict[str, Any]:
     """Apply one approved manifest with stale checks and rollback-on-error."""
     project = Path(project_path).expanduser().resolve()
     with _decision_lock(project, run_id):
-        manifest = load_change_manifest(project, run_id)
+        manifest = load_change_manifest(
+            project, run_id, expected_entry_digest=expected_entry_digest)
         sandbox = _assert_pending_inputs(project, manifest)
         base_dir = _manifest_dir(project, run_id)
         backup_dir = base_dir / "backup"
@@ -420,10 +442,16 @@ def apply_change_manifest(project_path: str | Path, run_id: str) -> dict[str, An
         return manifest
 
 
-def reject_change_manifest(project_path: str | Path, run_id: str) -> dict[str, Any]:
+def reject_change_manifest(
+    project_path: str | Path,
+    run_id: str,
+    *,
+    expected_entry_digest: str | None = None,
+) -> dict[str, Any]:
     project = Path(project_path).expanduser().resolve()
     with _decision_lock(project, run_id):
-        manifest = load_change_manifest(project, run_id)
+        manifest = load_change_manifest(
+            project, run_id, expected_entry_digest=expected_entry_digest)
         if manifest.get("status") != "pending":
             raise ChangeManifestError(f"manifest is {manifest.get('status')}, not pending")
         manifest["status"] = "rejected"
@@ -432,11 +460,17 @@ def reject_change_manifest(project_path: str | Path, run_id: str) -> dict[str, A
         return manifest
 
 
-def rollback_change_manifest(project_path: str | Path, run_id: str) -> dict[str, Any]:
+def rollback_change_manifest(
+    project_path: str | Path,
+    run_id: str,
+    *,
+    expected_entry_digest: str | None = None,
+) -> dict[str, Any]:
     """Restore an applied manifest, refusing to overwrite later user changes."""
     project = Path(project_path).expanduser().resolve()
     with _decision_lock(project, run_id):
-        manifest = load_change_manifest(project, run_id)
+        manifest = load_change_manifest(
+            project, run_id, expected_entry_digest=expected_entry_digest)
         if manifest.get("status") != "applied":
             raise ChangeManifestError(f"manifest is {manifest.get('status')}, not applied")
         backup_dir = Path(str(manifest.get("backup_path", ""))).resolve()

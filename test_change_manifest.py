@@ -96,6 +96,26 @@ def test_apply_refuses_tampered_sandbox(tmp_path):
         apply_change_manifest(project, "run_test")
 
 
+def test_decision_is_bound_to_digest_seen_during_review(tmp_path):
+    project, sandbox = _trees(tmp_path)
+    manifest = build_change_manifest(project, sandbox, "run_test")
+
+    with pytest.raises(ChangeManifestError, match="digest changed since review"):
+        apply_change_manifest(
+            project,
+            "run_test",
+            expected_entry_digest="0" * 64,
+        )
+
+    assert (project / "modify.txt").read_text(encoding="utf-8") == "before\n"
+    applied = apply_change_manifest(
+        project,
+        "run_test",
+        expected_entry_digest=manifest["entry_digest"],
+    )
+    assert applied["status"] == "applied"
+
+
 def test_reject_is_terminal(tmp_path):
     project, sandbox = _trees(tmp_path)
     build_change_manifest(project, sandbox, "run_test")
