@@ -215,6 +215,10 @@ knowledge governance superfici reali e coerenti con il routing backend.
 - test su avvio pulito, retry frontdoor, aggiornamento shell e disinstallazione;
 - eventuale firma e auto-update solo dopo l'accettazione funzionale.
 
+Receipt C5: NSIS e MSI generati da `main`; installazione/disinstallazione NSIS
+verificate senza avviare il modello e con configurazione utente invariata. Vedi
+[`WINDOWS_RELEASE_RECEIPT_2026-08-22.md`](WINDOWS_RELEASE_RECEIPT_2026-08-22.md).
+
 ## Ordine di verifica
 
 Ogni milestone segue: test offline -> PR/CI -> source deploy controllato -> smoke

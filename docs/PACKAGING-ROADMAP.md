@@ -31,8 +31,8 @@ fallback. The desktop must fail visibly if its configured rig is unavailable.
 - [x] Run the guarded `npm run desktop:build` release on the existing Windows
       MSVC toolchain.
 - [x] Produce and artifact-verify NSIS `.exe` and MSI installers.
-- [x] Configure a current-user NSIS install, Start-menu group and uninstall
-      path; installation smoke remains pending.
+- [x] Exercise current-user NSIS install, Start-menu/Desktop shortcuts and
+      clean uninstall while preserving `%APPDATA%\DEVIN\desktop.json`.
 - [ ] Confirm the release executable opens the configured rig front door from
       a normal, non-developer Windows account.
 
@@ -41,6 +41,9 @@ Release intermediates use the single external cache
 hash manifest are copied to `dist\windows`; neither credentials nor runtime
 state enter the release directory. A normal release refuses a dirty Git tree;
 `-AllowDirty` exists only for local build experiments.
+
+The exact build and install/uninstall evidence is recorded in
+[`WINDOWS_RELEASE_RECEIPT_2026-08-22.md`](WINDOWS_RELEASE_RECEIPT_2026-08-22.md).
 
 ## Phase 3 — onboarding
 
