@@ -10,6 +10,9 @@ BOOTSTRAP = ROOT / "devin" / "ui" / "static" / "js" / "desktop_bootstrap.js"
 LAUNCHER = ROOT / "scripts" / "launch-windows-desktop-host.ps1"
 PREPARE = ROOT / "scripts" / "prepare-windows-desktop-host.ps1"
 CONFIGURE = ROOT / "scripts" / "configure-windows-desktop.ps1"
+BUILD = ROOT / "scripts" / "build-windows-installer.ps1"
+CACHE = ROOT / "scripts" / "manage-desktop-build-cache.ps1"
+BUILD_ENV = ROOT / "scripts" / "desktop-build-env.ps1"
 
 
 def test_desktop_bootstrap_is_rig_frontdoor_only():
@@ -71,3 +74,31 @@ def test_tauri_bundle_has_no_local_backend_resource():
     assert "rig front door" in package["description"]
     assert "BrowserFallback" not in package["scripts"]["desktop:windows-host"]
     assert "desktop:configure" in package["scripts"]
+    assert tauri["bundle"]["targets"] == ["nsis", "msi"]
+    assert tauri["bundle"]["windows"]["allowDowngrades"] is False
+    assert tauri["bundle"]["windows"]["nsis"]["installMode"] == "currentUser"
+
+
+def test_windows_release_uses_one_external_cargo_cache_and_thin_artifacts():
+    build = BUILD.read_text(encoding="utf-8")
+    cache = CACHE.read_text(encoding="utf-8")
+    build_env = BUILD_ENV.read_text(encoding="utf-8")
+
+    assert '"build-cache\\cargo-target"' in build_env
+    assert "$env:CARGO_TARGET_DIR = $target" in build_env
+    assert "la cache non puo' stare dentro il checkout" in build_env
+    assert "--bundles" in build
+    assert 'bundled_backend = $false' in build
+    assert 'bundled_models = $false' in build
+    assert 'schema = "devin_windows_release_v1"' in build
+    assert "Get-FileHash" in build
+    assert "desktop.json" not in build
+    assert "access_token" not in build
+
+    assert 'ValidateSet("status", "clean-cache", "clean-legacy", "clean-all")' in cache
+    assert "Assert-ExactDesktopPath" in cache
+    assert "git -C $SourceRepo ls-files -- src-tauri/target" in cache
+    assert "Remove-Item -LiteralPath $safePath" in cache
+    assert "Move-Item" not in cache
+    assert "Release rifiutata" in build
+    assert "source_dirty = $sourceDirty" in build

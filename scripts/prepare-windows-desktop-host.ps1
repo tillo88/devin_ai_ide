@@ -79,7 +79,7 @@ if ($LASTEXITCODE -ge 8) {
 
 $hostScripts = Join-Path $HostDir "scripts"
 New-Item -ItemType Directory -Force -Path $hostScripts | Out-Null
-foreach ($scriptName in @("check-tauri-env.ps1", "configure-windows-desktop.ps1", "prepare-windows-desktop-host.ps1", "launch-windows-desktop-host.ps1")) {
+foreach ($scriptName in @("check-tauri-env.ps1", "configure-windows-desktop.ps1", "desktop-build-env.ps1", "prepare-windows-desktop-host.ps1", "launch-windows-desktop-host.ps1")) {
     Copy-Item -LiteralPath (Join-Path (Join-Path $SourceRepo "scripts") $scriptName) -Destination (Join-Path $hostScripts $scriptName) -Force
 }
 

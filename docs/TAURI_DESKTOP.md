@@ -67,8 +67,8 @@ C:\Users\tillo\AppData\Local\DEVIN\DEVIN Desktop.cmd
 
 The generated launcher is installation-stable: it invokes the scripts already
 under `%LOCALAPPDATA%\DEVIN\desktop-host`, so it does not retain a WSL, USB or
-source-checkout path. The host preserves `src-tauri\target` between runs so
-compiled dependencies remain reusable.
+source-checkout path. Every source checkout and the generated host share one
+regenerable Cargo cache in `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`.
 
 Use the silent launcher for the normal GUI-only experience:
 
@@ -94,7 +94,7 @@ Useful non-GUI checks:
 ```powershell
 npm run desktop:preflight
 npm run desktop:windows-info
-cargo test --manifest-path src-tauri/Cargo.toml
+npm run desktop:test
 ```
 
 The older WSL/local-backend scripts remain available only for explicit legacy
@@ -105,6 +105,29 @@ generated DEVIN Desktop launchers.
 
 `src-tauri/target` is a regenerable Cargo build cache, not application data.
 The dev profile disables Rust debug symbols and incremental objects because
-the previous defaults grew the native host cache to about 7 GB. Cache cleanup
-must target only the resolved native host `src-tauri\target`; it must never
-delete the source checkout, `%APPDATA%\DEVIN` configuration or DEVIN logs.
+the previous defaults grew native caches to several GB. The supported scripts
+export `CARGO_TARGET_DIR` to one location outside the repository.
+
+```powershell
+npm run desktop:cache
+npm run desktop:cache:clean-legacy
+npm run desktop:cache:clean
+```
+
+The cleanup script accepts only exact, resolved DEVIN cache paths. It refuses
+to delete a repository `target` if Git reports tracked files, and never touches
+the checkout, `%APPDATA%\DEVIN` configuration or logs.
+
+## Release build
+
+Build both supported Windows installers from the native host:
+
+```powershell
+npm run desktop:build
+```
+
+The release command regenerates the local bootstrap bundle, builds NSIS and
+MSI packages, and copies only the installers plus `build-manifest.json` to
+`dist\windows`. The manifest records size and SHA-256 for transport integrity;
+it never reads or copies `desktop.json`. Python, WSL, backend binaries, GGUF
+models and runtime data are not Tauri resources.
