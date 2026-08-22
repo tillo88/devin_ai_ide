@@ -84,6 +84,14 @@
           </button>
         </div>
       </section>
+      <section class="panel-section project-files-section" id="project-files-section">
+        <div class="section-title-row">
+          <h2>Files</h2>
+          <button class="tiny-button" id="refresh-project-tree" type="button" title="Rileggi la cartella di lavoro" disabled>Refresh</button>
+        </div>
+        <div class="project-tree-status" id="project-tree-status">Seleziona un progetto.</div>
+        <div class="project-file-tree" id="project-file-tree" aria-label="File del progetto"></div>
+      </section>
       <section class="panel-section">
         <div class="section-title-row">
           <h2>Conversations</h2>
@@ -94,7 +102,7 @@
       </section>
     </aside>
 
-    <section class="panel workstream-panel">
+    <section class="panel workstream-panel" data-center-view="chat">
       <div class="panel-header command-center">
         <div class="cc-status">
           <span class="status-dot" id="agent-dot"></span>
@@ -108,7 +116,12 @@
         </div>
         <div class="activity-run cc-run" id="activity-run">Nessun run recente in questo progetto.</div>
       </div>
-      <div class="chat-thread" id="chat-thread" aria-live="polite">
+      <nav class="workspace-mode-bar" aria-label="Vista centrale">
+        <button class="workspace-mode-button active" id="show-chat-view" type="button" data-center-view="chat">Chat</button>
+        <button class="workspace-mode-button" id="show-editor-view" type="button" data-center-view="editor" disabled>Editor</button>
+        <span class="workspace-mode-context" id="workspace-mode-context">General chat</span>
+      </nav>
+      <div class="chat-thread center-chat-view" id="chat-thread" aria-live="polite">
         <div class="chat-hero">
           <div class="chat-hero-mark">&#129504;</div>
           <h1>Ciao Alessandro.</h1>
@@ -116,7 +129,7 @@
         </div>
       </div>
 
-      <div class="approval-banner" id="approval-banner" hidden>
+      <div class="approval-banner center-chat-view" id="approval-banner" hidden>
         <div class="approval-banner-main">
           <span class="approval-banner-icon">🔍</span>
           <div class="approval-banner-text">
@@ -127,7 +140,7 @@
         <div class="approval-banner-actions" id="approval-banner-actions"></div>
       </div>
 
-      <form class="chat-composer" id="chat-form">
+      <form class="chat-composer center-chat-view" id="chat-form">
         <textarea id="chat-input" rows="2" placeholder="Chiedi a DEVIN..."></textarea>
         <div class="composer-bar">
           <div class="composer-tools">
@@ -176,7 +189,19 @@
         </div>
       </form>
 
-      <details class="diff-preview-panel collapsible-panel">
+      <section class="editor-workspace" id="editor-workspace" hidden>
+        <header class="editor-header">
+          <div class="editor-file-heading">
+            <strong id="editor-file-path">Nessun file selezionato</strong>
+            <span id="editor-file-meta">Scegli un file di testo dalla sidebar.</span>
+          </div>
+          <span class="editor-readonly-badge">read-only</span>
+        </header>
+        <div class="editor-notice" id="editor-notice">Il viewer non espone salvataggio: le modifiche di DEVIN continuano a passare da diff e approvazione.</div>
+        <pre class="editor-code" id="editor-code" tabindex="0"><code id="editor-content">Seleziona un progetto e poi un file.</code></pre>
+      </section>
+
+      <details class="diff-preview-panel collapsible-panel center-chat-view">
         <summary class="panel-header compact collapsible-summary">
           <span>Diff preview</span>
           <span class="mini-label">read-only &middot; click per aprire</span>

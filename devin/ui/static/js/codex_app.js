@@ -23,6 +23,10 @@ const state = {
   goalEventSource: null,
   streamedGoalRunId: null,
   lastGoalEventSeq: -1,
+  projectFiles: [],
+  projectTreeScope: null,
+  selectedFilePath: null,
+  centerView: "chat",
   commandItems: [],
 };
 
@@ -67,7 +71,14 @@ async function fetchJson(url, options = {}) {
   const headers = { Accept: "application/json", ...(options.headers ?? {}) };
   const res = await fetch(apiUrl(url), { ...options, headers });
   if (!res.ok) {
-    const err = new Error(`${url}: ${res.status}`);
+    let detail = "";
+    try {
+      const payload = await res.json();
+      detail = payload?.detail || payload?.error || "";
+    } catch (_) {
+      // Some infrastructure errors return an empty/non-JSON response.
+    }
+    const err = new Error(detail || `${url}: ${res.status}`);
     err.status = res.status;
     err.url = url;
     throw err;
@@ -142,6 +153,163 @@ function truncateText(value, max = 140) {
 
 function refreshActiveScope() {
   setText("active-scope-label", activeProjectLabel());
+  if (state.centerView === "chat") setText("workspace-mode-context", activeProjectLabel());
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes >= 10240 ? 0 : 1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function setCenterView(view) {
+  const next = view === "editor" && state.selectedProjectPath ? "editor" : "chat";
+  state.centerView = next;
+  const panel = document.querySelector(".workstream-panel");
+  if (panel) panel.dataset.centerView = next;
+  const editor = $("editor-workspace");
+  if (editor) editor.hidden = next !== "editor";
+  document.querySelectorAll("[data-center-view]").forEach((button) => {
+    if (!button.classList.contains("workspace-mode-button")) return;
+    button.classList.toggle("active", button.dataset.centerView === next);
+    button.setAttribute("aria-pressed", button.dataset.centerView === next ? "true" : "false");
+  });
+  setText(
+    "workspace-mode-context",
+    next === "editor" ? (state.selectedFilePath || "Nessun file selezionato") : activeProjectLabel(),
+  );
+}
+
+function resetProjectEditor() {
+  state.projectFiles = [];
+  state.projectTreeScope = null;
+  state.selectedFilePath = null;
+  setText("editor-file-path", "Nessun file selezionato");
+  setText("editor-file-meta", "Scegli un file di testo dalla sidebar.");
+  setText("editor-content", state.selectedProjectPath
+    ? "Seleziona un file dalla sidebar."
+    : "Seleziona un progetto e poi un file.");
+  const editorButton = $("show-editor-view");
+  if (editorButton) editorButton.disabled = !state.selectedProjectPath;
+}
+
+function projectTreeModel(files) {
+  const root = { directories: new Map(), files: [] };
+  files.forEach((file) => {
+    const parts = String(file.path || "").split("/").filter(Boolean);
+    const filename = parts.pop();
+    if (!filename) return;
+    let node = root;
+    parts.forEach((part) => {
+      if (!node.directories.has(part)) {
+        node.directories.set(part, { directories: new Map(), files: [] });
+      }
+      node = node.directories.get(part);
+    });
+    node.files.push(file);
+  });
+  return root;
+}
+
+function renderProjectTreeNode(node, depth = 0) {
+  const directories = [...node.directories.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, child]) => `
+      <details class="project-tree-folder" ${depth < 1 ? "open" : ""}>
+        <summary><span class="project-tree-icon">▸</span>${escapeHtml(name)}</summary>
+        <div class="project-tree-children">${renderProjectTreeNode(child, depth + 1)}</div>
+      </details>`);
+  const files = [...node.files]
+    .sort((left, right) => String(left.name).localeCompare(String(right.name)))
+    .map((file) => {
+      const readable = Boolean(file.is_text);
+      const selected = file.path === state.selectedFilePath;
+      return `
+        <button class="project-tree-file ${selected ? "active" : ""}" type="button"
+          data-project-file="${escapeHtml(file.path)}" title="${escapeHtml(file.path)}"
+          ${readable ? "" : 'disabled aria-label="File binario non visualizzabile"'}>
+          <span class="project-tree-icon">${readable ? "·" : "◇"}</span>
+          <span>${escapeHtml(file.name)}</span>
+        </button>`;
+    });
+  return [...directories, ...files].join("");
+}
+
+function renderWorkdirFileSummary() {
+  const filesEl = $("workdir-files");
+  if (!filesEl) return;
+  filesEl.innerHTML = state.projectFiles.length
+    ? state.projectFiles.slice(0, 12).map((file) => `
+        <button class="file-row" type="button" data-rail-project-file="${escapeHtml(file.path)}"
+          ${file.is_text ? "" : "disabled"} title="${escapeHtml(file.path)}">
+          <i class="ti">·</i>${escapeHtml(file.name)}
+        </button>`).join("")
+    : "";
+  filesEl.querySelectorAll("[data-rail-project-file]").forEach((button) => {
+    button.addEventListener("click", () => openProjectFile(button.dataset.railProjectFile));
+  });
+}
+
+function renderProjectTree(payload) {
+  const tree = $("project-file-tree");
+  const status = $("project-tree-status");
+  state.projectFiles = Array.isArray(payload?.files) ? payload.files : [];
+  state.projectTreeScope = payload?.scope || null;
+  if (!tree || !status) return;
+  if (!state.projectFiles.length) {
+    tree.innerHTML = '<div class="project-tree-empty">Nessun file trovato.</div>';
+  } else {
+    tree.innerHTML = renderProjectTreeNode(projectTreeModel(state.projectFiles));
+    tree.querySelectorAll("[data-project-file]").forEach((button) => {
+      button.addEventListener("click", () => openProjectFile(button.dataset.projectFile));
+    });
+  }
+  const scopeLabel = payload?.scope === "work_dir" ? "work_dir" : "progetto";
+  status.textContent = `${scopeLabel} · ${payload?.count ?? 0} file${payload?.truncated ? " · vista limitata" : ""}`;
+  renderWorkdirFileSummary();
+}
+
+async function loadProjectTree() {
+  const refreshButton = $("refresh-project-tree");
+  const tree = $("project-file-tree");
+  if (refreshButton) refreshButton.disabled = !state.selectedProjectPath;
+  if (!state.selectedProjectPath) {
+    if (tree) tree.innerHTML = "";
+    setText("project-tree-status", "Seleziona un progetto.");
+    renderWorkdirFileSummary();
+    return;
+  }
+  const projectAtRequest = state.selectedProjectPath;
+  setText("project-tree-status", "Lettura file…");
+  const params = new URLSearchParams({ project_path: projectAtRequest });
+  const payload = await fetchJson(`/api/project/tree?${params.toString()}`);
+  if (state.selectedProjectPath !== projectAtRequest) return;
+  renderProjectTree(payload);
+}
+
+async function openProjectFile(relativePath) {
+  if (!state.selectedProjectPath || !relativePath) return;
+  const projectAtRequest = state.selectedProjectPath;
+  state.selectedFilePath = relativePath;
+  setCenterView("editor");
+  setText("editor-file-path", relativePath);
+  setText("editor-file-meta", "Lettura in corso…");
+  setText("editor-content", "");
+  $("project-file-tree")?.querySelectorAll("[data-project-file]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.projectFile === relativePath);
+  });
+  const params = new URLSearchParams({ project_path: projectAtRequest, path: relativePath });
+  try {
+    const payload = await fetchJson(`/api/project/file?${params.toString()}`);
+    if (state.selectedProjectPath !== projectAtRequest || state.selectedFilePath !== relativePath) return;
+    setText("editor-content", payload.content || "");
+    const truncation = payload.truncated ? " · anteprima troncata a 256 KiB" : "";
+    setText("editor-file-meta", `${payload.language || "text"} · ${formatBytes(payload.size)}${truncation}`);
+  } catch (err) {
+    setText("editor-content", `File non visualizzabile: ${err.message || err}`);
+    setText("editor-file-meta", "lettura non disponibile");
+  }
 }
 
 
@@ -992,6 +1160,15 @@ async function loadProjectOverview(projectPath = state.selectedProjectPath) {
     state.selectedChatId = null;
     renderChatList([]);
     await loadChatHistory();
+    const workBox = $("workdir-box");
+    if (workBox) {
+      workBox.textContent = "Nessun progetto selezionato.";
+      workBox.classList.remove("linked");
+    }
+    const tags = $("context-tags");
+    if (tags) tags.innerHTML = '<span class="context-empty">Seleziona un progetto.</span>';
+    setText("activity-run", "Nessun run selezionato.");
+    renderApprovalBanner("", null);
     return;
   }
 
@@ -1015,7 +1192,10 @@ async function renderActivityRail(projectPath) {
   const runEl = $("activity-run");
   if (!workBox) return;
 
-  const full = await fetchJson(`/api/project/overview?${new URLSearchParams({ project_path: projectPath }).toString()}`, {});
+  const full = await fetchJson(`/api/project/overview?${new URLSearchParams({
+    project_path: projectPath,
+    include_files: "false",
+  }).toString()}`, {});
 
   // Cartella di lavoro
   const wd = full.work_dir || "";
@@ -1026,12 +1206,7 @@ async function renderActivityRail(projectPath) {
     workBox.textContent = "Nessuna cartella collegata: i run girano nel progetto.";
     workBox.classList.remove("linked");
   }
-  const files = full.files || [];
-  if (filesEl) {
-    filesEl.innerHTML = files.length
-      ? files.slice(0, 12).map((f) => `<span class="file-row"><i class="ti">·</i>${escapeHtml(String(f).split(/[\\/]/).pop())}</span>`).join("")
-      : "";
-  }
+  if (filesEl) renderWorkdirFileSummary();
 
   // Contesto attivo: cosa entra nel prompt (pin, knowledge, docs cache)
   if (tagsEl) {
@@ -1136,6 +1311,8 @@ async function selectProject(projectPath) {
   renderTimeline([]);
   renderRunLog(null);
   state.selectedProjectPath = projectPath || "";
+  setCenterView("chat");
+  resetProjectEditor();
   refreshActiveScope();
   syncGoalLaunchState();
   state.selectedChatId = null;
@@ -1145,8 +1322,14 @@ async function selectProject(projectPath) {
   });
 
   try {
-    await loadProjectOverview(state.selectedProjectPath);
-    await loadTrainingOverview();
+    await Promise.all([
+      loadProjectOverview(state.selectedProjectPath),
+      loadTrainingOverview(),
+      loadProjectTree().catch((treeError) => {
+        console.error(treeError);
+        setText("project-tree-status", `File non disponibili: ${treeError.message || treeError}`);
+      }),
+    ]);
   } catch (err) {
     console.error(err);
     renderChatHistory([]);
@@ -2353,6 +2536,14 @@ async function refresh() {
 
 $("refresh-app")?.addEventListener("click", refresh);
 $("routing-preview-button")?.addEventListener("click", previewCapabilityRoute);
+$("show-chat-view")?.addEventListener("click", () => setCenterView("chat"));
+$("show-editor-view")?.addEventListener("click", () => setCenterView("editor"));
+$("refresh-project-tree")?.addEventListener("click", () => {
+  loadProjectTree().catch((err) => {
+    console.error(err);
+    setText("project-tree-status", `Refresh fallito: ${err.message || err}`);
+  });
+});
 
 function setupGoalControls() {
   const type = $("goal-criterion-type");
@@ -2479,6 +2670,8 @@ function setupPanelToggles() {
 }
 
 setupPanelToggles();
+resetProjectEditor();
+setCenterView("chat");
 
 document.querySelectorAll("[data-workspace-target]").forEach((button) => {
   button.addEventListener("click", () => {

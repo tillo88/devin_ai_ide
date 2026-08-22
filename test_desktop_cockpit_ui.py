@@ -52,3 +52,24 @@ def test_cockpit_css_keeps_status_and_goal_meters_bounded():
     assert ".goal-evidence" in css
     assert ".goal-event-feed" in css
     assert "max(0, min(1" not in css  # clamping belongs to JS, not CSS hacks
+
+
+def test_cockpit_exposes_project_scoped_read_only_editor():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    script = SCRIPT.read_text(encoding="utf-8")
+    css = STYLE.read_text(encoding="utf-8")
+    for element_id in (
+        "project-file-tree",
+        "project-tree-status",
+        "show-chat-view",
+        "show-editor-view",
+        "editor-workspace",
+        "editor-file-path",
+        "editor-content",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "/api/project/tree" in script
+    assert "/api/project/file" in script
+    assert "/api/file/save" not in script
+    assert "read-only" in html
+    assert '.workstream-panel[data-center-view="editor"]' in css

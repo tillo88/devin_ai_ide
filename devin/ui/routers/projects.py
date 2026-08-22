@@ -53,7 +53,11 @@ async def api_project_workdir(request: Request):
 
 
 @router.get("/api/project/overview")
-async def api_project_overview(project_path: str = "", lite: bool = False):
+async def api_project_overview(
+    project_path: str = "",
+    lite: bool = False,
+    include_files: bool = True,
+):
     """Project overview.
 
     lite=true is used by the desktop sidebar when switching project: it avoids
@@ -75,9 +79,10 @@ async def api_project_overview(project_path: str = "", lite: bool = False):
     payload.update({
         "knowledge": ps.list_knowledge(),
         "pins": ps.list_pins(),
-        "files": ps.list_files(max_items=300),
         "automem": _get_automem().status(),
     })
+    if include_files:
+        payload["files"] = ps.list_files(max_items=300)
     return payload
 
 

@@ -52,6 +52,15 @@ run interni. Lo stream è bounded in memoria, non contiene `project_path`,
 limitato resta soltanto come fallback. Le evidenze dei criteri provengono
 dall'evaluator machine-verifiable e non da affermazioni del modello.
 
+Il file tree del cockpit attraversa lo stesso confine: `GET /api/project/tree`
+risolve prima il progetto metadati e poi, se presente, valida separatamente il
+`work_dir`. La risposta contiene soltanto path relativi e applica cap di file,
+walk e profondità; non segue symlink e omette runtime, cache e segreti comuni.
+`GET /api/project/file` è una lettura UTF-8 limitata a 256 KiB e verifica di
+nuovo containment e sensibilità del path. Il cockpit C3.1 non espone save: il
+writer storico `/api/file/save` resta escluso dalla nuova shell e le mutazioni
+continuano a passare dal manifest diff con review esplicita.
+
 ## 3. Ricerca web: SearXNG e TinyFish
 
 I provider formano una catena esplicita e ordinata. Profilo locale/privacy:

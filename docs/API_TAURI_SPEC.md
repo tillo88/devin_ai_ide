@@ -44,6 +44,8 @@
 - `GET /api/run/{run_id}/events` and `GET /api/run/{run_id}/events/stream` for the central run timeline
 - `GET /api/workspace/projects` for the workspace project picker
 - `GET /api/project/overview` for per-project conversation metadata
+- `GET /api/project/tree` and `GET /api/project/file` for the project-scoped,
+  bounded read-only editor surface
 - `GET /api/chat/history` and `POST /api/project/chats/new` for conversation history and project chat creation
 - `POST /api/chat` for the MVP in-workspace chat composer (SSE parsed from `fetch` response body, with optional `project_path` and `chat_id`)
 - `POST /api/chat/document` for single document attachment in the workspace composer
@@ -506,6 +508,62 @@ permission to stop the backend.
 ---
 
 ## File Explorer API
+
+### GET /api/project/tree
+**Purpose**: List the selected project's authorized execution root for the
+C3.1 cockpit. `project_path` identifies the metadata project; when it has a
+linked `work_dir`, that root is validated separately and becomes the read
+scope.
+
+**Query**: `project_path`
+
+**Response**:
+```json
+{
+  "scope": "project|work_dir",
+  "root_name": "repo-name",
+  "files": [
+    {"name": "main.py", "path": "src/main.py", "size": 1234,
+     "mtime": "ISO8601", "is_text": true}
+  ],
+  "count": 1,
+  "truncated": false,
+  "limits": {"max_files": 1500, "max_depth": 12}
+}
+```
+
+Only relative paths are returned. The scan does not follow symlinks, is capped
+at 30000 walked entries, and excludes runtime state, caches, virtualenvs,
+common secret files, private keys and certificates.
+
+### GET /api/project/file
+**Purpose**: Read one UTF-8 text file in the same project/work-dir scope.
+
+**Query**: `project_path`, `path` (relative path returned by the tree)
+
+**Response**:
+```json
+{
+  "scope": "work_dir",
+  "path": "src/main.py",
+  "content": "...",
+  "language": "py",
+  "size": 1234,
+  "bytes_read": 1234,
+  "truncated": false,
+  "read_only": true
+}
+```
+
+The read is capped at 256 KiB. Absolute paths, traversal, escaping symlinks,
+common secrets, binary data and non-UTF-8 content fail closed. There is
+deliberately no `/api/project/file/save` endpoint.
+
+### Legacy explorer compatibility
+
+The routes below belong to the historical Monaco/dashboard surface. The C3.1
+cockpit does not call its writer; code changes continue through verified diff,
+review and explicit apply.
 
 ### GET /api/explore
 **Purpose**: List files in project directory  
