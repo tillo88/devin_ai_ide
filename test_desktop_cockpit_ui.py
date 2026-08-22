@@ -117,3 +117,27 @@ def test_cockpit_exposes_bounded_central_log_with_structured_faults():
     assert "/api/terminal/input" not in script
     assert '.workstream-panel[data-center-view="log"]' in css
     assert "activity-log-details" not in html
+
+
+def test_cockpit_exposes_honest_central_governance_workspace():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    script = SCRIPT.read_text(encoding="utf-8")
+    css = STYLE.read_text(encoding="utf-8")
+    for element_id in (
+        "show-governance-view",
+        "governance-workspace",
+        "governance-policy-badge",
+        "governance-mcp-status",
+        "governance-agent-grid",
+        "governance-tool-list",
+        "governance-knowledge-counts",
+        "governance-council-axes",
+    ):
+        assert f'id="{element_id}"' in html
+    assert 'fetchJson("/api/tools/status")' in script
+    assert "renderCentralGovernance" in script
+    assert "future-disabled" in script
+    assert "needs_evidence" in script
+    assert "built-in ≠ MCP" in html
+    assert '.workstream-panel[data-center-view="governance"]' in css
+    assert "/api/terminal/input" not in script

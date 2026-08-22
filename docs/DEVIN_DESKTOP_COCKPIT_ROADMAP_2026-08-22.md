@@ -171,6 +171,26 @@ knowledge governance superfici reali e coerenti con il routing backend.
 - Council mostra copertura per asse e `needs_evidence` senza trasformarlo in PASS;
 - Hermes e Teacher restano visibili solo come future-disabled finché assenti.
 
+### C4.1 — governance centrale consegnata (2026-08-22)
+
+- il workspace centrale espone una vista Governance raggiungibile sia dal tab
+  sia dalle voci Knowledge, MCP Tools e Agent Swarm della rail sinistra;
+- `/api/tools/status` è il registro read-only autorevole: policy `deny`, zero
+  server MCP esterni configurati e inventario delle sole superfici HTTP
+  realmente presenti, con accesso, guardie e budget;
+- i tool built-in non vengono chiamati MCP. `terminal_input` resta un placeholder
+  disabilitato e non è collegato al cockpit;
+- i ruoli mostrano soltanto eleggibilità, capacità e lifecycle owner. Il frontend
+  non trasforma `enabled` in “residente” o “in esecuzione”; Hermes e Teacher
+  restano `future-disabled`;
+- Knowledge mostra quarantena/promosse/rifiutate/revocate e ribadisce che le
+  memorie raw dei ruoli sono private, senza endpoint e separate dallo scambio
+  revisionato;
+- Council rende ogni asse come `reviewer disponibile` oppure `needs_evidence`:
+  la copertura del roster non viene mai mostrata come verdetto PASS;
+- shell/PWA aggiornata a `v12`. C4.2 potrà aggiungere telemetria di dispatch
+  soltanto quando esisterà una sorgente runtime autorevole.
+
 ## C5 — packaging Windows
 
 - build MSI/NSIS della thin client senza Python, WSL o modelli locali;

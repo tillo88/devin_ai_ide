@@ -64,9 +64,9 @@
       </div>
       <nav class="workspace-primary-nav" aria-label="Aree DEVIN">
         <button class="workspace-nav-item active" type="button" data-workspace-target="projects-section"><span>▣</span><strong>Projects</strong></button>
-        <a class="workspace-nav-item" href="/app/diagnostics#knowledge" data-diag-link="knowledge"><span>◇</span><strong>Knowledge</strong></a>
-        <button class="workspace-nav-item" type="button" data-workspace-target="governance-section"><span>⌘</span><strong>MCP Tools</strong><small>deny by default</small></button>
-        <button class="workspace-nav-item" type="button" data-workspace-target="governance-section"><span>◎</span><strong>Agent Swarm</strong><small>bounded</small></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="knowledge"><span>◇</span><strong>Knowledge</strong><small>isolata</small></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="tools"><span>⌘</span><strong>MCP Tools</strong><small>deny by default</small></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="agents"><span>◎</span><strong>Agent Swarm</strong><small>ruoli reali</small></button>
         <a class="workspace-nav-item" href="/app/diagnostics#training" data-diag-link="training"><span>△</span><strong>Training</strong></a>
       </nav>
       <section class="panel-section" id="projects-section">
@@ -121,6 +121,7 @@
         <button class="workspace-mode-button" id="show-editor-view" type="button" data-center-view="editor" disabled>Editor</button>
         <button class="workspace-mode-button" id="show-diff-view" type="button" data-center-view="diff" disabled>Diff</button>
         <button class="workspace-mode-button" id="show-log-view" type="button" data-center-view="log" disabled>Log</button>
+        <button class="workspace-mode-button" id="show-governance-view" type="button" data-center-view="governance">Governance</button>
         <span class="workspace-mode-context" id="workspace-mode-context">General chat</span>
       </nav>
       <div class="chat-thread center-chat-view" id="chat-thread" aria-live="polite">
@@ -259,6 +260,63 @@
         <div class="run-log-tail-note" id="run-log-tail-note">Seleziona un run per aprire la coda del log.</div>
         <div class="run-log-output" id="run-log-output" role="log" aria-live="polite" tabindex="0">
           <div class="run-log-empty">Nessun run selezionato.</div>
+        </div>
+      </section>
+
+      <section class="governance-workspace" id="governance-workspace" hidden>
+        <header class="governance-workspace-header">
+          <div>
+            <strong>Agents, Tools &amp; Knowledge</strong>
+            <span>Inventario del backend · nessuno stato simulato</span>
+          </div>
+          <span class="governance-policy-badge" id="governance-policy-badge">deny</span>
+        </header>
+        <div class="governance-policy-strip">
+          <div><span>Policy</span><strong id="governance-policy-summary">caricamento…</strong></div>
+          <div><span>MCP esterni</span><strong id="governance-mcp-status">caricamento…</strong></div>
+          <div><span>Dispatch</span><strong>non inferito</strong></div>
+          <div><span>Model execution</span><strong>no</strong></div>
+        </div>
+        <div class="governance-dashboard">
+          <article class="governance-surface" id="governance-agents-panel" data-governance-panel="agents">
+            <header>
+              <div><span>Agent Swarm</span><strong>Ruoli del rig</strong></div>
+              <small>abilitato non significa residente</small>
+            </header>
+            <div class="governance-role-grid" id="governance-agent-grid">
+              <div class="governance-empty">Caricamento profilo ruoli…</div>
+            </div>
+          </article>
+
+          <article class="governance-surface" id="governance-tools-panel" data-governance-panel="tools">
+            <header>
+              <div><span>Tool registry</span><strong>Superfici autorizzate</strong></div>
+              <small>built-in ≠ MCP</small>
+            </header>
+            <div class="governance-tool-list" id="governance-tool-list">
+              <div class="governance-empty">Caricamento registry…</div>
+            </div>
+          </article>
+
+          <article class="governance-surface" id="governance-knowledge-panel" data-governance-panel="knowledge">
+            <header>
+              <div><span>Knowledge</span><strong>Scambio revisionato</strong></div>
+              <small>memorie raw non esposte</small>
+            </header>
+            <div class="governance-count-grid" id="governance-knowledge-counts"></div>
+            <p class="governance-boundary" id="governance-knowledge-boundary">Store separato; caricamento stato…</p>
+          </article>
+
+          <article class="governance-surface" id="governance-council-panel" data-governance-panel="council">
+            <header>
+              <div><span>Evidence Council</span><strong>Copertura assi</strong></div>
+              <small>review-only · no auto-promozione</small>
+            </header>
+            <div class="governance-axis-grid" id="governance-council-axes">
+              <div class="governance-empty">Caricamento Council…</div>
+            </div>
+            <p class="governance-boundary" id="governance-council-boundary">La disponibilità di un reviewer non equivale a PASS.</p>
+          </article>
         </div>
       </section>
 

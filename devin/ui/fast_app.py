@@ -157,6 +157,7 @@ from devin.ui.routers.training import router as training_router
 from devin.ui.routers.federation import router as federation_router
 from devin.ui.routers.council import router as council_router
 from devin.ui.routers.routing_profiles import router as routing_profiles_router
+from devin.ui.routers.governance import router as governance_router
 from devin.ui.routers.workspace import router as workspace_router
 from devin.ui.routers.models_desktop import (
     router as models_desktop_router,
@@ -234,6 +235,7 @@ app.include_router(training_router)
 app.include_router(federation_router)
 app.include_router(council_router)
 app.include_router(routing_profiles_router)
+app.include_router(governance_router)
 app.include_router(workspace_router)
 app.include_router(models_desktop_router)
 app.include_router(status_router)

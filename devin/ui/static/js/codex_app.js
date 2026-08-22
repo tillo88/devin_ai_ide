@@ -212,14 +212,11 @@ function formatBytes(value) {
 }
 
 function setCenterView(view) {
-  const requested = ["chat", "editor", "diff", "log"].includes(view) ? view : "chat";
-  const next = requested === "editor" && state.selectedProjectPath
-    ? "editor"
-    : requested === "diff" && state.reviewedManifestPayload
-      ? "diff"
-      : requested === "log" && state.selectedRunId
-        ? "log"
-        : "chat";
+  const requested = ["chat", "editor", "diff", "log", "governance"].includes(view) ? view : "chat";
+  let next = requested;
+  if (requested === "editor" && !state.selectedProjectPath) next = "chat";
+  if (requested === "diff" && !state.reviewedManifestPayload) next = "chat";
+  if (requested === "log" && !state.selectedRunId) next = "chat";
   state.centerView = next;
   const panel = document.querySelector(".workstream-panel");
   if (panel) panel.dataset.centerView = next;
@@ -229,6 +226,8 @@ function setCenterView(view) {
   if (diff) diff.hidden = next !== "diff";
   const log = $("run-log-workspace");
   if (log) log.hidden = next !== "log";
+  const governance = $("governance-workspace");
+  if (governance) governance.hidden = next !== "governance";
   document.querySelectorAll("[data-center-view]").forEach((button) => {
     if (!button.classList.contains("workspace-mode-button")) return;
     button.classList.toggle("active", button.dataset.centerView === next);
@@ -242,6 +241,8 @@ function setCenterView(view) {
         ? `run ${state.reviewedChangeRunId || "?"}`
         : next === "log"
           ? `run ${state.selectedRunId || "?"}`
+          : next === "governance"
+            ? "deny-by-default · stato reale"
           : activeProjectLabel(),
   );
 }
@@ -1132,7 +1133,115 @@ function renderGoalPanel(payload) {
   syncGoalLaunchState();
 }
 
-function renderGovernanceStatus(knowledge, council, routing) {
+const governanceBudgetLabels = {
+  max_files: "file",
+  max_depth: "profondità",
+  max_preview_bytes: "preview byte",
+  max_changed_file_bytes: "file modificato byte",
+  max_preview_file_bytes: "file diff byte",
+  max_diff_chars: "caratteri diff",
+  max_lines: "righe",
+  max_tail_bytes: "tail byte",
+  max_upload_bytes: "upload byte",
+  max_crawl_chars: "caratteri crawl",
+};
+
+function renderToolBudgets(budgets) {
+  const entries = Object.entries(budgets ?? {});
+  if (!entries.length) return "nessun budget numerico";
+  return entries.map(([key, value]) => {
+    const label = governanceBudgetLabels[key] || key.replaceAll("_", " ");
+    return `${label}: ${Number(value).toLocaleString("it-IT")}`;
+  }).join(" · ");
+}
+
+function renderCentralGovernance(knowledge, council, routing, tools) {
+  const policy = tools?.policy ?? {};
+  setText("governance-policy-badge", policy.default || "unavailable");
+  setText(
+    "governance-policy-summary",
+    policy.default ? `${policy.default} · ${policy.scope || "scope non dichiarato"}` : "registry non disponibile",
+  );
+  const externalMcp = tools?.external_mcp ?? {};
+  setText(
+    "governance-mcp-status",
+    externalMcp.status
+      ? `${externalMcp.registered_count ?? 0} registrati · ${externalMcp.status}`
+      : "registry non disponibile",
+  );
+
+  const roleGrid = $("governance-agent-grid");
+  if (roleGrid) {
+    const roles = Object.entries(routing?.roles ?? {});
+    roleGrid.innerHTML = roles.map(([role, config]) => {
+      const status = config.future && !config.enabled
+        ? "future-disabled"
+        : config.enabled ? "eligible" : "disabled";
+      const statusLabel = status === "eligible"
+        ? "abilitato"
+        : status === "future-disabled" ? "futuro · disabilitato" : "disabilitato";
+      const capabilities = (config.capabilities ?? [])
+        .map((capability) => `<span>${escapeHtml(capability)}</span>`).join("");
+      return `<div class="governance-role-card" data-status="${status}">
+        <div><strong>${escapeHtml(role)}</strong><span class="governance-state">${statusLabel}</span></div>
+        <small>lifecycle: ${escapeHtml(config.lifecycle_owner || "unassigned")}</small>
+        <div class="governance-capabilities">${capabilities || "<span>nessuna capacità</span>"}</div>
+      </div>`;
+    }).join("") || '<div class="governance-empty">Profilo ruoli non disponibile.</div>';
+  }
+
+  const toolList = $("governance-tool-list");
+  if (toolList) {
+    toolList.innerHTML = (tools?.tools ?? []).map((tool) => {
+      const disabled = String(tool.status || "").startsWith("disabled");
+      return `<div class="governance-tool-row${disabled ? " disabled" : ""}">
+        <div class="governance-tool-heading">
+          <strong>${escapeHtml(tool.tool_id)}</strong>
+          <span>${escapeHtml(tool.access)}</span>
+          <small>${escapeHtml(tool.kind)} · ${escapeHtml(tool.status)}</small>
+        </div>
+        <div class="governance-tool-endpoints">${(tool.endpoints ?? []).map((endpoint) => `<code>${escapeHtml(endpoint)}</code>`).join("")}</div>
+        <small>${escapeHtml((tool.guards ?? []).join(" · ") || "nessuna guardia dichiarata")}</small>
+        <small class="governance-budget">${escapeHtml(renderToolBudgets(tool.budgets))}</small>
+      </div>`;
+    }).join("") || '<div class="governance-empty">Tool registry non disponibile.</div>';
+  }
+
+  const knowledgeCounts = $("governance-knowledge-counts");
+  if (knowledgeCounts) {
+    const counts = knowledge?.counts ?? {};
+    knowledgeCounts.innerHTML = ["quarantine", "promoted", "rejected", "revoked"]
+      .map((status) => `<div><span>${escapeHtml(status)}</span><strong>${escapeHtml(counts[status] ?? 0)}</strong></div>`)
+      .join("");
+  }
+  setText(
+    "governance-knowledge-boundary",
+    knowledge?.schema
+      ? `${knowledge.storage || "store separato"} · raw role memory privata e senza endpoint · solo artefatti promossi attraversano i ruoli`
+      : "Knowledge exchange non disponibile; nessuna memoria raw viene esposta in fallback.",
+  );
+
+  const axes = $("governance-council-axes");
+  if (axes) {
+    const covered = new Set(council?.covered_axes ?? []);
+    axes.innerHTML = (council?.axes ?? []).map((axis) => {
+      const available = covered.has(axis);
+      return `<div data-state="${available ? "reviewer-available" : "needs-evidence"}">
+        <strong>${escapeHtml(axis)}</strong>
+        <span>${available ? "reviewer disponibile" : "needs_evidence"}</span>
+      </div>`;
+    }).join("") || '<div class="governance-empty">Council non disponibile.</div>';
+  }
+  const missing = council?.missing_axes ?? [];
+  setText(
+    "governance-council-boundary",
+    missing.length
+      ? `Assi senza reviewer: ${missing.join(", ")} · esito needs_evidence · nessun PASS implicito`
+      : "Copertura reviewer completa; non è un verdetto PASS e la promozione automatica resta disabilitata.",
+  );
+}
+
+function renderGovernanceStatus(knowledge, council, routing, tools) {
   const knowledgeCard = $("knowledge-exchange-card");
   if (knowledgeCard) {
     const counts = knowledge?.counts ?? {};
@@ -1154,13 +1263,26 @@ function renderGovernanceStatus(knowledge, council, routing) {
   const routingCard = $("routing-card");
   if (routingCard) {
     const roles = Object.entries(routing?.roles ?? {});
-    const active = roles.filter(([, value]) => value.enabled).map(([role]) => role);
+    const enabled = roles.filter(([, value]) => value.enabled).map(([role]) => role);
     const future = roles.filter(([, value]) => value.future && !value.enabled).map(([role]) => role);
     routingCard.innerHTML = `
       <strong>Routing ruoli</strong>
-      <span>attivi: ${escapeHtml(active.join(", ") || "nessuno")}</span>
+      <span>abilitati: ${escapeHtml(enabled.join(", ") || "nessuno")}</span>
       <small>futuri disabilitati: ${escapeHtml(future.join(", ") || "nessuno")} · switch manuale</small>`;
   }
+  renderCentralGovernance(knowledge, council, routing, tools);
+}
+
+function openGovernanceView(focus = "") {
+  setCenterView("governance");
+  document.querySelectorAll("[data-governance-focus]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.governanceFocus === focus);
+  });
+  document.querySelectorAll("[data-governance-panel]").forEach((panel) => {
+    panel.classList.toggle("focused", Boolean(focus) && panel.dataset.governancePanel === focus);
+  });
+  const target = document.querySelector(`[data-governance-panel="${focus}"]`);
+  if (target) target.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 async function previewCapabilityRoute() {
@@ -2698,20 +2820,21 @@ async function refresh() {
   try {
     const projectQuery = state.selectedProjectPath
       ? `?project_path=${encodeURIComponent(state.selectedProjectPath)}` : "";
-    const [mind, health, workspace, knowledge, council, routing, goals] = await Promise.all([
+    const [mind, health, workspace, knowledge, council, routing, tools, goals] = await Promise.all([
       fetchJson("/api/mind/status"),
       fetchJson("/api/health").catch(() => ({})),
       fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
       fetchJson(`/api/knowledge-exchange/status${projectQuery}`).catch(() => ({})),
       fetchJson("/api/council/status").catch(() => ({})),
       fetchJson("/api/routing/status").catch(() => ({})),
+      fetchJson("/api/tools/status").catch(() => ({})),
       fetchJson("/api/goal").catch(() => ({ goal_runs: [] })),
     ]);
 
     state.mindLoaded = true;
     renderMind(mind, health);
     renderGoalPanel(goals);
-    renderGovernanceStatus(knowledge, council, routing);
+    renderGovernanceStatus(knowledge, council, routing, tools);
     renderProjects(workspace);
     renderSteward();  // fail-soft, non blocca il refresh
     if (!state.chatLoaded) {
@@ -2730,6 +2853,7 @@ $("show-chat-view")?.addEventListener("click", () => setCenterView("chat"));
 $("show-editor-view")?.addEventListener("click", () => setCenterView("editor"));
 $("show-diff-view")?.addEventListener("click", () => setCenterView("diff"));
 $("show-log-view")?.addEventListener("click", () => setCenterView("log"));
+$("show-governance-view")?.addEventListener("click", () => openGovernanceView());
 $("open-run-log-workspace")?.addEventListener("click", () => setCenterView("log"));
 $("run-log-refresh")?.addEventListener("click", () => loadRunLog().catch((err) => {
   renderRunLog({ error: err.message || String(err) });
@@ -2902,6 +3026,10 @@ document.querySelectorAll("[data-workspace-target]").forEach((button) => {
     }
     target.scrollIntoView({ behavior: "smooth", block: "start" });
   });
+});
+
+document.querySelectorAll("[data-governance-focus]").forEach((button) => {
+  button.addEventListener("click", () => openGovernanceView(button.dataset.governanceFocus || ""));
 });
 
 setupChatComposer();
