@@ -17,7 +17,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 router = APIRouter()
-APP_SHELL_VERSION = "v10"
+APP_SHELL_VERSION = "v11"
 
 
 @router.get("/", response_class=HTMLResponse)

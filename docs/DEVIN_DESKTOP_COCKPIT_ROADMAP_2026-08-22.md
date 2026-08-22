@@ -143,8 +143,25 @@ esplicito di continuità.
   i due pulsanti, evitando doppi submit;
 - parser diff puro coperto da test Node, shell/PWA aggiornata a `v10`.
 
-Resta C3.3: rendere terminale/log una superficie centrale secondaria e
-distinguere warning filtrabili dai fault strutturati.
+### C3.3 — log tecnico centrale consegnato (2026-08-22)
+
+- il workspace centrale espone ora anche Log per il run selezionato; la timeline
+  laterale resta una sintesi e apre la superficie completa senza duplicare il
+  log grezzo;
+- i fault sono derivati dall'event store strutturato (error/fatal o chiusura
+  failed/timeout/stalled), mentre la coda `.log` resta contesto tecnico
+  read-only con filtri Tutto/Fault/Warning/Info;
+- “Nascondi warning noti” usa una allowlist conservativa per deprecazioni e
+  fallback opzionali. Warning operativi come rig non raggiungibile o chiavi
+  provider assenti restano sempre visibili;
+- `/api/terminal/output` valida il `run_id`, rifiuta traversal/symlink escape,
+  limita la richiesta a 1000 righe e legge al massimo 512 KiB dalla coda;
+- nessun falso terminale interattivo: `/api/terminal/input` non è collegato
+  finché il runner non possiede realmente processo, stdin e lifecycle;
+- parser/filtri sono puri e coperti da test Node; shell/PWA aggiornata a `v11`.
+
+C3 è completo. La milestone successiva è C4: rendere ruoli, strumenti e
+knowledge governance superfici reali e coerenti con il routing backend.
 
 ## C4 — agenti, strumenti e conoscenza
 

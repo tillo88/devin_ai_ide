@@ -120,6 +120,7 @@
         <button class="workspace-mode-button active" id="show-chat-view" type="button" data-center-view="chat">Chat</button>
         <button class="workspace-mode-button" id="show-editor-view" type="button" data-center-view="editor" disabled>Editor</button>
         <button class="workspace-mode-button" id="show-diff-view" type="button" data-center-view="diff" disabled>Diff</button>
+        <button class="workspace-mode-button" id="show-log-view" type="button" data-center-view="log" disabled>Log</button>
         <span class="workspace-mode-context" id="workspace-mode-context">General chat</span>
       </nav>
       <div class="chat-thread center-chat-view" id="chat-thread" aria-live="polite">
@@ -229,6 +230,35 @@
               <div class="manifest-diff-empty">In attesa di un manifest verificato.</div>
             </div>
           </section>
+        </div>
+      </section>
+
+      <section class="run-log-workspace" id="run-log-workspace" hidden>
+        <header class="run-log-header">
+          <div class="run-log-heading">
+            <strong id="run-log-title">Nessun run selezionato</strong>
+            <span id="run-log-meta">Coda tecnica bounded · sola lettura</span>
+          </div>
+          <span class="manifest-status-badge" id="run-log-status">idle</span>
+          <button class="tiny-button" id="run-log-refresh" type="button" disabled>Aggiorna</button>
+        </header>
+        <div class="run-log-toolbar" role="toolbar" aria-label="Filtri del log">
+          <button class="log-filter active" type="button" data-log-filter="all">Tutto <span id="log-count-all">0</span></button>
+          <button class="log-filter" type="button" data-log-filter="fault">Fault <span id="log-count-fault">0</span></button>
+          <button class="log-filter" type="button" data-log-filter="warning">Warning <span id="log-count-warning">0</span></button>
+          <button class="log-filter" type="button" data-log-filter="info">Info <span id="log-count-info">0</span></button>
+          <label class="known-warning-toggle">
+            <input id="hide-known-warnings" type="checkbox" checked>
+            <span>Nascondi warning noti (<strong id="known-warning-count">0</strong>)</span>
+          </label>
+        </div>
+        <section class="structured-fault-panel" aria-labelledby="structured-fault-title">
+          <header><strong id="structured-fault-title">Fault strutturati</strong><span>event store autorevole</span></header>
+          <div id="structured-fault-list"><div class="run-log-empty">Nessun fault strutturato.</div></div>
+        </section>
+        <div class="run-log-tail-note" id="run-log-tail-note">Seleziona un run per aprire la coda del log.</div>
+        <div class="run-log-output" id="run-log-output" role="log" aria-live="polite" tabindex="0">
+          <div class="run-log-empty">Nessun run selezionato.</div>
         </div>
       </section>
 
@@ -350,10 +380,7 @@
             <div><h3>Nessun run selezionato</h3></div>
           </article>
         </div>
-        <details class="activity-log-details">
-          <summary>Log tecnico</summary>
-          <pre id="run-log-output">Nessun run selezionato.</pre>
-        </details>
+        <button class="tiny-button activity-open-log" id="open-run-log-workspace" type="button" disabled>Apri log tecnico</button>
       </details>
 
       <section class="panel-section">

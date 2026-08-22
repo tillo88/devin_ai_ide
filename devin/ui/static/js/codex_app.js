@@ -1,4 +1,10 @@
 import { sideBySideRows, splitManifestDiff } from "./verified_diff.js";
+import {
+  filterLogRows,
+  logRowCounts,
+  parseLogOutput,
+  structuredFaults,
+} from "./run_log.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -11,6 +17,12 @@ const state = {
   chatLoaded: false,
   eventSource: null,
   lastEventSeq: -1,
+  runEvents: [],
+  runLogPayload: null,
+  runLogRows: [],
+  runLogFilter: "all",
+  hideKnownWarnings: true,
+  runLogRefreshTimer: null,
   chatAbort: null,
   reviewedChangeRunId: null,
   reviewedChangeProjectPath: null,
@@ -200,12 +212,14 @@ function formatBytes(value) {
 }
 
 function setCenterView(view) {
-  const requested = ["chat", "editor", "diff"].includes(view) ? view : "chat";
+  const requested = ["chat", "editor", "diff", "log"].includes(view) ? view : "chat";
   const next = requested === "editor" && state.selectedProjectPath
     ? "editor"
     : requested === "diff" && state.reviewedManifestPayload
       ? "diff"
-      : "chat";
+      : requested === "log" && state.selectedRunId
+        ? "log"
+        : "chat";
   state.centerView = next;
   const panel = document.querySelector(".workstream-panel");
   if (panel) panel.dataset.centerView = next;
@@ -213,6 +227,8 @@ function setCenterView(view) {
   if (editor) editor.hidden = next !== "editor";
   const diff = $("manifest-diff-workspace");
   if (diff) diff.hidden = next !== "diff";
+  const log = $("run-log-workspace");
+  if (log) log.hidden = next !== "log";
   document.querySelectorAll("[data-center-view]").forEach((button) => {
     if (!button.classList.contains("workspace-mode-button")) return;
     button.classList.toggle("active", button.dataset.centerView === next);
@@ -224,7 +240,9 @@ function setCenterView(view) {
       ? (state.selectedFilePath || "Nessun file selezionato")
       : next === "diff"
         ? `run ${state.reviewedChangeRunId || "?"}`
-        : activeProjectLabel(),
+        : next === "log"
+          ? `run ${state.selectedRunId || "?"}`
+          : activeProjectLabel(),
   );
 }
 
@@ -268,6 +286,40 @@ function resetManifestReview() {
   if (rail) rail.innerHTML = "";
   const rows = $("manifest-diff-rows");
   if (rows) rows.innerHTML = '<div class="manifest-diff-empty">In attesa di un manifest verificato.</div>';
+}
+
+function resetRunLogWorkspace() {
+  if (state.runLogRefreshTimer) clearTimeout(state.runLogRefreshTimer);
+  state.runLogRefreshTimer = null;
+  state.runEvents = [];
+  state.runLogPayload = null;
+  state.runLogRows = [];
+  state.runLogFilter = "all";
+  state.hideKnownWarnings = true;
+  const logButton = $("show-log-view");
+  const openButton = $("open-run-log-workspace");
+  const refreshButton = $("run-log-refresh");
+  if (logButton) logButton.disabled = true;
+  if (openButton) openButton.disabled = true;
+  if (refreshButton) refreshButton.disabled = true;
+  const knownToggle = $("hide-known-warnings");
+  if (knownToggle) knownToggle.checked = true;
+  document.querySelectorAll("[data-log-filter]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.logFilter === "all");
+  });
+  setText("run-log-title", "Nessun run selezionato");
+  setText("run-log-meta", "Coda tecnica bounded · sola lettura");
+  setText("run-log-status", "idle");
+  const badge = $("run-log-status");
+  if (badge) badge.dataset.status = "idle";
+  setText("run-log-tail-note", "Seleziona un run per aprire la coda del log.");
+  for (const id of ["log-count-all", "log-count-fault", "log-count-warning", "log-count-info", "known-warning-count"]) {
+    setText(id, "0");
+  }
+  const faults = $("structured-fault-list");
+  if (faults) faults.innerHTML = '<div class="run-log-empty">Nessun fault strutturato.</div>';
+  const output = $("run-log-output");
+  if (output) output.innerHTML = '<div class="run-log-empty">Nessun run selezionato.</div>';
 }
 
 const MANIFEST_DIFF_MAX_RENDER_ROWS = 2500;
@@ -1162,6 +1214,9 @@ function showRunStatus(runId, status, { updateBadge = true, completed = false } 
   state.selectedRunId = runId;
   state.selectedRunStatus = status || "running";
   setText("mind-state", state.selectedRunStatus);
+  setText("run-log-status", state.selectedRunStatus);
+  const logBadge = $("run-log-status");
+  if (logBadge) logBadge.dataset.status = state.selectedRunStatus;
   if (completed) setPipelineStage(3, true);
   if (updateBadge) {
     const runEl = $("activity-run");
@@ -1472,7 +1527,7 @@ async function selectProject(projectPath) {
   setPipelineStage(null);
   setText("mind-state", "ready");
   renderTimeline([]);
-  renderRunLog(null);
+  resetRunLogWorkspace();
   state.selectedProjectPath = projectPath || "";
   setCenterView("chat");
   resetProjectEditor();
@@ -1651,10 +1706,90 @@ function renderTimeline(events) {
   applyRunEventToActivity(events[events.length - 1]);
 }
 
+function renderStructuredFaults() {
+  const container = $("structured-fault-list");
+  if (!container) return;
+  const faults = structuredFaults(state.runEvents);
+  if (!faults.length) {
+    container.innerHTML = '<div class="run-log-empty">Nessun fault strutturato.</div>';
+    return;
+  }
+  container.innerHTML = faults.map((event) => `
+    <article class="structured-fault">
+      <span>${escapeHtml(event.type || "fault")}</span>
+      <div><strong>${escapeHtml(event.message || "Fault senza messaggio")}</strong><small>#${escapeHtml(event.seq)} · ${escapeHtml(formatEventTime(event))}${event.data?.status ? ` · ${escapeHtml(event.data.status)}` : ""}</small></div>
+    </article>
+  `).join("");
+}
+
+function renderRunLog(payload = state.runLogPayload) {
+  const output = $("run-log-output");
+  if (!output) return;
+
+  renderStructuredFaults();
+  const badge = $("run-log-status");
+  const status = state.selectedRunStatus || "unknown";
+  setText("run-log-status", status);
+  if (badge) badge.dataset.status = status;
+
+  if (!state.selectedRunId) {
+    output.innerHTML = '<div class="run-log-empty">Seleziona un run per vedere il log.</div>';
+    return;
+  }
+
+  setText("run-log-title", `Run ${state.selectedRunId}`);
+  if (payload?.error) {
+    state.runLogPayload = payload;
+    state.runLogRows = [];
+    for (const id of ["log-count-all", "log-count-fault", "log-count-warning", "log-count-info", "known-warning-count"]) {
+      setText(id, "0");
+    }
+    output.innerHTML = `<div class="run-log-empty error">${escapeHtml(payload.error)}</div>`;
+    setText("run-log-meta", "Log non disponibile · sola lettura");
+    return;
+  }
+
+  state.runLogPayload = payload || null;
+  state.runLogRows = parseLogOutput(payload?.output || "");
+  const counts = logRowCounts(state.runLogRows);
+  setText("log-count-all", counts.all);
+  setText("log-count-fault", counts.fault);
+  setText("log-count-warning", counts.warning);
+  setText("log-count-info", counts.info);
+  setText("known-warning-count", counts.knownWarning);
+  const visible = filterLogRows(state.runLogRows, state.runLogFilter, state.hideKnownWarnings);
+  output.innerHTML = visible.length
+    ? visible.map((row) => `
+      <div class="run-log-line level-${escapeHtml(row.level)}${row.knownWarning ? " known-warning" : ""}">
+        <span>${String(row.index + 1).padStart(3, "0")}</span><code>${escapeHtml(row.text)}</code>
+      </div>`).join("")
+    : '<div class="run-log-empty">Nessuna riga corrisponde ai filtri.</div>';
+
+  const bounded = payload?.truncated ? " · coda troncata" : "";
+  setText(
+    "run-log-meta",
+    `${payload?.lines_returned ?? state.runLogRows.length} righe · ${formatBytes(payload?.file_size || 0)}${bounded} · sola lettura`,
+  );
+  setText(
+    "run-log-tail-note",
+    payload?.truncated
+      ? "Vista limitata alla coda più recente (max 1000 righe / 512 KiB). I fault sopra arrivano dallo stream strutturato."
+      : "I fault sopra arrivano dall'event store; il testo sotto resta contesto tecnico filtrabile.",
+  );
+  output.scrollTop = output.scrollHeight;
+}
+
 function appendTimelineEvent(event) {
   if (!event || event.run_id !== state.selectedRunId) return;
   state.lastEventSeq = Math.max(state.lastEventSeq, Number(event.seq ?? state.lastEventSeq));
   applyRunEventToActivity(event);
+
+  if (!state.runEvents.some((stored) => String(stored.seq) === String(event.seq))) {
+    state.runEvents.push(event);
+    if (state.runEvents.length > 1000) state.runEvents = state.runEvents.slice(-1000);
+    renderStructuredFaults();
+    scheduleRunLogRefresh();
+  }
 
   const timeline = $("timeline");
   if (!timeline) return;
@@ -1687,8 +1822,10 @@ async function loadRunEvents(runId) {
   if (!runId) return;
   const payload = await fetchJson(`/api/run/${encodeURIComponent(runId)}/events?limit=100`);
   const events = payload.events ?? [];
+  state.runEvents = events;
   state.lastEventSeq = events.length ? Number(events[events.length - 1].seq ?? -1) : -1;
   renderTimeline(events);
+  renderStructuredFaults();
   startEventStream(runId);
 }
 
@@ -1719,25 +1856,6 @@ function startEventStream(runId) {
 }
 
 
-function renderRunLog(payload) {
-  const output = $("run-log-output");
-  if (!output) return;
-
-  if (!state.selectedRunId) {
-    output.textContent = "Seleziona un run nella sidebar per vedere il log.";
-    return;
-  }
-
-  if (payload?.error) {
-    output.textContent = `[error] ${payload.error}`;
-    return;
-  }
-
-  const header = `run: ${payload.run_id ?? state.selectedRunId} - lines ${payload.lines_returned ?? 0}/${payload.total_lines ?? 0}`;
-  output.textContent = `${header}\n\n${payload.output || "(log vuoto)"}`;
-  output.scrollTop = output.scrollHeight;
-}
-
 async function loadRunLog(runId = state.selectedRunId) {
   if (!runId) {
     renderRunLog(null);
@@ -1753,9 +1871,28 @@ async function loadRunLog(runId = state.selectedRunId) {
   }
 }
 
+function scheduleRunLogRefresh() {
+  if (state.runLogRefreshTimer) clearTimeout(state.runLogRefreshTimer);
+  state.runLogRefreshTimer = setTimeout(() => {
+    state.runLogRefreshTimer = null;
+    loadRunLog().catch(() => {});
+  }, 250);
+}
+
 async function selectRun(runId) {
   if (!runId) return;
   state.selectedRunId = runId;
+  state.runEvents = [];
+  state.runLogPayload = null;
+  state.runLogRows = [];
+  const logButton = $("show-log-view");
+  const openButton = $("open-run-log-workspace");
+  const refreshButton = $("run-log-refresh");
+  if (logButton) logButton.disabled = false;
+  if (openButton) openButton.disabled = false;
+  if (refreshButton) refreshButton.disabled = false;
+  setText("run-log-title", `Run ${runId}`);
+  setText("run-log-tail-note", "Carico la coda bounded del log…");
   document.querySelectorAll(".run-card").forEach((card) => {
     card.classList.toggle("active", card.dataset.runId === runId);
   });
@@ -2592,6 +2729,24 @@ $("routing-preview-button")?.addEventListener("click", previewCapabilityRoute);
 $("show-chat-view")?.addEventListener("click", () => setCenterView("chat"));
 $("show-editor-view")?.addEventListener("click", () => setCenterView("editor"));
 $("show-diff-view")?.addEventListener("click", () => setCenterView("diff"));
+$("show-log-view")?.addEventListener("click", () => setCenterView("log"));
+$("open-run-log-workspace")?.addEventListener("click", () => setCenterView("log"));
+$("run-log-refresh")?.addEventListener("click", () => loadRunLog().catch((err) => {
+  renderRunLog({ error: err.message || String(err) });
+}));
+$("hide-known-warnings")?.addEventListener("change", (event) => {
+  state.hideKnownWarnings = Boolean(event.currentTarget.checked);
+  renderRunLog();
+});
+document.querySelectorAll("[data-log-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.runLogFilter = button.dataset.logFilter || "all";
+    document.querySelectorAll("[data-log-filter]").forEach((candidate) => {
+      candidate.classList.toggle("active", candidate === button);
+    });
+    renderRunLog();
+  });
+});
 $("manifest-diff-apply")?.addEventListener("click", () => {
   if (!state.reviewedChangeRunId || !state.reviewedChangeProjectPath) return;
   decideRunChanges(state.reviewedChangeProjectPath, state.reviewedChangeRunId, "apply");
@@ -2734,6 +2889,7 @@ function setupPanelToggles() {
 setupPanelToggles();
 resetProjectEditor();
 resetManifestReview();
+resetRunLogWorkspace();
 setCenterView("chat");
 
 document.querySelectorAll("[data-workspace-target]").forEach((button) => {

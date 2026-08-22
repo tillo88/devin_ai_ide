@@ -96,3 +96,24 @@ def test_cockpit_exposes_verified_manifest_diff_without_arbitrary_writer():
     assert "/api/diff/apply" not in script
     assert "diff-input" not in html
     assert '.workstream-panel[data-center-view="diff"]' in css
+
+
+def test_cockpit_exposes_bounded_central_log_with_structured_faults():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    script = SCRIPT.read_text(encoding="utf-8")
+    css = STYLE.read_text(encoding="utf-8")
+    for element_id in (
+        "show-log-view",
+        "run-log-workspace",
+        "run-log-output",
+        "structured-fault-list",
+        "hide-known-warnings",
+        "open-run-log-workspace",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "/api/terminal/output" in script
+    assert "structuredFaults" in script
+    assert "filterLogRows" in script
+    assert "/api/terminal/input" not in script
+    assert '.workstream-panel[data-center-view="log"]' in css
+    assert "activity-log-details" not in html

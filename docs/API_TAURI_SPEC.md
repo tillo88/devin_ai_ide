@@ -37,10 +37,12 @@
 **Frontend assets**:
 - `/static/css/codex_app.css`
 - `/static/js/codex_app.js`
+- `/static/js/verified_diff.js`
+- `/static/js/run_log.js`
 
 **Initial data sources**:
 - `GET /api/mind/status` for the right-side Mind panel
-- `GET /api/runs` for recent run cards
+- `GET /api/project/last_run` for the selected project's current/recent run
 - `GET /api/run/{run_id}/events` and `GET /api/run/{run_id}/events/stream` for the central run timeline
 - `GET /api/workspace/projects` for the workspace project picker
 - `GET /api/project/overview` for per-project conversation metadata
@@ -49,9 +51,11 @@
 - `GET /api/chat/history` and `POST /api/project/chats/new` for conversation history and project chat creation
 - `POST /api/chat` for the MVP in-workspace chat composer (SSE parsed from `fetch` response body, with optional `project_path` and `chat_id`)
 - `POST /api/chat/document` for single document attachment in the workspace composer
-- `POST /api/diff/preview` for read-only diff summaries in the center work-stream
-- `POST /api/diff/apply` behind explicit browser confirmation in the workspace shell
-- `GET /api/terminal/output` for read-only run logs in the center work-stream
+- `GET /api/run/changes/{run_id}` plus digest-bound Apply/Reject endpoints for
+  the verified central diff workspace; the generic diff writer is not wired
+  into the cockpit
+- `GET /api/terminal/output` for the bounded, read-only central run-log tail;
+  structured run events remain authoritative for faults
 - `GET /api/knowledge-exchange/status` for reviewed cross-role artifact counts
 - `GET /api/council/status` for Evidence Council coverage
 - `GET /api/routing/status` and `POST /api/routing/plan` for the no-auto-switch
@@ -745,15 +749,25 @@ review and explicit apply.
 ## Terminal API
 
 ### GET /api/terminal/output
-**Purpose**: Get terminal output for a run (from log file)  
-**Query**: `run_id`, `lines` (default: 100)  
+**Purpose**: Get a contained and bounded tail of a run log. This is technical
+context, not an interactive terminal. Faults shown by the cockpit come from
+`/api/run/{run_id}/events`; raw-line severity is only a display filter.
+
+**Query**: `run_id` (safe identifier), `lines` (default 100, clamped 1–1000).
+The backend reads at most 512000 bytes from the end of the file, rejects path
+traversal and symlinks escaping `LOG_DIR`, and decodes malformed UTF-8 safely.
+
 **Response**:
 ```json
 {
-  "run_id": "uuid",
+  "schema": "devin_terminal_tail_v2",
+  "run_id": "run_...",
   "output": "last N lines from log",
-  "total_lines": 500,
-  "lines_returned": 100
+  "lines_returned": 100,
+  "lines_available_in_tail": 350,
+  "tail_bytes": 120000,
+  "file_size": 900000,
+  "truncated": true
 }
 ```
 
@@ -775,7 +789,8 @@ review and explicit apply.
 }
 ```
 
-**Note**: Currently placeholder - requires runner refactoring for process tracking and stdin injection
+**Note**: Placeholder intentionally excluded from the cockpit. It must not be
+exposed until the runner tracks process ownership, stdin and lifecycle safely.
 
 ---
 
