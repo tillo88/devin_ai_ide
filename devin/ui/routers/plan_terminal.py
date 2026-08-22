@@ -1,17 +1,21 @@
-"""Router plan_terminal: plan tracking + terminal output (2 stub inclusi).
+"""Router plan_terminal: plan tracking + bounded terminal output (2 stub inclusi).
 
 Nono router estratto da fast_app.py (split plan 2026-07-18,
-docs/FAST_APP_SPLIT_PLAN.md). Move puro: path e comportamento identici
-(`TerminalRequest` resta definito anche se il suo handler usa query params —
-move verbatim, niente refactoring durante lo spostamento).
+docs/FAST_APP_SPLIT_PLAN.md). `TerminalRequest` resta definito anche se il suo
+handler usa query params; C3.3 ha poi reso la lettura del log contenuta e
+bounded senza aggiungere input interattivo.
 
 `active_runs` / `runs_lock` / `LOG_DIR` RESTANO in fast_app (stato run-core
-single-owner) risolti con lazy import a call time. Nessun test chiama questi
-handler: nessuno shim.
+single-owner) risolti con lazy import a call time. Il tail endpoint è coperto
+direttamente, inclusi containment, cap e symlink escape.
 """
+
+from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+from devin.core.run_events import safe_run_id
 
 router = APIRouter()
 
@@ -82,29 +86,54 @@ class TerminalRequest(BaseModel):
 
 @router.get("/api/terminal/output")
 async def api_terminal_output(run_id: str = "", lines: int = 100):
-    """Get terminal output for a run (from log file)."""
+    """Return a contained, bounded tail of one run log.
+
+    This remains read-only.  The central cockpit treats structured run events
+    as the source of truth for faults and uses this payload only as technical
+    context.  Reading from the tail avoids loading an arbitrarily large log in
+    memory just to render its last lines.
+    """
     from devin.ui.fast_app import LOG_DIR  # lazy: costante condivisa
     if not run_id:
         return {"error": "run_id required"}
 
     try:
-        log_file = LOG_DIR / f"{run_id}.log"
-        if not log_file.exists():
+        checked_run_id = safe_run_id(run_id)
+        log_root = Path(LOG_DIR).resolve()
+        log_file = (log_root / f"{checked_run_id}.log").resolve()
+        if log_root not in log_file.parents or not log_file.is_file():
             return {"error": "log file not found", "output": ""}
 
-        # Read last N lines
-        output_lines = []
-        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-            all_lines = f.readlines()
-            output_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        safe_lines = max(1, min(int(lines), 1000))
+        max_tail_bytes = 512_000
+        file_size = log_file.stat().st_size
+        start_offset = max(0, file_size - max_tail_bytes)
+        with log_file.open("rb") as handle:
+            handle.seek(start_offset)
+            raw = handle.read(max_tail_bytes)
+
+        text = raw.decode("utf-8", errors="replace")
+        partial_prefix = start_offset > 0
+        if partial_prefix:
+            newline = text.find("\n")
+            text = text[newline + 1:] if newline >= 0 else ""
+        available_lines = text.splitlines(keepends=True)
+        output_lines = available_lines[-safe_lines:]
+        truncated = partial_prefix or len(available_lines) > len(output_lines)
 
         return {
-            "run_id": run_id,
+            "schema": "devin_terminal_tail_v2",
+            "run_id": checked_run_id,
             "output": "".join(output_lines),
-            "total_lines": len(all_lines),
-            "lines_returned": len(output_lines)
+            "lines_returned": len(output_lines),
+            "lines_available_in_tail": len(available_lines),
+            "tail_bytes": len(raw),
+            "file_size": file_size,
+            "truncated": truncated,
         }
-    except Exception as e:
+    except (TypeError, ValueError):
+        return {"error": "invalid run_id or lines", "output": ""}
+    except OSError as e:
         return {"error": f"failed to read terminal output: {e}", "output": ""}
 
 

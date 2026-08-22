@@ -8,7 +8,7 @@
     "desktop:dev": "node_modules\\\\.bin\\\\tauri.cmd dev",
     "desktop:build": "node_modules\\\\.bin\\\\tauri.cmd build",
     "backend": "python devin/ui/fast_app.py",
-    "test:ui": "node --test test_verified_diff.mjs",
+    "test:ui": "node --test test_verified_diff.mjs test_run_log_workspace.mjs",
     "desktop:info": "node_modules\\\\.bin\\\\tauri.cmd info",
     "desktop:launch": "powershell -ExecutionPolicy Bypass -File ./scripts/devin-tauri-dev.ps1",
     "backend:headless": "powershell -ExecutionPolicy Bypass -File ./scripts/devin-tauri-dev.ps1 -SkipTauri",

@@ -69,6 +69,16 @@ diverso e il core lo confronta nuovamente dentro il decision lock prima di
 toccare i file. La textarea `/api/diff/apply` non è più collegata al cockpit;
 resta solo come compatibilità della superficie storica.
 
+La superficie Log C3.3 è centrale ma secondaria e resta read-only. I fault
+provengono dall'event store strutturato del run (livello error/fatal oppure
+stato terminale failed/timeout/stalled); il file `.log` è solo contesto tecnico
+filtrabile. `GET /api/terminal/output` valida il run id, impedisce escape e
+symlink fuori `LOG_DIR` e restituisce al massimo 1000 righe dalla coda di
+512 KiB. Il filtro “warning noti” usa una allowlist stretta: disponibilità del
+rig, chiavi mancanti e altri warning operativi non vengono nascosti. Il cockpit
+non collega il placeholder `/api/terminal/input` finché non esiste ownership
+reale del processo e di stdin.
+
 ## 3. Ricerca web: SearXNG e TinyFish
 
 I provider formano una catena esplicita e ordinata. Profilo locale/privacy:
