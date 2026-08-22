@@ -24,9 +24,11 @@ sono log storici datati, non binding runtime.
 
 ## Packaging / distribuzione
 - **[PACKAGING-ROADMAP.md](PACKAGING-ROADMAP.md)** — thin client rig-first, onboarding, installer NSIS/MSI e hardening futuro.
+- **[DESKTOP_VALIDATION_CHECKPOINTS.md](DESKTOP_VALIDATION_CHECKPOINTS.md)** — runbook operativo corrente per una singola transizione Clippy→DEVIN→Clippy, senza probe hardware ridondanti.
 - **[WINDOWS_RELEASE_RECEIPT_2026-08-22.md](WINDOWS_RELEASE_RECEIPT_2026-08-22.md)** — ricevuta verificabile C5: build, hash, installazione e disinstallazione Windows.
 - **[WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md](WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md)** — release 0.2: onboarding nativo, ACL/scrittura atomica, visual QA e upgrade installato.
-- **[DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md](DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md)** — cockpit Windows thin-client, layout Goal/agenti, lifecycle sicuro e roadmap C1-C5.
+- **[WINDOWS_FUNCTIONAL_RECEIPT_2026-08-22.md](WINDOWS_FUNCTIONAL_RECEIPT_2026-08-22.md)** — collaudo live della release installata: attivazione, cockpit, chat minima, chiusura e ritorno idle a Clippy.
+- **[DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md](DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md)** — cockpit Windows thin-client, layout Goal/agenti, lifecycle sicuro e roadmap C1-C6.
 
 ## Storico / archiviati
 - `TRAINING_MINI_BENCH_2026-07-15.md` — superato da [TRAINING.md](TRAINING.md) (le lezioni sono state incorporate; il gate descritto è ormai implementato). Da spostare in `archive/old_docs/`.

@@ -1,113 +1,135 @@
-# DEVIN Desktop validation checkpoints
+# DEVIN Desktop — checkpoint di validazione operativa
 
-Updated: 2026-07-15
+Aggiornato: 2026-08-22
 
-This file is the practical test path before legacy cleanup. It mirrors the current product plan: desktop-first Tauri, WSL backend headless, safe local cleanup, and validation-ready Diagnostics.
+Questo e' il percorso pratico corrente per collaudare la thin client Windows
+contro il rig. Sostituisce il vecchio flusso WSL/backend locale: l'app Windows
+ospita solo Tauri/WebView2, mentre frontdoor, backend, workspace e modello DEVIN
+vivono sul rig.
 
-## 1. Desktop launcher
+## 0. Perimetro del collaudo ordinario
 
-Use the native Windows launcher, not the UNC WSL path:
-
-```text
-C:\Users\tillo\AppData\Local\DEVIN\DEVIN Desktop.cmd
-```
-
-Expected:
-
-- WSL FastAPI backend starts headless on `127.0.0.1:5000`;
-- Tauri opens `/app` as desktop window;
-- browser is fallback only;
-- source remains in WSL `/home/tillo/devin_ai_ide`;
-- Tauri/Node/Rust run from `%LOCALAPPDATA%\DEVIN\desktop-host`.
-
-Logs:
+Un normale collaudo Desktop verifica una sola attivazione e un solo rilascio:
 
 ```text
-C:\Users\tillo\AppData\Local\DEVIN\logs\desktop-launch.log
-C:\Users\tillo\AppData\Local\DEVIN\logs\tauri-dev.log
-/home/tillo/devin_ai_ide/logs/fast_app_headless.log
+Clippy residente -> apertura app -> DEVIN pronto -> chiusura app
+                  -> gate idle/busy -> Clippy residente
 ```
 
-## 2. Desktop close cleanup
+Non ripetere SHA completi dei GGUF, probe 32K, NVML/`nvidia-smi` o test del
+supporto USB. Quei gate si riaprono soltanto quando cambia modello, artefatto o
+hardware interessato. Non avviare una nuova istanza server per ogni controllo.
 
-When the Tauri main window closes it calls:
+## 1. Precondizioni
 
-```text
-POST /api/desktop/close_cleanup
-```
+- release installata:
+  `%LOCALAPPDATA%\DEVIN AI IDE\devin-ai-ide-desktop.exe`;
+- configurazione protetta:
+  `%APPDATA%\DEVIN\desktop.json`;
+- frontdoor configurato sull'indirizzo del rig, senza stampare o copiare il
+  token nei log;
+- stato iniziale atteso sul rig:
+  `READY | resident=clippy | devin=idle`.
 
-Policy:
+Il probe **Test senza attivare** della schermata nativa e' soltanto TCP: non
+invia credenziali e non deve cambiare il ruolo residente. La connessione normale
+e' invece un'azione intenzionale che puo' richiedere il model-slot DEVIN.
 
-- kills only known local DEVIN model servers (`coder`, `planner`) on local ports;
-- does not touch remote rig models;
-- can be disabled with `DEVIN_DESKTOP_CLOSE_KILLS_LOCAL_MODELS=0`.
+## 2. Apertura dell'app e fase di preparazione
 
-Validation:
+Aprire **DEVIN AI IDE** dal collegamento Desktop o dal menu Start. Il bootstrap
+Rust usa il token senza restituirlo a JavaScript; il frontdoor lo converte in un
+cookie `HttpOnly` e rimuove il token dall'URL visibile.
+
+Durante l'attivazione la finestra deve mostrare **DEVIN si sta preparando** con:
+
+- fase reale del lifecycle, per esempio `loading_devin_model`;
+- unita' systemd attesa, per esempio `ai-rig-model-slot@devin.service`;
+- ETA aggiornato oppure “stima in aggiornamento”;
+- nessun falso stato ready basato sul solo `systemctl active`.
+
+Il model-slot broker e' l'unico owner della transizione. Clippy puo' risultare
+ancora attivo nella prima parte della preparazione, ma deve essere rilasciato in
+modo controllato prima che DEVIN occupi lo slot.
+
+Controllo read-only dal rig:
 
 ```bash
-curl http://127.0.0.1:5000/api/desktop/readiness
-curl -X POST http://127.0.0.1:5000/api/desktop/close_cleanup
+devin status
+systemctl is-active ai-rig-clippy-chat.service
+systemctl is-active ai-rig-model-slot@devin.service
+systemctl is-active devin-backend.service
 ```
 
-## 3. Desktop UI polish
+Sul supporto USB attuale il caricamento puo' richiedere diversi minuti. Un ETA
+che scende e una finestra Windows responsiva indicano avanzamento; evitare di
+interrompere o rilanciare l'app solo perche' il backend non e' ancora attivo.
 
-Current direction: minimal warm desktop shell inspired by the referenced Minimal Agent UI palette and calm/focused layout. The main `/app` should stay clean:
+## 3. Stato pronto e smoke minimo
 
-- left: projects/chats;
-- center: DEVIN command center/chat/work stream;
-- right: context/session only;
-- diagnostics/training/memory/sandbox live in `/app/diagnostics`.
+La shell cockpit deve aprirsi automaticamente soltanto quando il backend e la
+health del modello sono realmente pronti. Verificare:
 
-## 4. Agent/diff validation
+- `devin status` in stato ready con DEVIN residente;
+- `devin-backend.service` attivo e Clippy non residente;
+- barra superiore, rail Projects/Knowledge/MCP/Swarm/Training, area centrale e
+  Goal panel renderizzati senza pagina bianca;
+- modello e stato mostrati da contratti backend, non da valori hardcoded;
+- una richiesta breve inviata dalla chat restituisce una risposta e non lascia
+  operazioni background spurie.
 
-From `/app`:
+Non applicare patch, avviare training o Goal Mode durante lo smoke base. Queste
+operazioni hanno receipt proprie e, correttamente, tengono viva la sessione.
 
-- use chat/composer for normal DEVIN interaction;
-- use Diff preview for manual unified diff preview/apply with explicit confirmation;
-- use Command Palette for safe navigation only, not shell execution.
+## 4. Chiusura e ritorno a Clippy
 
-From `/app/diagnostics#runs`:
+Chiudere normalmente la finestra Windows. La chiusura non invia kill al backend
+e non interrompe run, training o Goal attivi. Il frontdoor rilascia DEVIN solo
+dopo il timeout idle configurato e dopo una risposta valida e vuota da
+`/api/operations/active`; payload assente o malformato resta fail-closed.
 
-- inspect run history/logs;
-- verify structured events as they mature.
+Durante l'attesa usare soltanto:
 
-## 5. Training/Teacher validation
+```bash
+devin status
+```
 
-From `/app/diagnostics#training`:
+Esito finale atteso:
 
-- Seed benchmark;
-- Run mini bench with confirmation;
-- review attempts append-only;
-- export Teacher packet/SFT;
-- no automatic memory promotion from raw auto_success/auto_failure.
+- backend e model-slot DEVIN inattivi;
+- Clippy unico residente e healthy;
+- frontdoor e model-slot broker ancora attivi;
+- nessun arresto manuale, `SIGKILL` o riavvio del rig.
 
-Teacher/Colibri/OpenAI/Claude review remains staged as external/optional review with explicit consent.
+## 5. Diagnostica mirata
 
-## 6. Sandbox validation
+Se la fase non avanza, raccogliere prima stato e code dei soli journal
+interessati:
 
-From `/app/diagnostics#sandbox`:
+```bash
+devin status
+journalctl -u ai-rig-devin-frontdoor.service -n 100 --no-pager
+journalctl -u ai-rig-model-slot@devin.service -n 100 --no-pager
+journalctl -u devin-backend.service -n 100 --no-pager
+journalctl -u ai-rig-clippy-chat.service -n 100 --no-pager
+```
 
-- prepare isolated project sandbox;
-- prefer `link_venv` for lightweight tests;
-- original project is not auto-mutated;
-- promotion back to source must go through diff/review/test.
+Non usare un generico riavvio come prima diagnosi. Se esistono operazioni
+attive, identificarle dal contratto backend prima di concludere che il rilascio
+idle sia bloccato.
 
-## Current known good validation
+## 6. Evidenza
 
-- backend readiness detected local model servers on ports 8000/8001;
-- close cleanup killed `coder` and `planner` locally;
-- backend remained alive on 5000;
-- tests cover desktop readiness, close cleanup, Diagnostics wiring, training and sandbox UI scaffolding.
+Ogni collaudo live deve lasciare una receipt datata con:
 
-## 2026-07-15 launcher hardening
+- versione app e commit sorgente;
+- stato iniziale/finale e transizioni osservate;
+- tempi reali di caricamento e rilascio;
+- screenshot della preparazione e del cockpit, se disponibili;
+- richiesta/risposta dello smoke senza contenuti sensibili;
+- anomalie e follow-up, distinti dai PASS.
 
-- Tauri requires `src-tauri/icons/icon.ico`; missing icon makes the first Windows build look stuck while it actually fails in stderr.
-- The repo-side `scripts/DEVIN Desktop.cmd` now delegates to `%LOCALAPPDATA%\DEVIN\DEVIN Desktop.cmd` after preparing the host, so long-running Tauri dev sessions happen from a Windows-native path instead of the WSL UNC repo.
-- The native launcher streams Tauri output live; if the first build compiles Rust crates, the console may stay busy for a few minutes, but progress/error text is visible.
-
-## 2026-07-15 workspace responsiveness + diagnostics tabs
-
-- Main workspace no longer polls runs/training on every refresh; those live in Diagnostics.
-- Project switching uses `/api/project/overview?lite=true`, avoiding file/knowledge scans during sidebar selection.
-- Diagnostics now behaves like tabbed pages and lazy-loads only the active section.
-- External folders must be explicitly linked from the Workspace `Link` button before crawl/sandbox can use them; this preserves the path allowlist and avoids silent `403 Forbidden` confusion.
+Le ricevute packaging e onboarding non sostituiscono il collaudo funzionale:
+vedere `WINDOWS_RELEASE_RECEIPT_2026-08-22.md`,
+`WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md` e la receipt funzionale indicizzata
+in `INDEX.md`.
