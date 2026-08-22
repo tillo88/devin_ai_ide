@@ -51,11 +51,13 @@ from devin.ai.web_search import (
 )
 from devin.core.chat_persistence import ChatPersistence
 from devin.core.chat_continuity import (
+    accept_checkpoint_proposal,
     build_checkpoint,
     checkpoint_needs_refresh,
     context_from_checkpoint,
     should_checkpoint,
 )
+from devin.core.prompt_layout import compose_prompt_layout
 from devin.memory.eval_recorder import (
     detect_chat_only_output,
     is_operational_build_request,
@@ -391,11 +393,15 @@ async def api_chat(req: ChatRequest):
     # log riassuntivo a ogni messaggio, cosi' i "non ho accesso" del modello si
     # distinguono subito da un contesto davvero mai iniettato).
     system_parts = []
+    retrieval_parts = []
     if system_prompt:
         system_parts.append(system_prompt)
     project_parts, ctx_debug = _build_project_context(
         message, persistence_key, req.project_path, current_chat_id=req.chat_id or "")
-    system_parts.extend(project_parts)
+    # Project knowledge/file retrieval is deliberately outside the stable KV
+    # prefix. It must be re-earned for each turn and discarded when no longer
+    # retrieved (Context Steward CS5).
+    retrieval_parts.extend(project_parts)
     print(f"[ProjectSpace] contesto: {ctx_debug}")
 
     # Nota di capacita' SEMPRE presente (2026-07-10): senza, il modello si
@@ -431,7 +437,7 @@ async def api_chat(req: ChatRequest):
         if isinstance(cfg, dict) and str(cfg.get("ctx_size", "")).isdigit()
     ]
     context_size = min(configured_contexts) if configured_contexts else 8192
-    fixed_context = "\n\n".join(system_parts)
+    fixed_context = "\n\n".join([*system_parts, *retrieval_parts])
     if continuity_enabled and should_checkpoint(
         persisted_history,
         context_size=context_size,
@@ -454,7 +460,7 @@ async def api_chat(req: ChatRequest):
                 mode="reasoning",
             )
 
-        checkpoint = await asyncio.to_thread(
+        proposal = await asyncio.to_thread(
             build_checkpoint,
             persisted_history,
             existing=checkpoint,
@@ -462,23 +468,36 @@ async def api_chat(req: ChatRequest):
             recent_messages=recent_messages,
             source_max_chars=int(continuity_cfg.get("source_max_chars", 24000)),
             summary_max_chars=int(continuity_cfg.get("summary_max_chars", 6000)),
+            trigger="context_pressure",
         )
-        if checkpoint:
-            chat_persistence.set_continuity(checkpoint)
+        if proposal:
+            try:
+                checkpoint = accept_checkpoint_proposal(
+                    persisted_history,
+                    proposal,
+                    recent_messages=recent_messages,
+                    summary_max_chars=int(continuity_cfg.get("summary_max_chars", 6000)),
+                )
+            except ValueError as exc:
+                print(f"[ContextSteward] checkpoint proposal rejected: {exc}")
+            else:
+                chat_persistence.set_continuity(checkpoint)
 
     continuity_context = context_from_checkpoint(checkpoint)
     if continuity_context:
         system_parts.append(continuity_context)
 
-    messages = []
-    if system_parts:
-        messages.append({"role": "system", "content": "\n\n".join(system_parts)})
-    if persisted_history:
-        # Tronca ai piu' recenti max_history messaggi: protegge da OOM/contesto
-        # locale limitato su run prolungate (vincolo hardware locale).
-        history_limit = recent_messages if continuity_context else max_history
-        messages.extend(persisted_history[-history_limit:])
-    messages.append({"role": "user", "content": content})
+    # Tronca ai piu' recenti max_history messaggi: protegge da OOM/contesto
+    # locale limitato su run prolungate (vincolo hardware locale).
+    history_limit = recent_messages if continuity_context else max_history
+    prompt_layout = compose_prompt_layout(
+        stable_parts=system_parts,
+        retrieval_parts=retrieval_parts,
+        recent_history=persisted_history[-history_limit:] if persisted_history else [],
+        user_content=content,
+        checkpoint=checkpoint,
+    )
+    messages = prompt_layout["messages"]
 
     # Il label deve riflettere il modello REALMENTE usato da ai.stream()
     # (_get_endpoints sceglie rig Ornith vs locale in base a rig_self_hosted /
@@ -500,6 +519,9 @@ async def api_chat(req: ChatRequest):
         "continuity_summarized_messages": (
             int(checkpoint.get("summarized_messages") or 0) if checkpoint else 0
         ),
+        "prompt_layout": prompt_layout["schema"],
+        "stable_prefix_fingerprint": prompt_layout["stable_prefix_fingerprint"],
+        "retrieval_ephemeral": prompt_layout["retrieval_ephemeral"],
     }
 
     async def generate_sse(model_name: str, model_detail: dict):

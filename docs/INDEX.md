@@ -6,6 +6,7 @@ sono log storici datati, non binding runtime.
 
 ## Panoramica e stato
 - **[CURRENT_ARCHITECTURE.md](CURRENT_ARCHITECTURE.md)** — fonte canonica corrente: Desktop↔rig, lifecycle Clippy/DEVIN, web fallback e federazione memoria.
+- **[P2_P8_ACCEPTANCE_2026-08-22.md](P2_P8_ACCEPTANCE_2026-08-22.md)** — checkpoint verificabile della roadmap canonica P2–P8, con confini e ledger dei gate.
 - **[../README_DEVIN_AI_IDE.md](../README_DEVIN_AI_IDE.md)** — cos'è, hardware, struttura, avvio, stato.
 - **[CONTINUITY_2026-07-18.md](CONTINUITY_2026-07-18.md)** — reliability hardening: resume esplicito, no-progress guard, cache JSON, filtri memoria, evidence tier (più recente).
 - **[CONTINUITY_2026-07-15.md](CONTINUITY_2026-07-15.md)** — log operativo datato (storico, non modificare a ritroso).
@@ -14,6 +15,7 @@ sono log storici datati, non binding runtime.
 ## Architettura e design
 - **[CODEX_LIKE_MENTAL_MODEL.md](CODEX_LIKE_MENTAL_MODEL.md)** — modello mentale stile Codex/Claude: come ragiona l'app.
 - **[CONTEXT_STEWARD_PLAN.md](CONTEXT_STEWARD_PLAN.md)** — audit + piano stratificato del Context Steward (memoria operativa di sessione, P4/P5). CS0 (nucleo deterministico) implementato in `devin/core/context_steward.py`.
+- **[devin_federated_council_design_v1.md](devin_federated_council_design_v1.md)** — contratto del Council P6: cinque assi, pacchetti ciechi, arbitrato tramite esperimento.
 - **[PROJECT_SANDBOX.md](PROJECT_SANDBOX.md)** — sandbox trasparente dei progetti (copia→diff→applica).
 - **[API_TAURI_SPEC.md](API_TAURI_SPEC.md)** — spec dell'API tra shell Tauri e backend FastAPI.
 

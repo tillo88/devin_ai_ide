@@ -1,0 +1,59 @@
+{
+  "schema": "devin_routing_profiles_v1",
+  "active_profile": "single_gpu_roles_v1",
+  "profiles": {
+    "single_gpu_roles_v1": {
+      "automatic_switch": false,
+      "reuse_compatible_resident": true,
+      "dedicated_capabilities": {
+        "coding": "devin",
+        "scaffold": "devin",
+        "debug": "devin",
+        "test": "devin",
+        "repository": "devin"
+      },
+      "preferred_roles": {
+        "chat": ["clippy"],
+        "quick_question": ["clippy", "devin"],
+        "coding": ["devin"],
+        "scaffold": ["devin"],
+        "debug": ["devin"],
+        "test": ["devin"],
+        "repository": ["devin"],
+        "image": ["hermes"],
+        "video": ["hermes"],
+        "training": ["teacher"],
+        "review": ["teacher"]
+      },
+      "roles": {
+        "clippy": {
+          "enabled": true,
+          "capabilities": ["chat", "quick_question"],
+          "lifecycle_owner": "ai-rig-model-slot"
+        },
+        "devin": {
+          "enabled": true,
+          "capabilities": ["chat", "quick_question", "coding", "scaffold", "debug", "test", "repository"],
+          "lifecycle_owner": "ai-rig-model-slot"
+        },
+        "hermes": {
+          "enabled": false,
+          "future": true,
+          "capabilities": ["quick_question", "image", "video"],
+          "lifecycle_owner": "ai-rig-model-slot"
+        },
+        "teacher": {
+          "enabled": false,
+          "future": true,
+          "capabilities": ["quick_question", "training", "review"],
+          "lifecycle_owner": "ai-rig-model-slot"
+        }
+      },
+      "canary": {
+        "minimum_verified_receipts": 2,
+        "require_profile_fingerprint": true,
+        "automatic_promotion": false
+      }
+    }
+  }
+}

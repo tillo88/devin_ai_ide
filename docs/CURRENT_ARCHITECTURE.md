@@ -61,7 +61,7 @@ un servizio cloud. SearXNG resta supportato e non è un componente legacy da
 rimuovere; sul rig deve essere raggiungibile soltanto dalle superfici che ne
 hanno bisogno, preferibilmente su loopback.
 
-## 4. Memoria privata e federazione futura
+## 4. Memoria privata e knowledge exchange
 
 AutoMem e Understory sono due sottosistemi distinti. Anche tra agenti i dati
 grezzi restano separati per ruolo e, dove richiesto, per progetto:
@@ -72,16 +72,19 @@ grezzi restano separati per ruolo e, dove richiesto, per progetto:
 - successi/fallimenti richiamabili solo con causa, evidenza e regola di retry;
 - checkpoint di conversazione separati dalla memoria lunga.
 
-La condivisione futura usa un *knowledge exchange* separato: artefatti promossi,
+La condivisione tra ruoli usa un *knowledge exchange* separato: artefatti promossi,
 immutabili o versionati, con provenienza, ruolo/progetto sorgente, livello di
 evidenza, audience/ACL, stato di review, scadenza e revoca. Hermes o Teacher
 potranno consultare conoscenza promossa da DEVIN senza aprire i suoi store raw e
 senza “contaminarli” con i propri ricordi.
 
-Il broker/orchestratore potrà inoltre instradare una domanda veloce verso un
-agente compatibile già residente (per esempio Hermes) senza cambiare modello.
-Questa è una futura decisione di routing esplicita, non una condivisione di
-memoria e non una scorciatoia attiva oggi.
+Il backend implementa ora lo store e il relativo review gate; Hermes e Teacher
+restano ruoli futuri disabilitati e non sono ancora collegati come consumer.
+
+Il capability router può pianificare una domanda veloce verso un agente
+compatibile già dichiarato residente, senza cambiare modello. Se serve un altro
+ruolo restituisce `activation_required`: non esegue lo switch. Questa è una
+decisione esplicita distinta dalla condivisione di memoria.
 
 ## 5. Confini di lifecycle e deploy
 
@@ -96,19 +99,24 @@ memoria e non una scorciatoia attiva oggi.
   store condivisi vanno disabilitati solo tramite una migrazione revisionata,
   senza fermare accidentalmente le memorie private correnti.
 
-## 6. Roadmap verificabile
+## 6. Roadmap canonica verificabile
 
-1. **Lifecycle P0:** registro operativo unificato, richieste in-flight,
-   backoff di attivazione, timeout coerente col broker.
-2. **Routing P0:** Goal Mode sullo stesso allowlist/`work_dir` degli altri run.
-3. **Desktop P1:** sincronizzare il Tauri host solo da un commit testato e
-   validare apertura, riconnessione, start DEVIN e ritorno a Clippy.
-4. **Web P1:** mantenere entrambi i provider, portare SearXNG a bind loopback e
-   verificare entrambi gli ordini della catena senza esporre chiavi nei log.
-5. **Memoria P2:** definire schema e review gate del knowledge exchange prima di
-   collegare Hermes/Teacher.
-6. **Orchestrazione P2:** capability routing verso un ruolo già residente,
-   compatibile con policy e senza accesso agli store raw altrui.
+La numerazione P0–P8 è quella di `devin_grounding_master_v1.md`, distinta dalle
+priorità P0/P1/P2 usate nei piccoli piani operativi:
+
+1. **P0/P1:** lifecycle e trust boundary Desktop↔rig, con source deploy e service
+   install separati.
+2. **P2:** orchestratore deterministico bounded.
+3. **P3:** subagenti controllati e verificatore.
+4. **P4:** Context Steward, checkpoint validati e prompt layout osservabile.
+5. **P5:** memoria anti-contaminazione e knowledge exchange revisionato.
+6. **P6:** training + Federated Evidence Council senza auto-promozione.
+7. **P7:** UX/observability nel frontend desktop.
+8. **P8:** profili di capability routing versionati, canary e nessuno switch
+   automatico.
+
+Stato, limiti e receipt sono in
+`docs/P2_P8_ACCEPTANCE_2026-08-22.md`.
 
 Ogni fase richiede test repository prima della PR, poi source deploy, install e
 smoke live separati. I vecchi probe 32K/hash completi non fanno parte del ciclo

@@ -358,6 +358,54 @@ function renderMind(status) {
   }
 }
 
+function renderGovernanceStatus(knowledge, council, routing) {
+  const knowledgeCard = $("knowledge-exchange-card");
+  if (knowledgeCard) {
+    const counts = knowledge?.counts ?? {};
+    knowledgeCard.innerHTML = `
+      <strong>Knowledge exchange</strong>
+      <span>${escapeHtml(counts.promoted ?? 0)} promosse · ${escapeHtml(counts.quarantine ?? 0)} in quarantena</span>
+      <small>store separato · raw memory non condivisa</small>`;
+  }
+  const councilCard = $("council-card");
+  if (councilCard) {
+    const covered = council?.covered_axes?.length ?? 0;
+    const total = council?.axes?.length ?? 5;
+    const missing = council?.missing_axes ?? [];
+    councilCard.innerHTML = `
+      <strong>Evidence Council</strong>
+      <span>${escapeHtml(covered)}/${escapeHtml(total)} assi disponibili</span>
+      <small>${missing.length ? `attende: ${escapeHtml(missing.join(", "))}` : "copertura completa"} · no auto-promozione</small>`;
+  }
+  const routingCard = $("routing-card");
+  if (routingCard) {
+    const roles = Object.entries(routing?.roles ?? {});
+    const active = roles.filter(([, value]) => value.enabled).map(([role]) => role);
+    const future = roles.filter(([, value]) => value.future && !value.enabled).map(([role]) => role);
+    routingCard.innerHTML = `
+      <strong>Routing ruoli</strong>
+      <span>attivi: ${escapeHtml(active.join(", ") || "nessuno")}</span>
+      <small>futuri disabilitati: ${escapeHtml(future.join(", ") || "nessuno")} · switch manuale</small>`;
+  }
+}
+
+async function previewCapabilityRoute() {
+  const output = $("routing-preview-result");
+  if (!output) return;
+  output.textContent = "calcolo…";
+  try {
+    const result = await postJson("/api/routing/plan", {
+      capability: $("routing-capability")?.value || "quick_question",
+      resident_role: null,
+    });
+    if (result.error) throw new Error(result.error);
+    const target = result.target_role || "non disponibile";
+    output.textContent = `${target} · ${result.status} · nessuno switch eseguito`;
+  } catch (err) {
+    output.textContent = `routing non disponibile: ${err.message || err}`;
+  }
+}
+
 const terminalRunStatuses = new Set([
   "success", "verified_success", "syntax_only", "failed", "timeout", "stopped",
   "stalled", "awaiting_approval", "rejected", "rolled_back", "applied_uncommitted",
@@ -1879,13 +1927,19 @@ async function refresh() {
   if (!state.selectedRunId && !state.mindLoaded) setText("mind-state", "loading");
 
   try {
-    const [mind, workspace] = await Promise.all([
+    const projectQuery = state.selectedProjectPath
+      ? `?project_path=${encodeURIComponent(state.selectedProjectPath)}` : "";
+    const [mind, workspace, knowledge, council, routing] = await Promise.all([
       fetchJson("/api/mind/status"),
       fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
+      fetchJson(`/api/knowledge-exchange/status${projectQuery}`).catch(() => ({})),
+      fetchJson("/api/council/status").catch(() => ({})),
+      fetchJson("/api/routing/status").catch(() => ({})),
     ]);
 
     state.mindLoaded = true;
     renderMind(mind);
+    renderGovernanceStatus(knowledge, council, routing);
     renderProjects(workspace);
     renderSteward();  // fail-soft, non blocca il refresh
     if (!state.chatLoaded) {
@@ -1899,6 +1953,7 @@ async function refresh() {
 }
 
 $("refresh-app")?.addEventListener("click", refresh);
+$("routing-preview-button")?.addEventListener("click", previewCapabilityRoute);
 
 // 2026-07-18 (PWA slice): toggle dei pannelli laterali come overlay ai
 // breakpoint mobile. Nessuna logica di toggle preesistente da riusare

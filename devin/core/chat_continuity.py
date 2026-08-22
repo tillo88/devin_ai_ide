@@ -15,6 +15,14 @@ from typing import Callable, Dict, Iterable, List, Optional
 
 
 CHECKPOINT_SCHEMA = "chat_continuity_v1"
+COMPACTION_TRIGGERS = frozenset({
+    "context_pressure",
+    "subtask_boundary",
+    "objective_change",
+    "large_tool_output",
+    "pre_shift",
+    "orchestrator_request",
+})
 
 
 def _clean_messages(messages: Iterable[Dict]) -> List[Dict[str, str]]:
@@ -112,7 +120,10 @@ def build_checkpoint(
     recent_messages: int = 8,
     source_max_chars: int = 24000,
     summary_max_chars: int = 6000,
+    trigger: str = "orchestrator_request",
 ) -> Optional[Dict]:
+    if trigger not in COMPACTION_TRIGGERS:
+        raise ValueError(f"unsupported compaction trigger: {trigger}")
     clean = _clean_messages(history)
     cutoff = len(clean) - max(2, recent_messages)
     if cutoff <= 0:
@@ -159,15 +170,69 @@ def build_checkpoint(
     if not summary:
         summary = _fallback_summary(older, summary_max_chars)
 
+    checkpoint_id = "sha256:" + hashlib.sha256(
+        json.dumps(
+            {"source_fingerprint": fingerprint, "summary": summary, "trigger": trigger},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     return {
         "schema": CHECKPOINT_SCHEMA,
+        "checkpoint_id": checkpoint_id,
         "generated_at": datetime.now().isoformat(),
         "summarized_messages": len(older),
         "source_fingerprint": fingerprint,
         "summary": summary,
         "recent_messages": max(2, recent_messages),
         "generation": "model" if summarizer and not summary.startswith("## Verified conversation handoff") else "deterministic",
+        "trigger": trigger,
+        "validation": "proposed",
+        "promotion": "none",
+        "supersedes": (
+            str(existing.get("checkpoint_id") or "")
+            if isinstance(existing, dict) and existing.get("checkpoint_id")
+            else None
+        ),
     }
+
+
+def accept_checkpoint_proposal(
+    history: Iterable[Dict],
+    checkpoint: Optional[Dict],
+    *,
+    recent_messages: int = 8,
+    summary_max_chars: int = 6000,
+) -> Dict:
+    """Validate a CS4 proposal before the orchestrator persists it.
+
+    Acceptance never promotes the checkpoint to long-term memory. It only
+    certifies that the bounded summary is tied to the exact older transcript.
+    """
+    if not isinstance(checkpoint, dict) or checkpoint.get("schema") != CHECKPOINT_SCHEMA:
+        raise ValueError("invalid continuity checkpoint schema")
+    trigger = checkpoint.get("trigger")
+    if trigger not in COMPACTION_TRIGGERS:
+        raise ValueError("checkpoint trigger missing or unsupported")
+    clean = _clean_messages(history)
+    cutoff = len(clean) - max(2, recent_messages)
+    summarized = checkpoint.get("summarized_messages")
+    if not isinstance(summarized, int) or summarized <= 0 or summarized != cutoff:
+        raise ValueError("checkpoint summarized message boundary mismatch")
+    expected = history_fingerprint(clean[:summarized])
+    if checkpoint.get("source_fingerprint") != expected:
+        raise ValueError("checkpoint source fingerprint mismatch")
+    summary = checkpoint.get("summary")
+    if not isinstance(summary, str) or len(summary.strip()) < 80:
+        raise ValueError("checkpoint summary is empty or too short")
+    if len(summary) > max(256, int(summary_max_chars)):
+        raise ValueError("checkpoint summary exceeds configured bound")
+    if checkpoint.get("promotion") != "none":
+        raise ValueError("continuity checkpoint cannot promote to long-term memory")
+    accepted = dict(checkpoint)
+    accepted["validation"] = "accepted"
+    return accepted
 
 
 def context_from_checkpoint(checkpoint: Optional[Dict]) -> str:
