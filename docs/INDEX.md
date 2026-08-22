@@ -23,7 +23,8 @@ sono log storici datati, non binding runtime.
 - **[TRAINING.md](TRAINING.md)** — pipeline anti-contaminazione, quality gate, dataset/benchmark, teacher/Colibrì packet. **Doc canonico** (fonde i vecchi TRAINING_DATASETS_AND_BENCHMARKS + TRAINING_MINI_BENCH_2026-07-15).
 
 ## Packaging / distribuzione
-- **[PACKAGING-ROADMAP.md](PACKAGING-ROADMAP.md)** — verso l'eseguibile Windows: profilo RIG vs LOCALE, sidecar PyInstaller, wizard onboarding, installer .msi/.exe.
+- **[PACKAGING-ROADMAP.md](PACKAGING-ROADMAP.md)** — thin client rig-first, onboarding, installer NSIS/MSI e hardening futuro.
+- **[WINDOWS_RELEASE_RECEIPT_2026-08-22.md](WINDOWS_RELEASE_RECEIPT_2026-08-22.md)** — ricevuta verificabile C5: build, hash, installazione e disinstallazione Windows.
 - **[DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md](DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md)** — cockpit Windows thin-client, layout Goal/agenti, lifecycle sicuro e roadmap C1-C5.
 
 ## Storico / archiviati
