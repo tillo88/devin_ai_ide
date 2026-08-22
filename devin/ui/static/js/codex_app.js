@@ -48,6 +48,7 @@ const state = {
   selectedFilePath: null,
   centerView: "chat",
   commandItems: [],
+  forceWebSearch: false,
 };
 
 function setText(id, text) {
@@ -211,6 +212,18 @@ function formatBytes(value) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
+function setWorkspaceNavState(activeSection = "") {
+  document.querySelectorAll(".workspace-primary-nav .workspace-nav-item").forEach((item) => {
+    const isProjects = item.dataset.workspaceTarget === "projects-section";
+    const isGovernanceTarget = item.dataset.governanceFocus === activeSection;
+    const isActive = activeSection === "projects" ? isProjects : Boolean(activeSection) && isGovernanceTarget;
+    item.classList.toggle("active", isActive);
+    if (item.tagName === "BUTTON") item.setAttribute("aria-pressed", isActive ? "true" : "false");
+    if (isActive && item.tagName === "A") item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  });
+}
+
 function setCenterView(view) {
   const requested = ["chat", "editor", "diff", "log", "governance"].includes(view) ? view : "chat";
   let next = requested;
@@ -228,6 +241,7 @@ function setCenterView(view) {
   if (log) log.hidden = next !== "log";
   const governance = $("governance-workspace");
   if (governance) governance.hidden = next !== "governance";
+  if (next !== "governance") setWorkspaceNavState("projects");
   document.querySelectorAll("[data-center-view]").forEach((button) => {
     if (!button.classList.contains("workspace-mode-button")) return;
     button.classList.toggle("active", button.dataset.centerView === next);
@@ -1298,9 +1312,7 @@ function renderGovernanceStatus(knowledge, council, routing, tools, operations) 
 
 function openGovernanceView(focus = "") {
   setCenterView("governance");
-  document.querySelectorAll("[data-governance-focus]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.governanceFocus === focus);
-  });
+  setWorkspaceNavState(focus);
   document.querySelectorAll("[data-governance-panel]").forEach((panel) => {
     panel.classList.toggle("focused", Boolean(focus) && panel.dataset.governancePanel === focus);
   });
@@ -2335,7 +2347,7 @@ async function sendChatMessage(message) {
       const formData = new FormData();
       formData.append("message", message);
       formData.append("mode", $("chat-mode")?.value ?? "auto");
-      formData.append("use_web_search", "true");  // ricerca web sempre attiva
+      formData.append("use_web_search", String(state.forceWebSearch));
       formData.append("project_path", state.selectedProjectPath || "");
       formData.append("chat_id", state.selectedChatId || "");
       selectedFiles.forEach((file) => formData.append("files", file));
@@ -2351,7 +2363,7 @@ async function sendChatMessage(message) {
         body: JSON.stringify({
           message,
           mode: $("chat-mode")?.value ?? "auto",
-          use_web_search: true,  // ricerca web sempre attiva
+          use_web_search: state.forceWebSearch,
           project_path: state.selectedProjectPath || null,
           chat_id: state.selectedChatId || null,
         }),
@@ -2668,6 +2680,21 @@ function setupChatComposer() {
     const labelNode = $("chat-file-label");
     if (labelNode) labelNode.title = files.map((file) => file.name).join("\n") || "No files attached";
   });
+
+  const webModeButton = $("chat-web-mode");
+  const renderWebMode = () => {
+    if (!webModeButton) return;
+    webModeButton.textContent = state.forceWebSearch ? "🌐 web on" : "🌐 web auto";
+    webModeButton.setAttribute("aria-pressed", state.forceWebSearch ? "true" : "false");
+    webModeButton.title = state.forceWebSearch
+      ? "Ricerca web forzata finche' resta attiva (clicca per tornare ad auto)"
+      : "Ricerca web automatica: si attiva solo quando la richiesta lo richiede";
+  };
+  webModeButton?.addEventListener("click", () => {
+    state.forceWebSearch = !state.forceWebSearch;
+    renderWebMode();
+  });
+  renderWebMode();
 
   $("link-folder-button")?.addEventListener("click", () => {
     linkWorkspaceFolder().catch((err) => {
@@ -3044,6 +3071,7 @@ document.querySelectorAll("[data-workspace-target]").forEach((button) => {
   button.addEventListener("click", () => {
     const target = document.getElementById(button.dataset.workspaceTarget || "");
     if (!target) return;
+    if (button.dataset.workspaceTarget === "projects-section") setCenterView("chat");
     if (button.dataset.workspaceTarget === "governance-section") {
       document.body.classList.remove("right-collapsed");
       target.open = true;

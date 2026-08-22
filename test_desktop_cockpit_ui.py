@@ -54,6 +54,34 @@ def test_cockpit_css_keeps_status_and_goal_meters_bounded():
     assert "max(0, min(1" not in css  # clamping belongs to JS, not CSS hacks
 
 
+def test_cockpit_topbar_has_explicit_single_row_layout_at_every_breakpoint():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    css = STYLE.read_text(encoding="utf-8")
+    assert 'grid-template-areas: "brand command telemetry status";' in css
+    assert 'grid-template-areas: "workspace brand telemetry status";' in css
+    assert ".topbar > .topbar-status" in css
+    assert "flex-wrap: nowrap;" in css
+    assert "#toggle-workspace-panel { display: none; }" in css
+    assert "#toggle-workspace-panel { display: inline-flex; }" in css
+    assert 'class="brand-copy"' in html
+
+
+def test_cockpit_navigation_and_web_mode_are_interactive_and_stateful():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "function setWorkspaceNavState" in script
+    assert 'setWorkspaceNavState("projects")' in script
+    assert "setWorkspaceNavState(focus)" in script
+    assert 'button.dataset.workspaceTarget === "projects-section"' in script
+    assert 'id="chat-web-mode"' in html
+    assert "web auto" in html
+    assert "Ricerca web sempre attiva" not in html
+    assert "forceWebSearch: false" in script
+    assert 'formData.append("use_web_search", String(state.forceWebSearch))' in script
+    assert "use_web_search: state.forceWebSearch" in script
+    assert 'use_web_search: true' not in script
+
+
 def test_cockpit_exposes_project_scoped_read_only_editor():
     html = TEMPLATE.read_text(encoding="utf-8")
     script = SCRIPT.read_text(encoding="utf-8")

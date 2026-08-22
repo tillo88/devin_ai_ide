@@ -386,6 +386,15 @@ Aggiunta cockpit di validazione in `/app/diagnostics`: path launcher/log, stato 
 Aggiunto `docs/DESKTOP_VALIDATION_CHECKPOINTS.md` come checklist operativa prima del legacy cleanup: launcher, close cleanup, UI polish, agent/diff, training/Teacher, sandbox. Validazione reale eseguita: server locali `coder`/`planner` rilevati e spenti via `/api/desktop/close_cleanup`, backend rimasto vivo.
 
 
+### UI shell interaction cleanup note (2026-08-22)
+
+Il pass browser post-release ha rimosso il residuo della vecchia topbar a tre
+colonne, corretto lo stato Projects/Governance, reso coerenti i toggle laterali
+ai breakpoint reali e trasformato il chip web in `web auto`/`web on`. La shell
+e' `v14`; misure, controlli cliccati e limiti del collaudo sono registrati in
+`docs/UI_INTERACTION_AUDIT_2026-08-22.md`.
+
+
 ## FASE 2.13: Workspace responsiveness / linked projects
 
 Completato 2026-07-15:

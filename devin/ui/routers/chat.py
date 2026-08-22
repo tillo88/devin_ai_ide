@@ -318,11 +318,6 @@ async def api_chat(req: ChatRequest):
         req.use_web_search = True
         auto_web_enabled = True
 
-    # Web search acceso di default (toggle ON nel frontend): salta comunque la
-    # ricerca sui messaggi banali (saluti/ack) — niente latenza né rumore su "ciao".
-    if req.use_web_search and _is_trivial_message(message):
-        req.use_web_search = False
-
     content = message
     web_search_error = None
     if req.use_web_search:

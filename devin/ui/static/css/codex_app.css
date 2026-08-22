@@ -4854,3 +4854,103 @@ body.right-collapsed .mind-panel {
   .devin-boot-actions { display: grid; grid-template-columns: 1fr; }
   .devin-boot-action { width: 100%; }
 }
+
+/* =====================================================================
+   C6.1 — authoritative shell layout and interaction cleanup (2026-08-22).
+   Older additive restyle layers used a three-column grid for four current
+   topbar groups. Keep the final placement explicit so no control can create
+   an implicit row underneath the 72px shell header. */
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(190px, 260px) minmax(220px, 1fr) minmax(390px, 480px) max-content;
+  grid-template-areas: "brand command telemetry status";
+  align-items: center;
+  height: 72px;
+  min-height: 72px;
+  padding: 0 14px;
+  gap: 12px;
+}
+
+.topbar > #toggle-workspace-panel { grid-area: workspace; }
+.topbar > .brand { grid-area: brand; min-width: 0; }
+.topbar > .topbar-command { grid-area: command; min-width: 0; }
+.topbar > .topbar-telemetry { grid-area: telemetry; min-width: 0; }
+.topbar > .topbar-status {
+  grid-area: status;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+button.web-chip {
+  appearance: none;
+  background: rgba(34, 211, 238, 0.055);
+  font: inherit;
+  cursor: pointer;
+}
+
+button.web-chip:hover,
+button.web-chip:focus-visible {
+  color: #a5f3fc;
+  border-color: rgba(34, 211, 238, 0.62);
+  outline: none;
+}
+
+button.web-chip[aria-pressed="true"] {
+  color: #ecfeff;
+  border-color: rgba(34, 211, 238, 0.78);
+  background: rgba(34, 211, 238, 0.16);
+}
+
+@media (max-width: 1320px) {
+  .topbar {
+    grid-template-columns: minmax(180px, 240px) minmax(180px, 1fr) minmax(360px, 440px) max-content;
+  }
+
+  /* GPU e memoria sono gia' rappresentate dalle card di telemetria. */
+  .topbar-status .status-pill { display: none; }
+}
+
+@media (max-width: 1100px) {
+  .topbar {
+    grid-template-columns: minmax(150px, 210px) minmax(140px, 1fr) minmax(250px, 330px) max-content;
+    grid-template-areas: "brand command telemetry status";
+  }
+
+  /* Workspace resta nel layout fino al breakpoint mobile; il suo toggle a
+     larghezza tablet non avrebbe alcun pannello overlay da mostrare. */
+  #toggle-workspace-panel { display: none; }
+}
+
+@media (max-width: 900px) {
+  .topbar-status a { display: none; }
+}
+
+@media (max-width: 768px) {
+  .topbar {
+    grid-template-columns: 40px minmax(108px, auto) minmax(0, 1fr) 40px;
+    grid-template-areas: "workspace brand telemetry status";
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  #toggle-workspace-panel { display: inline-flex; }
+  .topbar-telemetry { justify-content: stretch; gap: 5px; }
+  .topbar-telemetry .telemetry-card {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    padding-inline: 7px;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    grid-template-columns: 40px 34px minmax(0, 1fr) 40px;
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  .brand { gap: 0; }
+  .brand-copy { display: none; }
+  .telemetry-label { font-size: 8px; }
+}

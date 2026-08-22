@@ -18,7 +18,7 @@
     <button class="ghost-link panel-toggle" id="toggle-workspace-panel" type="button" title="Workspace" aria-label="Apri pannello workspace">&#9776;</button>
     <div class="brand">
       <span class="brand-mark">&#129504;</span>
-      <div>
+      <div class="brand-copy">
         <div class="brand-title">DEVIN</div>
         <div class="brand-subtitle">AI IDE &middot; rig workspace</div>
       </div>
@@ -63,10 +63,10 @@
         </span>
       </div>
       <nav class="workspace-primary-nav" aria-label="Aree DEVIN">
-        <button class="workspace-nav-item active" type="button" data-workspace-target="projects-section"><span>▣</span><strong>Projects</strong></button>
-        <button class="workspace-nav-item" type="button" data-governance-focus="knowledge"><span>◇</span><strong>Knowledge</strong><small>isolata</small></button>
-        <button class="workspace-nav-item" type="button" data-governance-focus="tools"><span>⌘</span><strong>MCP Tools</strong><small>deny by default</small></button>
-        <button class="workspace-nav-item" type="button" data-governance-focus="agents"><span>◎</span><strong>Agent Swarm</strong><small>ruoli reali</small></button>
+        <button class="workspace-nav-item active" type="button" data-workspace-target="projects-section" aria-pressed="true"><span>▣</span><strong>Projects</strong></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="knowledge" aria-pressed="false"><span>◇</span><strong>Knowledge</strong><small>isolata</small></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="tools" aria-pressed="false"><span>⌘</span><strong>MCP Tools</strong><small>deny by default</small></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="agents" aria-pressed="false"><span>◎</span><strong>Agent Swarm</strong><small>ruoli reali</small></button>
         <a class="workspace-nav-item" href="/app/diagnostics#training" data-diag-link="training"><span>△</span><strong>Training</strong></a>
       </nav>
       <section class="panel-section" id="projects-section">
@@ -180,7 +180,7 @@
           </div>
           <div class="composer-submit">
             <span class="mini-label" id="chat-file-label" title="No files attached">no files</span>
-            <span class="web-chip" title="Ricerca web sempre attiva">🌐 web</span>
+            <button type="button" class="web-chip" id="chat-web-mode" aria-pressed="false" title="Ricerca web automatica: si attiva solo quando la richiesta lo richiede">🌐 web auto</button>
             <select id="chat-mode" title="Model mode">
               <option value="auto">auto</option>
               <option value="chat">chat</option>

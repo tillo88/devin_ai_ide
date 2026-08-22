@@ -232,7 +232,7 @@ tempi e finding senza ripetere probe modello/hardware:
 
 ## C6 — interaction polish dopo il primo collaudo live
 
-Stato: **next**, derivato dal collaudo funzionale della release `0.2.0`.
+Stato: **in progress**, derivato dal collaudo funzionale della release `0.2.0`.
 
 - sostituire “web sempre attiva” con `web auto`: il backend attiva la ricerca
   solo per intento esplicito e sceglie la catena SearXNG/TinyFish secondo il
@@ -257,6 +257,33 @@ Acceptance C6:
   interno nella superficie primaria;
 - test offline dei contratti frontend/backend prima di un nuovo smoke live; una
   sola ulteriore attivazione modello, senza SHA, 32K, NVML o probe USB.
+
+### C6.1 — shell e controlli ripuliti (2026-08-22)
+
+- il controllo browser del DOM renderizzato ha confermato il residuo visivo:
+  la topbar corrente aveva quattro gruppi dentro una vecchia griglia a tre
+  colonne. A 1456 px `topbar-status` iniziava a quota 73 e terminava a 148,
+  fuori dall'header alto 72 px; tablet e mobile creavano fino a tre righe
+  implicite nello stesso header;
+- l'ultimo strato CSS ora assegna aree esplicite a brand, comando, telemetria e
+  stato, con una singola riga verificabile a desktop/tablet e quattro aree
+  bounded su mobile. Il toggle Workspace compare soltanto quando la rail e'
+  davvero un overlay (`<=768px`), mentre a tablet resta disponibile solo il
+  toggle Attivita';
+- la navigazione Projects/Knowledge/MCP Tools/Agent Swarm usa un solo stato
+  attivo. Projects riporta anche la superficie centrale alla chat, evitando
+  la precedente Governance bloccata con due voci evidenziate;
+- il chip web e' ora un controllo reale: `web auto` lascia al backend il
+  rilevamento dell'intento; `web on` forza la ricerca. Non viene piu' inviato
+  `use_web_search=true` per ogni messaggio;
+- verificati nel browser: Command Palette e chiusura Escape, Chat/Governance,
+  menu File/Skill/Goal, inserimento preset Skill, Goal criterion builder,
+  collasso/riapertura di entrambe le rail e modale Nuovo progetto con annullo;
+- shell/PWA aggiornata a `v14`. Ricevuta dettagliata:
+  [`UI_INTERACTION_AUDIT_2026-08-22.md`](UI_INTERACTION_AUDIT_2026-08-22.md).
+
+Restano in C6.2: stato fail-soft durante inferenza, alias modello senza path,
+reasoning richiudibile e tempi reali first-token/totale.
 
 ## Ordine di verifica
 
