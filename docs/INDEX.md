@@ -24,6 +24,7 @@ sono log storici datati, non binding runtime.
 
 ## Packaging / distribuzione
 - **[PACKAGING-ROADMAP.md](PACKAGING-ROADMAP.md)** — verso l'eseguibile Windows: profilo RIG vs LOCALE, sidecar PyInstaller, wizard onboarding, installer .msi/.exe.
+- **[DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md](DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md)** — cockpit Windows thin-client, layout Goal/agenti, lifecycle sicuro e roadmap C1-C5.
 
 ## Storico / archiviati
 - `TRAINING_MINI_BENCH_2026-07-15.md` — superato da [TRAINING.md](TRAINING.md) (le lezioni sono state incorporate; il gate descritto è ormai implementato). Da spostare in `archive/old_docs/`.

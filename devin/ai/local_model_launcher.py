@@ -139,6 +139,22 @@ _vram_last_check = 0
 _vram_critical_threshold = 95  # percentuale VRAM usata
 
 
+def nvml_telemetry_allowed(models_cfg=None):
+    """Return True only after an explicit operator opt-in.
+
+    On the rig, model lifecycle and readiness belong to the model-slot broker;
+    polling ``nvidia-smi`` from the application would create an independent
+    NVML observer during CUDA work.  A rig-primary configuration therefore
+    always disables this legacy telemetry path.  Local-only development may
+    opt in with ``DEVIN_ALLOW_NVML_TELEMETRY=1``.
+    """
+    if isinstance(models_cfg, dict) and models_cfg.get("rig_primary"):
+        return False
+    return os.environ.get("DEVIN_ALLOW_NVML_TELEMETRY", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 @dataclass
 class LauncherStatus:
     rig_available: bool = False
@@ -169,6 +185,8 @@ def is_wsl():
 
 def _get_vram_mb():
     """Ritorna VRAM libera in MB dalla GPU 0, o None se nvidia-smi non disponibile."""
+    if not nvml_telemetry_allowed():
+        return None
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
@@ -184,6 +202,8 @@ def _get_vram_mb():
 
 def _get_vram_used_percent():
     """Ritorna percentuale VRAM usata dalla GPU 0, o None."""
+    if not nvml_telemetry_allowed():
+        return None
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
@@ -517,10 +537,12 @@ def _vram_watchdog_loop(interval_seconds=30):
         _vram_watchdog_stop.wait(timeout=interval_seconds)
 
 
-def start_vram_watchdog(interval_seconds=30):
+def start_vram_watchdog(interval_seconds=30, *, models_cfg=None):
     global _vram_watchdog_thread
+    if not nvml_telemetry_allowed(models_cfg):
+        return False
     if _vram_watchdog_thread is not None and _vram_watchdog_thread.is_alive():
-        return
+        return True
 
     _vram_watchdog_stop.clear()
     _vram_watchdog_thread = threading.Thread(
@@ -530,6 +552,7 @@ def start_vram_watchdog(interval_seconds=30):
         name="VRAM-Watchdog"
     )
     _vram_watchdog_thread.start()
+    return True
 
 
 def stop_vram_watchdog():
@@ -675,7 +698,6 @@ class LocalModelLauncher:
                       instance._models_cfg.get("rig_host"),
                       instance._models_cfg.get("rig_port", 8080)))
             instance.status = "rig"
-            start_vram_watchdog()
             return instance
 
         for alias in instance.auto_start_aliases:
@@ -684,7 +706,7 @@ class LocalModelLauncher:
             if ok:
                 instance.processes[alias] = True
                 instance.status = "running"
-        start_vram_watchdog()
+        start_vram_watchdog(models_cfg=instance._models_cfg)
         return instance
 
     def ensure_models(self):
@@ -796,11 +818,14 @@ def main():
     print("DEVIN AI IDE - Local Model Launcher (backup: chat + autocomplete only)")
     print("=" * 60)
 
-    try:
-        result = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5)
-        print("[CUDA] nvidia-smi:\n" + result.stdout[:500] + "\n")
-    except Exception as e:
-        print("[WARN] nvidia-smi non disponibile: {}\n".format(e))
+    if nvml_telemetry_allowed():
+        try:
+            result = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5)
+            print("[CUDA] nvidia-smi:\n" + result.stdout[:500] + "\n")
+        except Exception as e:
+            print("[WARN] nvidia-smi non disponibile: {}\n".format(e))
+    else:
+        print("[CUDA] telemetria NVML disabilitata (opt-in esplicito richiesto)\n")
 
     results = {}
     for alias in AUTO_START_ALIASES:

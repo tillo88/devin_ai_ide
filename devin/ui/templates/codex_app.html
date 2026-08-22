@@ -20,18 +20,34 @@
       <span class="brand-mark">&#129504;</span>
       <div>
         <div class="brand-title">DEVIN</div>
-        <div class="brand-subtitle">desktop coding agent &middot; local workspace</div>
+        <div class="brand-subtitle">AI IDE &middot; rig workspace</div>
       </div>
     </div>
     <div class="topbar-command" aria-label="DEVIN command status">
       <span class="topbar-chip"><span>Progetto</span><strong id="active-scope-label">General chat</strong></span>
       <span class="topbar-chip accent"><span>Sicurezza</span><strong>diff prima di applicare</strong></span>
     </div>
+    <div class="topbar-telemetry" aria-label="Stato operativo DEVIN">
+      <div class="telemetry-card" id="gpu-slot-card">
+        <span class="telemetry-label">GPU slot</span>
+        <strong id="gpu-slot-status">in attesa</strong>
+        <span class="telemetry-track"><span id="gpu-slot-fill"></span></span>
+      </div>
+      <div class="telemetry-card telemetry-model">
+        <span class="telemetry-label">Modello attivo</span>
+        <strong id="active-model-label">non rilevato</strong>
+        <small id="model-source">source: ...</small>
+      </div>
+      <div class="telemetry-card">
+        <span class="telemetry-label">Contesto</span>
+        <strong id="context-meter-label">0%</strong>
+        <span class="telemetry-track"><span id="context-meter-fill"></span></span>
+      </div>
+    </div>
     <div class="topbar-status">
       <button class="ghost-link panel-toggle" id="toggle-mind-panel" type="button" title="Attivit&agrave;" aria-label="Apri pannello attivit&agrave;">&#129504;</button>
-      <span class="status-pill" id="model-source">source: ...</span>
       <span class="status-pill" id="memory-count">memory: ...</span>
-      <span class="status-pill" id="vram-pill">vram: ...</span>
+      <span class="status-pill" id="vram-pill">GPU: lifecycle</span>
       <button class="ghost-link command-open-button" id="open-command-palette" type="button" title="Command palette Ctrl+K">⌘K</button>
       <a class="ghost-link" href="/app/diagnostics" data-diag-link="">Diagnostics</a>
     </div>
@@ -46,7 +62,14 @@
           <button class="icon-button collapse-btn" data-collapse="left" title="Comprimi il pannello Workspace" aria-label="Comprimi Workspace">&#10094;</button>
         </span>
       </div>
-      <section class="panel-section">
+      <nav class="workspace-primary-nav" aria-label="Aree DEVIN">
+        <button class="workspace-nav-item active" type="button" data-workspace-target="projects-section"><span>▣</span><strong>Projects</strong></button>
+        <a class="workspace-nav-item" href="/app/diagnostics#knowledge" data-diag-link="knowledge"><span>◇</span><strong>Knowledge</strong></a>
+        <button class="workspace-nav-item" type="button" data-workspace-target="governance-section"><span>⌘</span><strong>MCP Tools</strong><small>deny by default</small></button>
+        <button class="workspace-nav-item" type="button" data-workspace-target="governance-section"><span>◎</span><strong>Agent Swarm</strong><small>bounded</small></button>
+        <a class="workspace-nav-item" href="/app/diagnostics#training" data-diag-link="training"><span>△</span><strong>Training</strong></a>
+      </nav>
+      <section class="panel-section" id="projects-section">
         <div class="section-title-row">
           <h2>Projects</h2>
           <div class="section-actions">
@@ -173,11 +196,39 @@
 
     <aside class="panel mind-panel focus-panel">
       <div class="panel-header">
-        <span>Attività &amp; File</span>
+        <span>Goal &amp; Attività</span>
         <span class="panel-header-actions">
           <button class="icon-button collapse-btn" data-collapse="right" title="Comprimi il pannello" aria-label="Comprimi pannello">&#10095;</button>
         </span>
       </div>
+
+      <section class="panel-section goal-control-section" id="goal-panel">
+        <div class="section-title-row">
+          <h2>Goal Mode</h2>
+          <span class="goal-status-badge" id="goal-status-badge">idle</span>
+        </div>
+        <div class="goal-empty" id="goal-empty">
+          Nessun goal attivo. I run normali restano disponibili dalla chat.
+        </div>
+        <div class="goal-summary" id="goal-summary" hidden>
+          <div class="goal-objective">
+            <span>Obiettivo</span>
+            <strong id="goal-objective">—</strong>
+          </div>
+          <div class="goal-meta" id="goal-meta"></div>
+          <div class="goal-checklist" id="goal-checklist"></div>
+          <div class="goal-budget-grid">
+            <div class="goal-budget">
+              <span><strong id="goal-step-count">0 / 0</strong> step</span>
+              <span class="goal-budget-track"><span id="goal-step-fill"></span></span>
+            </div>
+            <div class="goal-budget">
+              <span><strong id="goal-time-count">0m / 0m</strong> tempo</span>
+              <span class="goal-budget-track"><span id="goal-time-fill"></span></span>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <details class="panel-section activity-feed-section collapsible-section" open>
         <summary class="section-summary"><h2>Timeline live</h2></summary>
@@ -208,7 +259,7 @@
         <div class="steward-line" id="steward-line" title="Context Steward: pressione del contesto della chat"></div>
       </section>
 
-      <details class="panel-section architecture-status" open>
+      <details class="panel-section architecture-status" id="governance-section" open>
         <summary class="section-summary"><h2>Governance agente</h2></summary>
         <div class="governance-card" id="knowledge-exchange-card">
           <strong>Knowledge exchange</strong><span>caricamento…</span>

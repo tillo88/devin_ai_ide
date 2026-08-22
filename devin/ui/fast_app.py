@@ -415,7 +415,16 @@ def _build_mind_status() -> Dict[str, Any]:
 
 
 def _get_vram_info():
-    """Ritorna VRAM info da nvidia-smi se disponibile."""
+    """Ritorna VRAM info solo con opt-in esplicito alla telemetria NVML.
+
+    Sul rig la readiness del model-slot e' l'oracolo sicuro.  Questo endpoint e'
+    pollato dalla UI, quindi non deve trasformarsi in un polling NVML durante
+    CUDA.  Lo sviluppo locale puo' abilitarlo esplicitamente tramite
+    ``DEVIN_ALLOW_NVML_TELEMETRY=1``.
+    """
+    from devin.ai.local_model_launcher import nvml_telemetry_allowed
+    if not nvml_telemetry_allowed():
+        return None
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,memory.free",

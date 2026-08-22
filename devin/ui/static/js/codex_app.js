@@ -16,6 +16,7 @@ const state = {
   trainingJobPoll: null,
   projects: [],
   runs: [],
+  goals: [],
   commandItems: [],
 };
 
@@ -304,7 +305,7 @@ async function exportTrainingDataset() {
   await loadTrainingOverview();
 }
 
-function renderMind(status) {
+function renderMind(status, health = {}) {
   if (!state.selectedRunId) setText("mind-state", "ready");
   const launcherSource = status.models?.launcher_source ?? "unavailable";
   const sourceLabels = {
@@ -314,14 +315,27 @@ function renderMind(status) {
   };
   setText("model-source", sourceLabels[launcherSource] ?? launcherSource);
 
+  const localRunning = status.models?.local_running ?? {};
+  const activeModel = health.remote_model || Object.keys(localRunning)[0] ||
+    (launcherSource === "rig" ? "DEVIN model-slot" : "nessun modello");
+  setText("active-model-label", activeModel);
+
+  const remoteReady = Boolean(health.remote_coder && health.remote_reasoning);
+  const gpuCard = $("gpu-slot-card");
+  const gpuFill = $("gpu-slot-fill");
+  const slotState = remoteReady ? "ready" : (launcherSource === "rig" ? "loading" : "offline");
+  setText("gpu-slot-status", remoteReady ? "DEVIN ready" : (launcherSource === "rig" ? "preparazione" : "offline"));
+  if (gpuCard) gpuCard.dataset.state = slotState;
+  if (gpuFill) gpuFill.style.width = remoteReady ? "100%" : (launcherSource === "rig" ? "58%" : "0%");
+
   const localMemory = status.memory?.local ?? {};
   setText("memory-count", `memory: ${localMemory.records ?? 0}`);
 
   const vram = status.models?.vram;
-  setText(
-    "vram-pill",
-    vram ? `vram: ${vram.used_mb}/${vram.total_mb} MB` : "vram: n/a",
-  );
+  const sampledVram = vram && Number.isFinite(Number(vram.used_mb)) && Number.isFinite(Number(vram.total_mb));
+  setText("vram-pill", sampledVram
+    ? `VRAM: ${vram.used_mb}/${vram.total_mb} MB`
+    : "NVML: off · lifecycle safe");
 
   const agentCard = $("agent-card");
   if (agentCard) {
@@ -356,6 +370,79 @@ function renderMind(status) {
       .map((detector) => `<span class="tag">${escapeHtml(detector)}</span>`)
       .join("");
   }
+}
+
+const activeGoalStatuses = new Set(["starting", "running", "stopping", "awaiting_approval"]);
+
+function goalCriterionLabel(criterion) {
+  if (criterion?.label) return criterion.label;
+  const params = criterion?.params ?? {};
+  return {
+    tests_pass: "Suite test verde",
+    file_exists: `File presente: ${params.path || "?"}`,
+    absence_of_pattern: `Pattern assente: ${params.pattern || "?"}`,
+    contains_text: `Contenuto verificato: ${params.path || "?"}`,
+    command_succeeds: `Comando con exit 0: ${(params.argv || []).join(" ")}`,
+  }[criterion?.type] || criterion?.type || "Criterio";
+}
+
+function setMeter(id, ratio) {
+  const meter = $(id);
+  if (meter) meter.style.width = `${Math.max(0, Math.min(1, ratio || 0)) * 100}%`;
+}
+
+function renderGoalPanel(payload) {
+  const goals = Array.isArray(payload?.goal_runs) ? payload.goal_runs : [];
+  state.goals = goals;
+  const active = [...goals].reverse().find((goal) => activeGoalStatuses.has(goal.status));
+  const goal = active || goals.at(-1);
+  const empty = $("goal-empty");
+  const summary = $("goal-summary");
+  if (!goal) {
+    if (empty) empty.hidden = false;
+    if (summary) summary.hidden = true;
+    setText("goal-status-badge", "idle");
+    return;
+  }
+
+  if (empty) empty.hidden = true;
+  if (summary) summary.hidden = false;
+  const badge = $("goal-status-badge");
+  if (badge) {
+    badge.textContent = goal.status || "unknown";
+    badge.dataset.status = goal.status || "unknown";
+  }
+  setText("goal-objective", goal.objective || "Goal senza descrizione");
+  const policy = goal.requires_checkpoint ? "supervisione" : "autonomo";
+  setText("goal-meta", `${goal.role || "scaffolder"} · ${goal.mode || "maintenance"} · ${policy}`);
+
+  const attempts = Array.isArray(goal.attempts) ? goal.attempts : [];
+  const latestEvaluation = [...attempts].reverse().find((attempt) => attempt?.evaluation)?.evaluation;
+  const results = Array.isArray(latestEvaluation?.results) ? latestEvaluation.results : [];
+  const checklist = $("goal-checklist");
+  if (checklist) {
+    checklist.innerHTML = (goal.acceptance || []).map((criterion, index) => {
+      const result = results[index];
+      const stateClass = result ? (result.passed ? "passed" : "failed") : "pending";
+      const icon = result ? (result.passed ? "✓" : "×") : "·";
+      const detail = result?.detail ? `<small>${escapeHtml(result.detail)}</small>` : "";
+      return `<div class="goal-check ${stateClass}"><span>${icon}</span><div><strong>${escapeHtml(goalCriterionLabel(criterion))}</strong>${detail}</div></div>`;
+    }).join("") || '<div class="goal-check pending"><span>·</span><div><strong>Checklist non disponibile</strong></div></div>';
+  }
+
+  const budgetSteps = Number(goal.budget_steps || 0);
+  const stepCount = attempts.length;
+  setText("goal-step-count", `${stepCount} / ${budgetSteps || "—"}`);
+  setMeter("goal-step-fill", budgetSteps ? stepCount / budgetSteps : 0);
+
+  const started = Date.parse(goal.started_at || "");
+  const ended = Date.parse(goal.finished_at || "");
+  const elapsedSeconds = Number.isFinite(started)
+    ? Math.max(0, ((Number.isFinite(ended) ? ended : Date.now()) - started) / 1000)
+    : 0;
+  const budgetSeconds = Number(goal.budget_seconds || 0);
+  setText("goal-time-count", `${Math.round(elapsedSeconds / 60)}m / ${budgetSeconds ? Math.round(budgetSeconds / 60) : "—"}m`);
+  setMeter("goal-time-fill", budgetSeconds ? elapsedSeconds / budgetSeconds : 0);
 }
 
 function renderGovernanceStatus(knowledge, council, routing) {
@@ -1916,8 +2003,12 @@ async function renderSteward() {
     const label = stateLabels[snap.state] ?? snap.state;
     const pct = snap.pressure_pct ?? 0;
     el.innerHTML = `<span class="steward-badge steward-${(snap.state || "IDLE").toLowerCase()}">🧭 contesto ${pct}% · ${escapeHtml(label)}</span>`;
+    setText("context-meter-label", `${pct}%`);
+    setMeter("context-meter-fill", Number(pct) / 100);
   } catch (err) {
     el.innerHTML = "";  // fail-soft: niente Steward, nessun impatto sulla UI
+    setText("context-meter-label", "n/d");
+    setMeter("context-meter-fill", 0);
   }
 }
 
@@ -1929,16 +2020,19 @@ async function refresh() {
   try {
     const projectQuery = state.selectedProjectPath
       ? `?project_path=${encodeURIComponent(state.selectedProjectPath)}` : "";
-    const [mind, workspace, knowledge, council, routing] = await Promise.all([
+    const [mind, health, workspace, knowledge, council, routing, goals] = await Promise.all([
       fetchJson("/api/mind/status"),
+      fetchJson("/api/health").catch(() => ({})),
       fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
       fetchJson(`/api/knowledge-exchange/status${projectQuery}`).catch(() => ({})),
       fetchJson("/api/council/status").catch(() => ({})),
       fetchJson("/api/routing/status").catch(() => ({})),
+      fetchJson("/api/goal").catch(() => ({ goal_runs: [] })),
     ]);
 
     state.mindLoaded = true;
-    renderMind(mind);
+    renderMind(mind, health);
+    renderGoalPanel(goals);
     renderGovernanceStatus(knowledge, council, routing);
     renderProjects(workspace);
     renderSteward();  // fail-soft, non blocca il refresh
@@ -2005,6 +2099,19 @@ function setupPanelToggles() {
 }
 
 setupPanelToggles();
+
+document.querySelectorAll("[data-workspace-target]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const target = document.getElementById(button.dataset.workspaceTarget || "");
+    if (!target) return;
+    if (button.dataset.workspaceTarget === "governance-section") {
+      document.body.classList.remove("right-collapsed");
+      target.open = true;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+});
+
 setupChatComposer();
 setupCommandPalette();
 refresh();

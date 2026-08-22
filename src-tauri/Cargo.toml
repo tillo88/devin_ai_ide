@@ -9,3 +9,12 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 serde_json = "1"
+
+# The desktop crate is tiny, while Tauri/WebView dependencies are large.  Full
+# MSVC debug symbols plus Cargo incremental objects previously grew the cached
+# development target to about 7 GB.  DEVIN uses application logs and Rust unit
+# tests for diagnostics, so keep reusable compiled dependencies without those
+# multi-gigabyte debug/incremental artifacts.
+[profile.dev]
+debug = 0
+incremental = false
