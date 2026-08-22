@@ -46,6 +46,12 @@ Goal Mode non può creare directory arbitrarie fuori dal perimetro validato. Un
 goal in `starting`, `running` o `stopping` compare nel registro operativo e
 impedisce il rilascio idle.
 
+Il cockpit riceve lo stato dell'outer loop da uno stream SSE Goal separato dai
+run interni. Lo stream è bounded in memoria, non contiene `project_path`,
+`work_dir` o log grezzi e termina su `goal_finished`/`goal_error`; un polling
+limitato resta soltanto come fallback. Le evidenze dei criteri provengono
+dall'evaluator machine-verifiable e non da affermazioni del modello.
+
 ## 3. Ricerca web: SearXNG e TinyFish
 
 I provider formano una catena esplicita e ordinata. Profilo locale/privacy:
