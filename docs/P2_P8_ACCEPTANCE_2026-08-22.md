@@ -108,8 +108,8 @@ Fill this ledger only from receipts:
 | Gate | Result |
 |---|---|
 | Local syntax / diff check | PASS: Python `compileall`, JavaScript `node --check`, `git diff --check` |
-| Targeted Linux tests | pending |
-| Full Linux suite | pending |
+| Targeted Linux tests | PASS: 212 passed, 4 warnings, isolated rig workspace at `2ed9493` |
+| Full Linux suite | PASS: 607 passed, 1 skipped, 4 warnings in 24.30s |
 | DEVIN PR / merge | pending |
 | Rig source deploy | blocked safely until frontdoor `:5000` is stopped for the source-only gate |
 | Runtime service install | pending after source deploy; separate root checkpoint |
