@@ -101,9 +101,9 @@ def test_app_shell_includes_pwa_meta_and_sw_registration():
     assert "apple-mobile-web-app-capable" in html
     assert "mobile-web-app-capable" in html
     assert "serviceWorker" in html
-    assert "navigator.serviceWorker.register('/sw.js?v=v7'" in html
+    assert "navigator.serviceWorker.register('/sw.js?v=v8'" in html
     assert "updateViaCache: 'none'" in html
-    assert '/static/css/codex_app.css?v=v7' in html
-    assert '/static/js/codex_app.js?v=v7' in html
+    assert '/static/css/codex_app.css?v=v8' in html
+    assert '/static/js/codex_app.js?v=v8' in html
     assert "no-store" in response.headers["Cache-Control"]
     assert response.headers["Pragma"] == "no-cache"

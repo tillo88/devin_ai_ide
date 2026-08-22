@@ -18,7 +18,11 @@ const state = {
   runs: [],
   goals: [],
   goalCriteriaDraft: [],
+  goalEvents: [],
   goalPoll: null,
+  goalEventSource: null,
+  streamedGoalRunId: null,
+  lastGoalEventSeq: -1,
   commandItems: [],
 };
 
@@ -481,13 +485,139 @@ async function refreshGoals() {
 }
 
 function updateGoalPolling(isLive) {
-  if (isLive && !state.goalPoll) {
-    state.goalPoll = window.setInterval(refreshGoals, 2000);
+  if (isLive && !state.goalEventSource && !state.goalPoll) {
+    state.goalPoll = window.setInterval(refreshGoals, 5000);
+    setText("goal-stream-status", "poll fallback");
   } else if (!isLive && state.goalPoll) {
     window.clearInterval(state.goalPoll);
     state.goalPoll = null;
   }
 }
+
+function closeGoalEventStream() {
+  if (state.goalEventSource) state.goalEventSource.close();
+  state.goalEventSource = null;
+  if (state.goalPoll) {
+    window.clearInterval(state.goalPoll);
+    state.goalPoll = null;
+  }
+}
+
+function goalEventSummary(event) {
+  const data = event?.data ?? {};
+  if (event?.type === "goal_attempt") {
+    return `${data.strategy || "executor"} · ${data.status || "step"}`;
+  }
+  return data.status || data.role || event?.level || "";
+}
+
+function renderGoalEvents(events = []) {
+  state.goalEvents = Array.isArray(events) ? events.slice(-12) : [];
+  const feed = $("goal-event-feed");
+  if (!feed) return;
+  if (!state.goalEvents.length) {
+    feed.innerHTML = '<div class="goal-event-empty">In attesa del primo evento strutturato.</div>';
+    return;
+  }
+  feed.innerHTML = state.goalEvents.map((event) => `
+    <div class="goal-event level-${escapeHtml(event.level || "info")}" data-goal-event-seq="${escapeHtml(event.seq)}">
+      <span>${escapeHtml(event.type || "event")}</span>
+      <div>
+        <strong>${escapeHtml(event.message || event.type || "Evento Goal")}</strong>
+        <small>${escapeHtml(goalEventSummary(event))} · #${escapeHtml(event.seq)} ${escapeHtml(formatEventTime(event))}</small>
+      </div>
+    </div>`).join("");
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function appendGoalEvent(event) {
+  if (!event || event.goal_run_id !== state.streamedGoalRunId) return;
+  const seq = Number(event.seq ?? -1);
+  if (state.goalEvents.some((item) => Number(item.seq) === seq)) return;
+  state.lastGoalEventSeq = Math.max(state.lastGoalEventSeq, seq);
+  renderGoalEvents([...state.goalEvents, event]);
+}
+
+function startGoalEventStream(goalRunId) {
+  if (!window.EventSource || !goalRunId || state.goalEventSource) {
+    updateGoalPolling(Boolean(currentLiveGoal()));
+    return;
+  }
+  const url = `/api/goal/${encodeURIComponent(goalRunId)}/events/stream?after_seq=${state.lastGoalEventSeq}`;
+  const source = new EventSource(apiUrl(url));
+  state.goalEventSource = source;
+  if (state.goalPoll) {
+    window.clearInterval(state.goalPoll);
+    state.goalPoll = null;
+  }
+  setText("goal-stream-status", "connessione…");
+
+  source.onopen = () => setText("goal-stream-status", "stream live");
+  source.onmessage = (message) => {
+    try {
+      const event = JSON.parse(message.data);
+      appendGoalEvent(event);
+      if (TERMINAL_GOAL_EVENT_TYPES.has(event.type)) {
+        source.close();
+        if (state.goalEventSource === source) state.goalEventSource = null;
+        setText("goal-stream-status", "completo");
+      }
+      refreshGoals().catch(() => {});
+    } catch (err) {
+      console.warn("Invalid Goal event", err);
+    }
+  };
+  source.addEventListener("done", () => {
+    source.close();
+    if (state.goalEventSource === source) state.goalEventSource = null;
+    setText("goal-stream-status", "completo");
+    refreshGoals().catch(() => {});
+  });
+  source.onerror = () => {
+    source.close();
+    if (state.goalEventSource === source) state.goalEventSource = null;
+    updateGoalPolling(Boolean(currentLiveGoal()));
+  };
+}
+
+async function loadGoalEvents(goalRunId, isLive) {
+  const payload = await fetchJson(`/api/goal/${encodeURIComponent(goalRunId)}/events?limit=100`);
+  if (state.streamedGoalRunId !== goalRunId) return;
+  const events = payload.events ?? [];
+  state.lastGoalEventSeq = events.length ? Number(events.at(-1).seq ?? -1) : -1;
+  renderGoalEvents(events);
+  if (isLive) startGoalEventStream(goalRunId);
+  else setText("goal-stream-status", "completo");
+}
+
+function ensureGoalEvents(goal) {
+  const goalRunId = goal?.goal_run_id || "";
+  const isLive = liveGoalStatuses.has(goal?.status);
+  if (state.streamedGoalRunId === goalRunId) {
+    if (isLive && !state.goalEventSource) startGoalEventStream(goalRunId);
+    if (!isLive && state.goalEventSource) {
+      state.goalEventSource.close();
+      state.goalEventSource = null;
+      setText("goal-stream-status", "completo");
+    }
+    return;
+  }
+  closeGoalEventStream();
+  state.streamedGoalRunId = goalRunId || null;
+  state.lastGoalEventSeq = -1;
+  renderGoalEvents([]);
+  if (!goalRunId) {
+    setText("goal-stream-status", "idle");
+    return;
+  }
+  setText("goal-stream-status", "caricamento…");
+  loadGoalEvents(goalRunId, isLive).catch(() => {
+    setText("goal-stream-status", isLive ? "poll fallback" : "non disponibile");
+    updateGoalPolling(isLive);
+  });
+}
+
+const TERMINAL_GOAL_EVENT_TYPES = new Set(["goal_finished", "goal_error"]);
 
 async function startGoal() {
   if (!state.selectedProjectPath) throw new Error("Seleziona prima un progetto.");
@@ -551,6 +681,7 @@ function renderGoalPanel(payload) {
     if (reason) reason.hidden = true;
     const stop = $("goal-stop-button");
     if (stop) stop.hidden = true;
+    ensureGoalEvents(null);
     updateGoalPolling(false);
     syncGoalLaunchState();
     return;
@@ -590,9 +721,14 @@ function renderGoalPanel(payload) {
       const result = results[index];
       const stateClass = result ? (result.passed ? "passed" : "failed") : "pending";
       const icon = result ? (result.passed ? "✓" : "×") : "·";
-      const detail = result?.detail ? `<small>${escapeHtml(result.detail)}</small>` : "";
-      return `<div class="goal-check ${stateClass}"><span>${icon}</span><div><strong>${escapeHtml(goalCriterionLabel(criterion))}</strong>${detail}</div></div>`;
-    }).join("") || '<div class="goal-check pending"><span>·</span><div><strong>Checklist non disponibile</strong></div></div>';
+      const evidenceLabel = result ? "Apri evidenza" : "In attesa di valutazione";
+      const evidence = result?.detail || "Il criterio non è ancora stato valutato.";
+      const verdict = result ? (result.passed ? "PASS" : "FAIL") : "PENDING";
+      return `<details class="goal-check ${stateClass}">
+        <summary><span>${icon}</span><div><strong>${escapeHtml(goalCriterionLabel(criterion))}</strong><small>${evidenceLabel}</small></div></summary>
+        <div class="goal-evidence"><div><code>${escapeHtml(criterion?.type || "criterion")}</code><strong>${verdict}</strong></div><p>${escapeHtml(evidence)}</p></div>
+      </details>`;
+    }).join("") || '<div class="goal-check pending"><strong>Checklist non disponibile</strong></div>';
   }
 
   const budgetSteps = Number(goal.budget_steps || 0);
@@ -608,6 +744,7 @@ function renderGoalPanel(payload) {
   const budgetSeconds = Number(goal.budget_seconds || 0);
   setText("goal-time-count", `${Math.round(elapsedSeconds / 60)}m / ${budgetSeconds ? Math.round(budgetSeconds / 60) : "—"}m`);
   setMeter("goal-time-fill", budgetSeconds ? elapsedSeconds / budgetSeconds : 0);
+  ensureGoalEvents(goal);
   updateGoalPolling(liveGoalStatuses.has(goal.status));
   syncGoalLaunchState();
 }

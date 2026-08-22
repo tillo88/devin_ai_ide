@@ -11,16 +11,20 @@ INIETTATO, cosi' e' testabile offline con uno stub.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from devin.core.goal_mode import Goal, GoalError, parse_acceptance
 from devin.core.goal_runner import Attempt, run_goal
+from devin.core.time_service import timestamp_bundle
 
 router = APIRouter()
 
@@ -30,8 +34,10 @@ router = APIRouter()
 # corso. La persistenza/resume completa resta una fase separata di Goal Mode.
 _goal_runs: dict[str, dict[str, Any]] = {}
 _goal_stop_events: dict[str, threading.Event] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 ACTIVE_GOAL_STATUSES = frozenset({"starting", "running", "stopping"})
+TERMINAL_GOAL_EVENTS = frozenset({"goal_finished", "goal_error"})
+MAX_GOAL_EVENTS = 500
 
 
 class GoalRunRequest(BaseModel):
@@ -51,6 +57,44 @@ VALID_ROLES = {"scaffolder", "tester", "swarm"}
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _append_goal_event(
+    goal_run_id: str,
+    event_type: str,
+    *,
+    level: str = "info",
+    message: str = "",
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Aggiunge un evento bounded senza esporre path o log del progetto."""
+    with _lock:
+        rec = _goal_runs.get(goal_run_id)
+        if rec is None:
+            return None
+        seq = int(rec.get("_event_seq", 0))
+        rec["_event_seq"] = seq + 1
+        stamp = timestamp_bundle()
+        event_data = dict(data or {})
+        event_data.pop("project_path", None)
+        event_data.pop("work_dir", None)
+        event = {
+            "seq": seq,
+            "ts": stamp["timestamp_utc"],
+            "timestamp_utc": stamp["timestamp_utc"],
+            "timestamp_local": stamp["timestamp_local"],
+            "display_timezone": stamp["display_timezone"],
+            "goal_run_id": goal_run_id,
+            "type": str(event_type),
+            "level": str(level),
+            "message": str(message),
+            "data": event_data,
+        }
+        events = rec.setdefault("events", [])
+        events.append(event)
+        if len(events) > MAX_GOAL_EVENTS:
+            del events[:-MAX_GOAL_EVENTS]
+        return dict(event)
 
 
 def goal_operations_snapshot() -> list[dict[str, Any]]:
@@ -151,10 +195,18 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
     stop_event = _goal_stop_events.get(goal_run_id)
 
     def on_attempt(attempt: Attempt) -> None:
+        attempt_record = _attempt_record(attempt)
         with _lock:
-            rec["attempts"].append(_attempt_record(attempt))
+            rec["attempts"].append(attempt_record)
             rec["evaluation"] = dict(attempt.evaluation)
             rec["updated_at"] = _now()
+        _append_goal_event(
+            goal_run_id,
+            "goal_attempt",
+            message=f"Step {attempt.index + 1}: {attempt.strategy or 'executor'}",
+            level="warning" if attempt.status == "failed" else "info",
+            data=attempt_record,
+        )
 
     try:
         result = run_goal(
@@ -172,12 +224,30 @@ def execute_goal_run(goal_run_id: str, goal: Goal, project_path: str, executor, 
             rec["evaluation"] = dict(result.evaluation)
             rec["finished_at"] = _now()
             rec["updated_at"] = rec["finished_at"]
+        _append_goal_event(
+            goal_run_id,
+            "goal_finished",
+            message=f"Goal concluso: {result.status}",
+            level="info" if result.status == "success" else "warning",
+            data={
+                "status": result.status,
+                "reason": result.reason,
+                "evaluation": dict(result.evaluation),
+            },
+        )
     except Exception as exc:  # difensivo: il thread non deve morire in silenzio
         with _lock:
             rec["status"] = "error"
             rec["reason"] = f"{type(exc).__name__}: {exc}"
             rec["finished_at"] = _now()
             rec["updated_at"] = rec["finished_at"]
+        _append_goal_event(
+            goal_run_id,
+            "goal_error",
+            level="error",
+            message="Goal terminato con errore",
+            data={"status": "error", "reason": rec["reason"]},
+        )
     finally:
         with _lock:
             _goal_stop_events.pop(goal_run_id, None)
@@ -272,6 +342,8 @@ async def api_goal_run(req: GoalRunRequest):
             "project_path": project,
             "attempts": [],
             "evaluation": {},
+            "events": [],
+            "_event_seq": 0,
             "result": None,
             "started_at": started_at,
             "updated_at": started_at,
@@ -289,6 +361,13 @@ async def api_goal_run(req: GoalRunRequest):
             _goal_runs[goal_run_id]["reason"] = f"avvio esecutore fallito: {exc}"
             _goal_runs[goal_run_id]["finished_at"] = _now()
             _goal_runs[goal_run_id]["updated_at"] = _goal_runs[goal_run_id]["finished_at"]
+        _append_goal_event(
+            goal_run_id,
+            "goal_error",
+            level="error",
+            message="Avvio esecutore fallito",
+            data={"status": "error", "reason": str(exc)},
+        )
         return {"error": str(exc), "goal_run_id": goal_run_id}
 
     t = threading.Thread(
@@ -298,6 +377,19 @@ async def api_goal_run(req: GoalRunRequest):
         with _lock:
             _goal_runs[goal_run_id]["status"] = "running"
             _goal_runs[goal_run_id]["updated_at"] = _now()
+        _append_goal_event(
+            goal_run_id,
+            "goal_started",
+            message="Goal avviato",
+            data={
+                "status": "running",
+                "mode": goal.mode,
+                "role": role,
+                "budget_steps": goal.budget_steps,
+                "budget_seconds": goal.budget_seconds,
+                "criteria": len(goal.acceptance),
+            },
+        )
         t.start()
     except Exception as exc:
         with _lock:
@@ -306,6 +398,13 @@ async def api_goal_run(req: GoalRunRequest):
             _goal_runs[goal_run_id]["reason"] = f"thread goal non avviato: {exc}"
             _goal_runs[goal_run_id]["finished_at"] = _now()
             _goal_runs[goal_run_id]["updated_at"] = _goal_runs[goal_run_id]["finished_at"]
+        _append_goal_event(
+            goal_run_id,
+            "goal_error",
+            level="error",
+            message="Thread Goal non avviato",
+            data={"status": "error", "reason": str(exc)},
+        )
         return {"error": str(exc), "goal_run_id": goal_run_id}
     return {"goal_run_id": goal_run_id, "status": "started"}
 
@@ -336,11 +435,78 @@ async def api_goal_stop(goal_run_id: str):
         rec["status"] = "stopping"
         rec["reason"] = "stop richiesto; attendo la fine dello step corrente"
         rec["updated_at"] = _now()
+        _append_goal_event(
+            goal_run_id,
+            "goal_stop_requested",
+            level="warning",
+            message="Stop richiesto; attendo la fine dello step corrente",
+            data={"status": "stopping"},
+        )
         return {
             "goal_run_id": goal_run_id,
             "status": rec["status"],
             "reason": rec["reason"],
         }
+
+
+@router.get("/api/goal/{goal_run_id}/events")
+async def api_goal_events(goal_run_id: str, after_seq: int | None = None, limit: int = 500):
+    with _lock:
+        rec = _goal_runs.get(goal_run_id)
+        if rec is None:
+            return {"error": "goal-run non trovato", "goal_run_id": goal_run_id}
+        safe_limit = max(1, min(int(limit), MAX_GOAL_EVENTS))
+        events = [
+            dict(event)
+            for event in rec.get("events", [])
+            if after_seq is None or int(event.get("seq", -1)) > after_seq
+        ][:safe_limit]
+        return {"goal_run_id": goal_run_id, "events": events}
+
+
+@router.get("/api/goal/{goal_run_id}/events/stream")
+async def api_goal_events_stream(goal_run_id: str, after_seq: int | None = None):
+    with _lock:
+        if goal_run_id not in _goal_runs:
+            return JSONResponse(
+                {"error": "goal-run non trovato", "goal_run_id": goal_run_id},
+                status_code=404,
+            )
+
+    async def generate():
+        last_seq = after_seq if after_seq is not None else -1
+        idle_polls = 0
+        while True:
+            with _lock:
+                rec = _goal_runs.get(goal_run_id)
+                if rec is None:
+                    return
+                events = [
+                    dict(event)
+                    for event in rec.get("events", [])
+                    if int(event.get("seq", -1)) > last_seq
+                ][:100]
+                alive = rec.get("status") in ACTIVE_GOAL_STATUSES
+            for event in events:
+                last_seq = int(event.get("seq", last_seq))
+                yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+                if event.get("type") in TERMINAL_GOAL_EVENTS:
+                    return
+            if not alive:
+                yield "event: done\ndata: " + json.dumps(
+                    {"goal_run_id": goal_run_id, "last_seq": last_seq}
+                ) + "\n\n"
+                return
+            idle_polls += 1
+            if idle_polls % 50 == 0:
+                yield ": keepalive\n\n"
+            await asyncio.sleep(0.3)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/api/goal/{goal_run_id}")

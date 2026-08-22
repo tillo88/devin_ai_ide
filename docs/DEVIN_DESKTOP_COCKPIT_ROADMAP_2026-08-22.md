@@ -89,9 +89,18 @@ mai un falso `ETA 0`.
   e l'arresto avviene soltanto dopo la fine dello step corrente, senza kill;
 - checklist, valutazione finale, motivazione e consumo budget restano visibili.
 
-Restano C2.2: stream eventi dedicato ed evidenze navigabili. Il resume non viene
-esposto finché non esiste un checkpoint Goal persistente: riavviare da zero e
-chiamarlo “ripresa” violerebbe il contratto esplicito di continuità.
+### C2.2 — stream ed evidenze consegnati (2026-08-22)
+
+- stream SSE outer-loop dedicato con eventi bounded `started`, `attempt`,
+  `stop_requested`, `finished` ed `error`;
+- nessun path progetto o log grezzo nello stream; polling a 5 secondi solo come
+  fallback e refresh della checklist guidato dagli eventi;
+- ogni criterio nel cockpit è apribile e mostra tipo, PASS/FAIL e dettaglio
+  prodotto dall'evaluator machine-verifiable.
+
+Resta C2.3: il resume non viene esposto finché non esiste un checkpoint Goal
+persistente. Riavviare da zero e chiamarlo “ripresa” violerebbe il contratto
+esplicito di continuità.
 
 ## C3 — editor e diff centrali
 

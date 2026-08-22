@@ -6,6 +6,7 @@ Non tocca l'orchestrator: `execute_goal_run` riceve un esecutore iniettato.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -275,5 +276,66 @@ def test_api_goal_run_rifiuta_un_secondo_goal_attivo():
         result = asyncio.run(goal_router.api_goal_run(req))
         assert result["goal_run_id"] == gid
         assert "gia' in esecuzione" in result["error"]
+    finally:
+        goal_router._goal_runs.pop(gid, None)
+
+
+def test_goal_events_sono_bounded_ordinati_e_fuori_dal_panel(monkeypatch):
+    gid = "goal_events_1"
+    monkeypatch.setattr(goal_router, "MAX_GOAL_EVENTS", 2)
+    goal_router._goal_runs[gid] = {
+        "goal_run_id": gid,
+        "status": "running",
+        "events": [],
+        "_event_seq": 0,
+    }
+    try:
+        first = goal_router._append_goal_event(
+            gid,
+            "goal_started",
+            data={"status": "running", "project_path": "/private/workspace"},
+        )
+        second = goal_router._append_goal_event(gid, "goal_attempt", data={"index": 0})
+        third = goal_router._append_goal_event(gid, "goal_attempt", data={"index": 1})
+        payload = asyncio.run(goal_router.api_goal_events(gid, after_seq=0, limit=10))
+        panel = goal_router._goal_panel_record(goal_router._goal_runs[gid])
+
+        assert first["seq"] == 0
+        assert "project_path" not in first["data"]
+        assert second["seq"] == 1
+        assert third["seq"] == 2
+        assert [event["seq"] for event in payload["events"]] == [1, 2]
+        assert "events" not in panel
+        assert "_event_seq" not in panel
+    finally:
+        goal_router._goal_runs.pop(gid, None)
+
+
+def test_goal_event_stream_termina_sull_evento_finale():
+    gid = "goal_events_2"
+    goal_router._goal_runs[gid] = {
+        "goal_run_id": gid,
+        "status": "success",
+        "events": [],
+        "_event_seq": 0,
+    }
+    goal_router._append_goal_event(
+        gid,
+        "goal_finished",
+        data={"status": "success", "reason": "ok"},
+    )
+
+    async def collect_first_event():
+        response = await goal_router.api_goal_events_stream(gid)
+        chunk = await response.body_iterator.__anext__()
+        return response, chunk
+
+    try:
+        response, chunk = asyncio.run(collect_first_event())
+        assert response.media_type == "text/event-stream"
+        assert chunk.startswith("data: ")
+        event = json.loads(chunk.removeprefix("data: ").strip())
+        assert event["type"] == "goal_finished"
+        assert event["data"]["status"] == "success"
     finally:
         goal_router._goal_runs.pop(gid, None)

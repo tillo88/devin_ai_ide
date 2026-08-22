@@ -63,7 +63,15 @@
 - `GET /api/goal/{goal_run_id}` returns the internal status for diagnostics;
 - `POST /api/goal/{goal_run_id}/stop` requests cooperative cancellation. It
   reports `stopping` until the current actor/verifier step completes and never
-  kills its worker thread.
+  kills its worker thread;
+- `GET /api/goal/{goal_run_id}/events` returns the bounded structured outer-loop
+  history;
+- `GET /api/goal/{goal_run_id}/events/stream` streams the same events over SSE
+  and closes on `goal_finished` or `goal_error`.
+
+Goal events are kept with the in-memory Goal record and never include the
+project path or raw actor logs. The cockpit falls back to bounded polling only
+when EventSource is unavailable or disconnected.
 
 Goal resume is intentionally absent until the backend can persist and validate
 a real Goal checkpoint. A new run must not be presented as a resume.
