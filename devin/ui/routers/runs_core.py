@@ -177,6 +177,7 @@ class ChangeDecisionRequest(BaseModel):
     path: str
     run_id: str
     commit: bool = True
+    expected_entry_digest: Optional[str] = None
 
 
 def _decision_project_path(path: str) -> str:
@@ -194,6 +195,11 @@ def _decision_state(req: ChangeDecisionRequest, expected_status):
     from devin.ui.fast_app import active_runs, runs_lock
 
     safe_run_id(req.run_id)
+    if req.expected_entry_digest is not None:
+        digest = str(req.expected_entry_digest).strip().lower()
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise ValueError("expected_entry_digest must be a 64-character hex digest")
+        req.expected_entry_digest = digest
     req.path = _decision_project_path(req.path)
     with runs_lock:
         if req.run_id in active_runs:
@@ -232,12 +238,22 @@ async def api_run_changes_apply(req: ChangeDecisionRequest):
     )
     from devin.engine.git_ops import GitOps
     try:
+        if not req.expected_entry_digest:
+            raise ValueError("review digest required before apply")
         persistence, state = _decision_state(req, "awaiting_approval")
         recovered = False
         try:
-            manifest = apply_change_manifest(req.path, req.run_id)
+            manifest = apply_change_manifest(
+                req.path,
+                req.run_id,
+                expected_entry_digest=req.expected_entry_digest,
+            )
         except ChangeManifestError:
-            manifest = load_change_manifest(req.path, req.run_id)
+            manifest = load_change_manifest(
+                req.path,
+                req.run_id,
+                expected_entry_digest=req.expected_entry_digest,
+            )
             if manifest.get("status") != "applied":
                 raise
             # Crash-safe idempotency: manifest application is authoritative.
@@ -296,12 +312,22 @@ async def api_run_changes_reject(req: ChangeDecisionRequest):
         reject_change_manifest,
     )
     try:
+        if not req.expected_entry_digest:
+            raise ValueError("review digest required before reject")
         persistence, state = _decision_state(req, "awaiting_approval")
         recovered = False
         try:
-            manifest = reject_change_manifest(req.path, req.run_id)
+            manifest = reject_change_manifest(
+                req.path,
+                req.run_id,
+                expected_entry_digest=req.expected_entry_digest,
+            )
         except ChangeManifestError:
-            manifest = load_change_manifest(req.path, req.run_id)
+            manifest = load_change_manifest(
+                req.path,
+                req.run_id,
+                expected_entry_digest=req.expected_entry_digest,
+            )
             if manifest.get("status") != "rejected":
                 raise
             recovered = True
@@ -331,9 +357,17 @@ async def api_run_changes_rollback(req: ChangeDecisionRequest):
         persistence, state = _decision_state(req, ("success", "applied_uncommitted"))
         recovered = False
         try:
-            manifest = rollback_change_manifest(req.path, req.run_id)
+            manifest = rollback_change_manifest(
+                req.path,
+                req.run_id,
+                expected_entry_digest=req.expected_entry_digest,
+            )
         except ChangeManifestError:
-            manifest = load_change_manifest(req.path, req.run_id)
+            manifest = load_change_manifest(
+                req.path,
+                req.run_id,
+                expected_entry_digest=req.expected_entry_digest,
+            )
             if manifest.get("status") != "rolled_back":
                 raise
             recovered = True

@@ -253,12 +253,16 @@ def test_change_decision_endpoints_apply_then_rollback(tmp_path, monkeypatch):
     _patch_resume_surface(monkeypatch, fast_app, tmp_path)
     _pending_change(project, "run_decision_apply")
 
-    apply_req = fast_app.ChangeDecisionRequest(
-        path=str(project), run_id="run_decision_apply", commit=False)
     preview = asyncio.run(fast_app.api_run_changes_preview(
         "run_decision_apply", path=str(project)))
     assert preview["status"] == "pending"
     assert "+after" in preview["unified_diff"]
+    apply_req = fast_app.ChangeDecisionRequest(
+        path=str(project),
+        run_id="run_decision_apply",
+        commit=False,
+        expected_entry_digest=preview["entry_digest"],
+    )
     applied = asyncio.run(fast_app.api_run_changes_apply(apply_req))
 
     assert applied["status"] == "success"
@@ -276,6 +280,38 @@ def test_change_decision_endpoints_apply_then_rollback(tmp_path, monkeypatch):
     assert (project / "value.txt").read_text(encoding="utf-8") == "before\n"
 
 
+def test_apply_endpoint_rejects_digest_not_seen_in_review(tmp_path, monkeypatch):
+    import asyncio
+    import devin.ui.fast_app as fast_app
+
+    project = tmp_path / "project"
+    project.mkdir()
+    _patch_resume_surface(monkeypatch, fast_app, tmp_path)
+    _pending_change(project, "run_decision_stale_review")
+
+    missing = asyncio.run(fast_app.api_run_changes_apply(
+        fast_app.ChangeDecisionRequest(
+            path=str(project),
+            run_id="run_decision_stale_review",
+            commit=False,
+        )
+    ))
+    assert "review digest required" in missing["error"]
+
+    req = fast_app.ChangeDecisionRequest(
+        path=str(project),
+        run_id="run_decision_stale_review",
+        commit=False,
+        expected_entry_digest="0" * 64,
+    )
+    result = asyncio.run(fast_app.api_run_changes_apply(req))
+
+    assert "digest changed since review" in result["error"]
+    assert (project / "value.txt").read_text(encoding="utf-8") == "before\n"
+    state = StatePersistence(str(project), "run_decision_stale_review").load()
+    assert state["final_status"] == "awaiting_approval"
+
+
 def test_change_decision_endpoint_rejects_without_writing(tmp_path, monkeypatch):
     import asyncio
     import devin.ui.fast_app as fast_app
@@ -285,8 +321,14 @@ def test_change_decision_endpoint_rejects_without_writing(tmp_path, monkeypatch)
     _patch_resume_surface(monkeypatch, fast_app, tmp_path)
     _pending_change(project, "run_decision_reject")
 
+    preview = asyncio.run(fast_app.api_run_changes_preview(
+        "run_decision_reject", path=str(project)))
     req = fast_app.ChangeDecisionRequest(
-        path=str(project), run_id="run_decision_reject", commit=False)
+        path=str(project),
+        run_id="run_decision_reject",
+        commit=False,
+        expected_entry_digest=preview["entry_digest"],
+    )
     rejected = asyncio.run(fast_app.api_run_changes_reject(req))
 
     assert rejected["status"] == "rejected"
@@ -305,14 +347,18 @@ def test_apply_endpoint_recovers_after_manifest_applied_before_state_save(tmp_pa
     project.mkdir()
     _patch_resume_surface(monkeypatch, fast_app, tmp_path)
     _pending_change(project, "run_decision_recovery")
-    apply_change_manifest(project, "run_decision_recovery")
+    manifest = apply_change_manifest(project, "run_decision_recovery")
     # Simula crash: manifest applicato, state ancora awaiting_approval.
     assert StatePersistence(str(project), "run_decision_recovery").load()[
         "final_status"
     ] == "awaiting_approval"
 
     req = fast_app.ChangeDecisionRequest(
-        path=str(project), run_id="run_decision_recovery", commit=False)
+        path=str(project),
+        run_id="run_decision_recovery",
+        commit=False,
+        expected_entry_digest=manifest["entry_digest"],
+    )
     recovered = asyncio.run(fast_app.api_run_changes_apply(req))
 
     assert recovered["status"] == "success"

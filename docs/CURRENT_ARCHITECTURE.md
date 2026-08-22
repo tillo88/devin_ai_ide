@@ -61,6 +61,14 @@ nuovo containment e sensibilità del path. Il cockpit C3.1 non espone save: il
 writer storico `/api/file/save` resta escluso dalla nuova shell e le mutazioni
 continuano a passare dal manifest diff con review esplicita.
 
+La review C3.2 usa soltanto `change_manifest_v1`: la preview bounded viene
+separata per file e mostrata Prima/Dopo nel workspace centrale. Il client
+conserva `run_id`, progetto metadati e `entry_digest` visto; Apply e Reject
+inviano quel digest. Gli endpoint rifiutano decisioni senza review o con digest
+diverso e il core lo confronta nuovamente dentro il decision lock prima di
+toccare i file. La textarea `/api/diff/apply` non è più collegata al cockpit;
+resta solo come compatibilità della superficie storica.
+
 ## 3. Ricerca web: SearXNG e TinyFish
 
 I provider formano una catena esplicita e ordinata. Profilo locale/privacy:

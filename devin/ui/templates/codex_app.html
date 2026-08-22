@@ -119,6 +119,7 @@
       <nav class="workspace-mode-bar" aria-label="Vista centrale">
         <button class="workspace-mode-button active" id="show-chat-view" type="button" data-center-view="chat">Chat</button>
         <button class="workspace-mode-button" id="show-editor-view" type="button" data-center-view="editor" disabled>Editor</button>
+        <button class="workspace-mode-button" id="show-diff-view" type="button" data-center-view="diff" disabled>Diff</button>
         <span class="workspace-mode-context" id="workspace-mode-context">General chat</span>
       </nav>
       <div class="chat-thread center-chat-view" id="chat-thread" aria-live="polite">
@@ -201,21 +202,35 @@
         <pre class="editor-code" id="editor-code" tabindex="0"><code id="editor-content">Seleziona un progetto e poi un file.</code></pre>
       </section>
 
-      <details class="diff-preview-panel collapsible-panel center-chat-view">
-        <summary class="panel-header compact collapsible-summary">
-          <span>Diff preview</span>
-          <span class="mini-label">read-only &middot; click per aprire</span>
-        </summary>
-        <div class="diff-preview-body">
-          <textarea id="diff-input" rows="8" placeholder="Incolla qui una unified diff per vedere file, aggiunte e rimozioni prima di applicarla."></textarea>
-          <div class="diff-actions">
-            <button type="button" id="diff-preview-button">Preview diff</button>
-            <button type="button" id="diff-apply-button">Apply diff</button>
-            <span class="mini-label" id="diff-preview-status">idle</span>
+      <section class="manifest-diff-workspace" id="manifest-diff-workspace" hidden>
+        <header class="manifest-diff-header">
+          <div class="manifest-diff-heading">
+            <strong id="manifest-diff-run">Nessun manifest in review</strong>
+            <span id="manifest-diff-digest">Apri Diff da un run verificato in attesa di approvazione.</span>
           </div>
-          <div class="diff-result" id="diff-result"></div>
+          <span class="manifest-status-badge" id="manifest-diff-status">idle</span>
+          <button class="run-decision-btn approve" id="manifest-diff-apply" type="button" disabled>✓ Applica</button>
+          <button class="run-decision-btn reject" id="manifest-diff-reject" type="button" disabled>× Rifiuta</button>
+        </header>
+        <div class="manifest-diff-summary" id="manifest-diff-summary">
+          Il diff centrale accetta soltanto il change manifest verificato del run.
         </div>
-      </details>
+        <div class="manifest-diff-layout">
+          <aside class="manifest-file-rail" id="manifest-file-rail" aria-label="File modificati"></aside>
+          <section class="side-by-side-diff">
+            <header class="side-by-side-header">
+              <strong id="manifest-selected-file">Nessun file selezionato</strong>
+              <span id="manifest-selected-meta">read-only</span>
+            </header>
+            <div class="diff-column-headings" aria-hidden="true">
+              <span>Prima</span><span>Dopo</span>
+            </div>
+            <div class="diff-rows" id="manifest-diff-rows" tabindex="0">
+              <div class="manifest-diff-empty">In attesa di un manifest verificato.</div>
+            </div>
+          </section>
+        </div>
+      </section>
 
     </section>
 

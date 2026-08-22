@@ -1,3 +1,5 @@
+import { sideBySideRows, splitManifestDiff } from "./verified_diff.js";
+
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -10,8 +12,14 @@ const state = {
   eventSource: null,
   lastEventSeq: -1,
   chatAbort: null,
-  diffPreviewOk: false,
   reviewedChangeRunId: null,
+  reviewedChangeProjectPath: null,
+  reviewedManifestDigest: null,
+  reviewedManifestPayload: null,
+  reviewedManifestDecision: null,
+  manifestDecisionPending: false,
+  manifestFiles: [],
+  selectedDiffPath: null,
   trainingCases: [],
   trainingJobPoll: null,
   projects: [],
@@ -127,6 +135,34 @@ function promptModal(message, { placeholder = "", value = "", okLabel = "OK" } =
   });
 }
 
+function confirmModal(message, { okLabel = "Conferma", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "app-modal-overlay";
+    overlay.innerHTML = `
+      <div class="app-modal" role="dialog" aria-modal="true" aria-label="Conferma decisione">
+        <p class="app-modal-msg"></p>
+        <div class="app-modal-actions">
+          <button type="button" class="tiny-button app-modal-cancel">Annulla</button>
+          <button type="button" class="primary-mini-button app-modal-ok ${danger ? "danger" : ""}"></button>
+        </div>
+      </div>`;
+    overlay.querySelector(".app-modal-msg").textContent = message;
+    overlay.querySelector(".app-modal-ok").textContent = okLabel;
+    document.body.appendChild(overlay);
+    const close = (confirmed) => { overlay.remove(); resolve(confirmed); };
+    overlay.querySelector(".app-modal-ok").addEventListener("click", () => close(true));
+    overlay.querySelector(".app-modal-cancel").addEventListener("click", () => close(false));
+    overlay.addEventListener("mousedown", (event) => { if (event.target === overlay) close(false); });
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); close(false); }
+      if (event.key === "Enter") { event.preventDefault(); close(true); }
+    });
+    overlay.tabIndex = -1;
+    overlay.focus();
+  });
+}
+
 function selectedChatFiles() {
   return Array.from($("chat-file")?.files ?? []);
 }
@@ -164,12 +200,19 @@ function formatBytes(value) {
 }
 
 function setCenterView(view) {
-  const next = view === "editor" && state.selectedProjectPath ? "editor" : "chat";
+  const requested = ["chat", "editor", "diff"].includes(view) ? view : "chat";
+  const next = requested === "editor" && state.selectedProjectPath
+    ? "editor"
+    : requested === "diff" && state.reviewedManifestPayload
+      ? "diff"
+      : "chat";
   state.centerView = next;
   const panel = document.querySelector(".workstream-panel");
   if (panel) panel.dataset.centerView = next;
   const editor = $("editor-workspace");
   if (editor) editor.hidden = next !== "editor";
+  const diff = $("manifest-diff-workspace");
+  if (diff) diff.hidden = next !== "diff";
   document.querySelectorAll("[data-center-view]").forEach((button) => {
     if (!button.classList.contains("workspace-mode-button")) return;
     button.classList.toggle("active", button.dataset.centerView === next);
@@ -177,7 +220,11 @@ function setCenterView(view) {
   });
   setText(
     "workspace-mode-context",
-    next === "editor" ? (state.selectedFilePath || "Nessun file selezionato") : activeProjectLabel(),
+    next === "editor"
+      ? (state.selectedFilePath || "Nessun file selezionato")
+      : next === "diff"
+        ? `run ${state.reviewedChangeRunId || "?"}`
+        : activeProjectLabel(),
   );
 }
 
@@ -192,6 +239,122 @@ function resetProjectEditor() {
     : "Seleziona un progetto e poi un file.");
   const editorButton = $("show-editor-view");
   if (editorButton) editorButton.disabled = !state.selectedProjectPath;
+}
+
+function resetManifestReview() {
+  state.reviewedChangeRunId = null;
+  state.reviewedChangeProjectPath = null;
+  state.reviewedManifestDigest = null;
+  state.reviewedManifestPayload = null;
+  state.reviewedManifestDecision = null;
+  state.manifestDecisionPending = false;
+  state.manifestFiles = [];
+  state.selectedDiffPath = null;
+  const diffButton = $("show-diff-view");
+  if (diffButton) diffButton.disabled = true;
+  const applyButton = $("manifest-diff-apply");
+  const rejectButton = $("manifest-diff-reject");
+  if (applyButton) applyButton.disabled = true;
+  if (rejectButton) rejectButton.disabled = true;
+  setText("manifest-diff-run", "Nessun manifest in review");
+  setText("manifest-diff-digest", "Apri Diff da un run verificato in attesa di approvazione.");
+  setText("manifest-diff-status", "idle");
+  const statusBadge = $("manifest-diff-status");
+  if (statusBadge) statusBadge.dataset.status = "idle";
+  setText("manifest-diff-summary", "Il diff centrale accetta soltanto il change manifest verificato del run.");
+  setText("manifest-selected-file", "Nessun file selezionato");
+  setText("manifest-selected-meta", "read-only");
+  const rail = $("manifest-file-rail");
+  if (rail) rail.innerHTML = "";
+  const rows = $("manifest-diff-rows");
+  if (rows) rows.innerHTML = '<div class="manifest-diff-empty">In attesa di un manifest verificato.</div>';
+}
+
+const MANIFEST_DIFF_MAX_RENDER_ROWS = 2500;
+
+function renderManifestDiffRows(file) {
+  const container = $("manifest-diff-rows");
+  if (!container) return;
+  if (!file?.diffText) {
+    container.innerHTML = '<div class="manifest-diff-empty">Preview non inclusa nel payload bounded.</div>';
+    return;
+  }
+  const parsed = sideBySideRows(file.diffText);
+  const rows = parsed.slice(0, MANIFEST_DIFF_MAX_RENDER_ROWS);
+  container.innerHTML = rows.map((row) => {
+    if (row.kind === "meta") {
+      return `<div class="diff-row diff-row-meta"><span></span><code>${escapeHtml(row.text)}</code><span></span><code></code></div>`;
+    }
+    return `
+      <div class="diff-row diff-row-${row.kind}">
+        <span class="diff-line-number">${row.oldNo ?? ""}</span><code>${escapeHtml(row.oldText)}</code>
+        <span class="diff-line-number">${row.newNo ?? ""}</span><code>${escapeHtml(row.newText)}</code>
+      </div>`;
+  }).join("") || '<div class="manifest-diff-empty">Nessuna differenza testuale.</div>';
+  if (parsed.length > rows.length) {
+    container.insertAdjacentHTML(
+      "beforeend",
+      `<div class="manifest-diff-empty">Rendering limitato a ${MANIFEST_DIFF_MAX_RENDER_ROWS} righe.</div>`,
+    );
+  }
+  container.scrollTop = 0;
+}
+
+function selectManifestFile(path) {
+  const file = state.manifestFiles.find((entry) => entry.path === path);
+  if (!file) return;
+  state.selectedDiffPath = file.path;
+  $("manifest-file-rail")?.querySelectorAll("[data-manifest-file]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.manifestFile === file.path);
+  });
+  setText("manifest-selected-file", file.path);
+  const binary = file.binary ? " · binary" : "";
+  setText(
+    "manifest-selected-meta",
+    `${file.operation || "modify"}${binary} · ${formatBytes(file.before_size)} → ${formatBytes(file.after_size)}`,
+  );
+  renderManifestDiffRows(file);
+}
+
+function renderManifestWorkspace(payload, projectPath, runId) {
+  state.reviewedChangeRunId = runId;
+  state.reviewedChangeProjectPath = projectPath;
+  state.reviewedManifestDigest = payload.entry_digest || null;
+  state.reviewedManifestPayload = payload;
+  state.reviewedManifestDecision = null;
+  state.manifestFiles = splitManifestDiff(payload);
+  state.selectedDiffPath = null;
+
+  const diffButton = $("show-diff-view");
+  if (diffButton) diffButton.disabled = false;
+  const applyButton = $("manifest-diff-apply");
+  const rejectButton = $("manifest-diff-reject");
+  if (applyButton) applyButton.disabled = false;
+  if (rejectButton) rejectButton.disabled = false;
+  setText("manifest-diff-run", `Run ${runId}`);
+  setText("manifest-diff-digest", `digest ${(payload.entry_digest || "missing").slice(0, 16)} · manifest verificato`);
+  setText("manifest-diff-status", payload.status || "pending");
+  const statusBadge = $("manifest-diff-status");
+  if (statusBadge) statusBadge.dataset.status = payload.status || "pending";
+  const counts = payload.counts || {};
+  setText(
+    "manifest-diff-summary",
+    `${state.manifestFiles.length} file · ${counts.create || 0} creati · ${counts.modify || 0} modificati · ${counts.delete || 0} eliminati${payload.truncated ? " · preview bounded/troncata" : ""}`,
+  );
+  const rail = $("manifest-file-rail");
+  if (rail) {
+    rail.innerHTML = state.manifestFiles.map((file) => `
+      <button class="manifest-file-button" type="button" data-manifest-file="${escapeHtml(file.path)}" title="${escapeHtml(file.path)}">
+        <span>${escapeHtml(file.path)}</span>
+        <small>${escapeHtml(file.operation || "modify")}${file.binary ? " · binary" : ""}</small>
+      </button>`).join("");
+    rail.querySelectorAll("[data-manifest-file]").forEach((button) => {
+      button.addEventListener("click", () => selectManifestFile(button.dataset.manifestFile));
+    });
+  }
+  if (state.manifestFiles.length) selectManifestFile(state.manifestFiles[0].path);
+  else renderManifestDiffRows(null);
+  setCenterView("diff");
 }
 
 function projectTreeModel(files) {
@@ -1313,6 +1476,7 @@ async function selectProject(projectPath) {
   state.selectedProjectPath = projectPath || "";
   setCenterView("chat");
   resetProjectEditor();
+  resetManifestReview();
   refreshActiveScope();
   syncGoalLaunchState();
   state.selectedChatId = null;
@@ -1626,35 +1790,69 @@ async function resumeRun(projectPath, runId) {
 }
 
 async function decideRunChanges(projectPath, runId, action) {
-  if (action === "apply" && state.reviewedChangeRunId !== runId) {
-    appendChatMessage("assistant", "Apri prima Diff e controlla le modifiche verificate.");
+  const reviewedManifestMatches = (
+    state.reviewedChangeRunId === runId
+    && state.reviewedChangeProjectPath === projectPath
+    && /^[0-9a-f]{64}$/i.test(state.reviewedManifestDigest || "")
+  );
+  if (["apply", "reject"].includes(action) && !reviewedManifestMatches) {
+    appendChatMessage("assistant", "Apro prima il manifest verificato: Applica/Rifiuta richiedono la review del digest.");
+    await reviewRunChanges(projectPath, runId);
     return;
   }
   const labels = { apply: "applicare", reject: "rifiutare", rollback: "ripristinare" };
-  if (!window.confirm(`Confermi di ${labels[action] || action} le modifiche verificate del run ${runId}?`)) return;
+  const confirmed = await confirmModal(
+    `Confermi di ${labels[action] || action} le modifiche verificate del run ${runId}?`,
+    { okLabel: action === "apply" ? "Applica manifest" : action === "reject" ? "Rifiuta manifest" : "Ripristina", danger: action !== "apply" },
+  );
+  if (!confirmed || state.manifestDecisionPending) return;
+  state.manifestDecisionPending = true;
+  if (reviewedManifestMatches) {
+    const applyButton = $("manifest-diff-apply");
+    const rejectButton = $("manifest-diff-reject");
+    if (applyButton) applyButton.disabled = true;
+    if (rejectButton) rejectButton.disabled = true;
+  }
   try {
     const result = await postJson(`/api/run/changes/${action}`, {
       path: projectPath,
       run_id: runId,
       commit: action === "apply",
+      expected_entry_digest: reviewedManifestMatches ? state.reviewedManifestDigest : null,
     });
     if (result?.error) {
       appendChatMessage("assistant", `Decisione non applicata: ${result.error}`);
       return;
     }
     appendChatMessage("assistant", `Run ${runId}: ${result.status}.`);
-    // Decisione presa: sblocco il pannello diff manuale e lo ripulisco, cosi'
-    // non resta la diff del run a invitare un apply manuale.
-    state.reviewingManifest = false;
-    state.reviewedChangeRunId = null;
-    const applyBtn = $("diff-apply-button");
-    if (applyBtn) { applyBtn.disabled = false; applyBtn.title = ""; }
-    if ($("diff-input")) $("diff-input").value = "";
+    if (reviewedManifestMatches) {
+      state.reviewedManifestDecision = result.status || action;
+      setText("manifest-diff-status", result.status || action);
+      const statusBadge = $("manifest-diff-status");
+      if (statusBadge) statusBadge.dataset.status = result.status || action;
+      setText(
+        "manifest-diff-digest",
+        `digest ${state.reviewedManifestDigest.slice(0, 16)} · decisione registrata`,
+      );
+      const applyButton = $("manifest-diff-apply");
+      const rejectButton = $("manifest-diff-reject");
+      if (applyButton) applyButton.disabled = true;
+      if (rejectButton) rejectButton.disabled = true;
+    }
     await renderActivityRail(projectPath);
     await loadRunLog(runId);
+    if (["apply", "rollback"].includes(action)) loadProjectTree().catch(() => {});
   } catch (err) {
     console.error(err);
     appendChatMessage("assistant", `Decisione non applicata: ${err.message || err}`);
+  } finally {
+    state.manifestDecisionPending = false;
+    if (reviewedManifestMatches && !state.reviewedManifestDecision) {
+      const applyButton = $("manifest-diff-apply");
+      const rejectButton = $("manifest-diff-reject");
+      if (applyButton) applyButton.disabled = false;
+      if (rejectButton) rejectButton.disabled = false;
+    }
   }
 }
 
@@ -1666,27 +1864,17 @@ async function reviewRunChanges(projectPath, runId) {
       appendChatMessage("assistant", `Preview non disponibile: ${payload.error}`);
       return;
     }
-    const input = $("diff-input");
-    if (input) input.value = payload.unified_diff || "(nessuna differenza testuale)";
-    const panel = document.querySelector(".diff-preview-panel");
-    if (panel) panel.open = true;
-    const result = $("diff-result");
-    if (result) {
-      result.innerHTML = `<div class="diff-summary">Manifest verificato · ${escapeHtml(payload.entries?.length || 0)} file · digest ${escapeHtml((payload.entry_digest || "").slice(0, 12))}${payload.truncated ? " · preview troncata" : ""}</div>`;
+    if (
+      payload.schema !== "change_manifest_v1"
+      || payload.status !== "pending"
+      || !/^[0-9a-f]{64}$/i.test(payload.entry_digest || "")
+    ) {
+      throw new Error("manifest preview incompleto o non verificabile");
     }
-    setText("diff-preview-status", "verified manifest");
-    state.diffPreviewOk = false;
-    state.reviewedChangeRunId = runId;
-    // Questa e' la diff VERIFICATA del run: va applicata dal banner (change
-    // manifest), NON con l'apply manuale del pannello (che scrive i file a mano
-    // e fa fallire l'approvazione con "source changed after verification").
-    state.reviewingManifest = true;
-    const applyBtn = $("diff-apply-button");
-    if (applyBtn) {
-      applyBtn.disabled = true;
-      applyBtn.title = "Usa ✓ Applica nel banner in alto per applicare le modifiche verificate del run";
+    if (state.selectedProjectPath !== projectPath) {
+      throw new Error("il progetto selezionato è cambiato durante la review");
     }
-    panel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    renderManifestWorkspace(payload, projectPath, runId);
   } catch (err) {
     appendChatMessage("assistant", `Preview non disponibile: ${err.message || err}`);
   }
@@ -1937,116 +2125,6 @@ async function sendChatMessage(message) {
     $("chat-input")?.focus();
   }
 }
-
-function renderDiffPreview(payload) {
-  const result = $("diff-result");
-  if (!result) return;
-
-  if (payload.error || payload.message) {
-    result.innerHTML = `<div class="empty-card">${escapeHtml(payload.error || payload.message)}</div>`;
-    return;
-  }
-
-  const files = Object.entries(payload.files_affected ?? {});
-  if (!files.length) {
-    result.innerHTML = '<div class="empty-card">Nessun file rilevato nella diff.</div>';
-    return;
-  }
-
-  result.innerHTML = `
-    <div class="diff-summary">
-      ${escapeHtml(payload.total_files)} file - ${escapeHtml(payload.total_additions)} additions - ${escapeHtml(payload.total_deletions)} deletions - ${escapeHtml(payload.patch_lines)} lines
-    </div>
-    <div class="diff-file-list">
-      ${files.map(([path, info]) => `
-        <article class="diff-file-card">
-          <strong>${escapeHtml(path)}</strong>
-          <span>${info.is_new ? "new" : "existing"} - +${escapeHtml(info.additions)} / -${escapeHtml(info.deletions)}</span>
-        </article>
-      `).join("")}
-    </div>
-  `;
-}
-
-async function previewDiff() {
-  const patchText = $("diff-input")?.value.trim() ?? "";
-  if (!patchText) {
-    setText("diff-preview-status", "empty");
-    state.diffPreviewOk = false;
-    renderDiffPreview({ error: "Incolla una unified diff prima di fare preview." });
-    return;
-  }
-
-  if (!state.selectedProjectPath) {
-    setText("diff-preview-status", "no project");
-    state.diffPreviewOk = false;
-    renderDiffPreview({ error: "Seleziona un progetto nella sidebar prima della preview." });
-    return;
-  }
-
-  setText("diff-preview-status", "checking");
-  try {
-    const payload = await postJson("/api/diff/preview", {
-      project_path: state.selectedProjectPath,
-      patch_text: patchText,
-    });
-    state.diffPreviewOk = Boolean(payload.success && !payload.error);
-    renderDiffPreview(payload);
-    setText("diff-preview-status", payload.error ? "error" : "ready");
-  } catch (err) {
-    state.diffPreviewOk = false;
-    renderDiffPreview({ error: err.message });
-    setText("diff-preview-status", "error");
-  }
-}
-
-
-async function applyDiffWithConfirmation() {
-  if (state.reviewingManifest) {
-    renderDiffPreview({ message: "Queste sono le modifiche verificate del run. Applicale con ✓ Applica nel banner in alto (approvazione), non con l'apply manuale." });
-    return;
-  }
-  const patchText = $("diff-input")?.value.trim() ?? "";
-  if (!patchText) {
-    renderDiffPreview({ error: "Incolla una unified diff prima di applicarla." });
-    return;
-  }
-  if (!state.selectedProjectPath) {
-    renderDiffPreview({ error: "Seleziona un progetto nella sidebar prima di applicare la diff." });
-    return;
-  }
-  if (!state.diffPreviewOk) {
-    renderDiffPreview({ error: "Esegui prima Preview diff e verifica il risultato." });
-    return;
-  }
-
-  const projectName = activeProjectLabel();
-  const ok = window.confirm(`Applicare questa diff al progetto ${projectName}? Operazione reale su file.`);
-  if (!ok) return;
-
-  setText("diff-preview-status", "applying");
-  try {
-    const payload = await postJson("/api/diff/apply", {
-      project_path: state.selectedProjectPath,
-      patch_text: patchText,
-    });
-
-    if (payload.error || payload.success === false) {
-      renderDiffPreview({ error: payload.error || "apply failed" });
-      setText("diff-preview-status", "apply error");
-      return;
-    }
-
-    renderDiffPreview({ message: `Diff applicata: ${payload.message || payload.method || "ok"}` });
-    setText("diff-preview-status", "applied");
-    state.diffPreviewOk = false;
-  } catch (err) {
-    renderDiffPreview({ error: err.message });
-    setText("diff-preview-status", "apply error");
-  }
-}
-
-
 
 async function crawlUrlIntoKnowledge() {
   if (!state.selectedProjectPath) {
@@ -2380,31 +2458,6 @@ function setupChatComposer() {
     });
   });
 
-
-  // Se l'utente scrive/incolla una sua diff, non stiamo piu' rivedendo il
-  // manifest del run: riabilito l'apply manuale.
-  $("diff-input")?.addEventListener("input", () => {
-    if (!state.reviewingManifest) return;
-    state.reviewingManifest = false;
-    const applyBtn = $("diff-apply-button");
-    if (applyBtn) { applyBtn.disabled = false; applyBtn.title = ""; }
-  });
-
-  $("diff-preview-button")?.addEventListener("click", () => {
-    previewDiff().catch((err) => {
-      console.error(err);
-      renderDiffPreview({ error: err.message });
-    });
-  });
-
-
-  $("diff-apply-button")?.addEventListener("click", () => {
-    applyDiffWithConfirmation().catch((err) => {
-      console.error(err);
-      renderDiffPreview({ error: err.message });
-    });
-  });
-
   // Link Diagnostics/Knowledge: gli <a href="/app/diagnostics"> sono relativi e
   // nell'app nativa (bundle su origin locale) punterebbero dentro il bundle, dove
   // la pagina non esiste. Li instradiamo sull'URL del BACKEND via diagnosticsUrl().
@@ -2538,6 +2591,15 @@ $("refresh-app")?.addEventListener("click", refresh);
 $("routing-preview-button")?.addEventListener("click", previewCapabilityRoute);
 $("show-chat-view")?.addEventListener("click", () => setCenterView("chat"));
 $("show-editor-view")?.addEventListener("click", () => setCenterView("editor"));
+$("show-diff-view")?.addEventListener("click", () => setCenterView("diff"));
+$("manifest-diff-apply")?.addEventListener("click", () => {
+  if (!state.reviewedChangeRunId || !state.reviewedChangeProjectPath) return;
+  decideRunChanges(state.reviewedChangeProjectPath, state.reviewedChangeRunId, "apply");
+});
+$("manifest-diff-reject")?.addEventListener("click", () => {
+  if (!state.reviewedChangeRunId || !state.reviewedChangeProjectPath) return;
+  decideRunChanges(state.reviewedChangeProjectPath, state.reviewedChangeRunId, "reject");
+});
 $("refresh-project-tree")?.addEventListener("click", () => {
   loadProjectTree().catch((err) => {
     console.error(err);
@@ -2671,6 +2733,7 @@ function setupPanelToggles() {
 
 setupPanelToggles();
 resetProjectEditor();
+resetManifestReview();
 setCenterView("chat");
 
 document.querySelectorAll("[data-workspace-target]").forEach((button) => {

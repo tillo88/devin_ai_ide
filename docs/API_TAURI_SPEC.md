@@ -323,6 +323,33 @@ permission to stop the backend.
 **Request**: `{"run_id": "string"}`  
 **Response**: `{"status": "stopped"}`
 
+### Verified change-manifest review
+
+`GET /api/run/changes/{run_id}?path=<metadata-project>` returns the bounded
+`change_manifest_v1` preview only while the verified run is
+`awaiting_approval`. It includes ordered entries, counts, a unified diff capped
+at 500000 characters and the canonical `entry_digest`.
+
+The C3.2 cockpit splits this payload into a file rail and a bounded side-by-side
+view. It does not call the generic `/api/diff/apply` writer.
+
+`POST /api/run/changes/apply` and `POST /api/run/changes/reject` require:
+
+```json
+{
+  "path": "metadata project path",
+  "run_id": "run_...",
+  "expected_entry_digest": "64-character digest returned by preview",
+  "commit": true
+}
+```
+
+The backend routes to the separately validated `work_dir`, checks run state,
+and compares the reviewed digest again inside the per-manifest decision lock.
+A missing/mismatched digest, stale source, changed sandbox or concurrent
+decision fails closed. Rollback remains available for an already applied
+manifest and independently verifies current files and backups.
+
 ### GET /api/runs/active
 **Purpose**: List currently active runs  
 **Response**:

@@ -73,3 +73,26 @@ def test_cockpit_exposes_project_scoped_read_only_editor():
     assert "/api/file/save" not in script
     assert "read-only" in html
     assert '.workstream-panel[data-center-view="editor"]' in css
+
+
+def test_cockpit_exposes_verified_manifest_diff_without_arbitrary_writer():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    script = SCRIPT.read_text(encoding="utf-8")
+    css = STYLE.read_text(encoding="utf-8")
+    for element_id in (
+        "show-diff-view",
+        "manifest-diff-workspace",
+        "manifest-diff-run",
+        "manifest-diff-digest",
+        "manifest-file-rail",
+        "manifest-diff-rows",
+        "manifest-diff-apply",
+        "manifest-diff-reject",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "/api/run/changes/" in script
+    assert "expected_entry_digest" in script
+    assert "change_manifest_v1" in script
+    assert "/api/diff/apply" not in script
+    assert "diff-input" not in html
+    assert '.workstream-panel[data-center-view="diff"]' in css

@@ -126,8 +126,25 @@ esplicito di continuità.
 - la cache della shell passa a `v9`; l'overview destra non ripete più la
   scansione file e riusa il tree già caricato.
 
-Resta C3.2: portare il diff verificato nello stesso spazio centrale con vista
-affiancata, mantenendo Apply/Reject legati al manifest del run.
+### C3.2 — diff verificato centrale consegnato (2026-08-22)
+
+- il workspace centrale espone ora Chat, Editor e Diff; la vista Diff mostra
+  la lista dei file del `change_manifest_v1` e una lettura Prima/Dopo con
+  numeri di riga, create/modify/delete e marker binari;
+- il payload resta bounded dal backend (500000 caratteri) e il DOM applica un
+  secondo cap di 2500 righe per file, segnalando ogni troncamento;
+- la textarea capace di applicare patch arbitrarie è stata rimossa dal cockpit:
+  la superficie primaria accetta soltanto manifest verificati in stato
+  `pending`;
+- Apply e Reject richiedono entrambi il digest di 64 caratteri visto durante
+  la review. Il backend lo ricontrolla dentro il lock decisionale prima di
+  qualsiasi mutazione; stale source/sandbox continuano a fallire closed;
+- la conferma usa il dialog interno Tauri e una decisione in corso disabilita
+  i due pulsanti, evitando doppi submit;
+- parser diff puro coperto da test Node, shell/PWA aggiornata a `v10`.
+
+Resta C3.3: rendere terminale/log una superficie centrale secondaria e
+distinguere warning filtrabili dai fault strutturati.
 
 ## C4 — agenti, strumenti e conoscenza
 
