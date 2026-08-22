@@ -35,6 +35,12 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
     [Text.UTF8Encoding]::new($false)
 )
 Copy-Item -LiteralPath $staticSource -Destination (Join-Path $output "static") -Recurse -Force
+foreach ($extra in @("sw.js", "manifest.webmanifest")) {
+    $source = Join-Path $staticSource $extra
+    if (Test-Path -LiteralPath $source) {
+        Copy-Item -LiteralPath $source -Destination (Join-Path $output $extra) -Force
+    }
+}
 
 $count = (Get-ChildItem -LiteralPath $output -File -Recurse | Measure-Object).Count
 Write-Host "[ok] bundle desktop: $output ($count file, versione $stamp)"

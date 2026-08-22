@@ -24,10 +24,23 @@
 - `src-tauri/Cargo.toml`
 - `src-tauri/src/main.rs`
 - `src-tauri/capabilities/default.json`
+- `devin/ui/static/js/desktop_bootstrap.js`
 - `scripts/configure-windows-desktop.ps1`
 - `scripts/launch-windows-desktop-host.ps1`
 
-**Current backend model**: FastAPI, workspaces, training jobs and model lifecycle stay on the rig. Rust reads `%APPDATA%\DEVIN\desktop.json`, validates the front-door URL/token and navigates the webview without exposing the token to JavaScript. No local backend or sidecar is started by the normal desktop launcher.
+**Current backend model**: FastAPI, workspaces, training jobs and model lifecycle stay on the rig. Rust reads and atomically writes `%APPDATA%\DEVIN\desktop.json`, validates the front-door URL/token and navigates the webview without returning stored credentials to JavaScript. No local backend or sidecar is started by the normal desktop launcher.
+
+**Native command surface (`v0.2`)**:
+
+- `desktop_config_status`: returns only configuration state, endpoint and
+  environment-override state; never the token;
+- `test_frontdoor_connection(frontdoorUrl)`: bounded TCP reachability probe,
+  no credential and no HTTP activation request;
+- `save_frontdoor_config(frontdoorUrl, accessToken?)`: validates, applies the
+  user/SYSTEM ACL and atomically replaces the JSON file; an omitted token may
+  preserve an already valid stored token;
+- `connect_frontdoor`: probes reachability, obtains the credential inside Rust
+  and navigates to the token bootstrap URL.
 
 ## Web/Tauri Shell Routes
 

@@ -556,7 +556,11 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert r"%LOCALAPPDATA%\DEVIN\DEVIN Desktop.cmd" in desktop_cmd
     assert "start """ in desktop_cmd
     assert 'tauriInvoke("connect_frontdoor")' in bootstrap
+    assert 'tauriInvoke("desktop_config_status")' in bootstrap
+    assert 'tauriInvoke("test_frontdoor_connection"' in bootstrap
+    assert 'tauriInvoke("save_frontdoor_config"' in bootstrap
     assert "connect_frontdoor" in main_rs
+    assert "save_frontdoor_config" in main_rs
     assert "DEVIN_FRONTDOOR_TOKEN" in main_rs
     assert "start_local_backend" not in main_rs
     assert "CloseRequested" not in main_rs
@@ -571,6 +575,7 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert config["build"]["frontendDist"] == "frontend"
     assert "devUrl" not in config["build"]
     assert config["bundle"]["targets"] == ["nsis", "msi"]
+    assert config["version"] == "0.2.0"
     assert "url" not in config["app"]["windows"][0]
     assert "resources" not in config["bundle"]
     assert capability["permissions"] == ["core:default"]

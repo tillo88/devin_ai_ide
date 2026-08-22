@@ -20,8 +20,8 @@ fallback. The desktop must fail visibly if its configured rig is unavailable.
 
 - [x] Bundled connection/retry screen.
 - [x] Rust-side URL/token validation and front-door reachability check.
-- [x] Token kept out of JavaScript and converted by the front door to an
-      `HttpOnly` cookie.
+- [x] Stored token never returned to JavaScript and converted by the front door
+      to an `HttpOnly` cookie.
 - [x] Protected `%APPDATA%\DEVIN\desktop.json` configurator.
 - [x] Windows-native cached development host.
 - [x] Removal of automatic WSL/local-backend startup and sidecar resources.
@@ -47,11 +47,12 @@ The exact build and install/uninstall evidence is recorded in
 
 ## Phase 3 — onboarding
 
-- [ ] Native first-run form for front-door URL and secret.
-- [ ] Save through a Rust command with the same validation/ACL contract as the
+- [x] Native first-run form for front-door URL and secret.
+- [x] Save through a Rust command with the same validation/ACL contract as the
       PowerShell configurator.
-- [ ] Add a connection test that does not activate the DEVIN model.
-- [ ] Allow editing connection settings from the failure screen.
+- [x] Add a TCP-only connection test that cannot activate the DEVIN model.
+- [x] Allow editing connection settings from the failure screen without
+      returning the stored token to the UI.
 
 ## Phase 4 — hardening
 

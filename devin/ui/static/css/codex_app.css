@@ -4576,3 +4576,281 @@ body.right-collapsed .mind-panel {
   .run-log-heading { flex: 1 1 100%; }
   .known-warning-toggle { flex: 1 1 100%; margin-left: 0; }
 }
+
+/* Native Tauri bootstrap / first-run onboarding. These elements exist only in
+   desktop_bootstrap.js; the rig-served workspace never renders this layer. */
+.devin-boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 40px 24px;
+  color: #f4f2ee;
+  background:
+    radial-gradient(circle at 22% 16%, rgba(73, 112, 156, 0.18), transparent 34%),
+    radial-gradient(circle at 78% 84%, rgba(132, 93, 57, 0.13), transparent 30%),
+    #0c0d0f;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+}
+
+.devin-boot-glow {
+  position: fixed;
+  width: min(760px, 82vw);
+  height: min(760px, 82vw);
+  border: 1px solid rgba(255, 255, 255, 0.035);
+  border-radius: 50%;
+  box-shadow: 0 0 120px rgba(67, 105, 148, 0.07);
+  pointer-events: none;
+}
+
+.devin-boot-card {
+  position: relative;
+  width: min(590px, calc(100vw - 40px));
+  padding: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.105);
+  border-radius: 20px;
+  background: rgba(24, 25, 28, 0.94);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(18px);
+}
+
+.devin-boot-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.devin-boot-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(145, 177, 211, 0.34);
+  border-radius: 11px;
+  color: #dceafb;
+  background: linear-gradient(145deg, #26384d, #151b22);
+  font: 700 17px/1 Georgia, serif;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.devin-boot-brand-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.devin-boot-brand-copy strong {
+  font-size: 13px;
+  letter-spacing: 0.07em;
+}
+
+.devin-boot-brand-copy span,
+.devin-boot-footnote {
+  color: #888b91;
+  font-size: 11px;
+}
+
+.devin-boot-copy {
+  padding: 30px 0 22px;
+}
+
+.devin-boot-eyebrow {
+  margin-bottom: 8px;
+  color: #8eabc9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.devin-boot-copy h1 {
+  margin: 0;
+  color: #f7f5f1;
+  font-size: clamp(25px, 4vw, 34px);
+  font-weight: 610;
+  letter-spacing: -0.035em;
+}
+
+.devin-boot-detail {
+  margin: 12px 0 0;
+  color: #a5a7ad;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.devin-boot-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.devin-boot-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #729ccc;
+  box-shadow: 0 0 14px rgba(114, 156, 204, 0.7);
+}
+
+.devin-boot-endpoint div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.devin-boot-endpoint small {
+  color: #777b82;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.devin-boot-endpoint strong {
+  overflow: hidden;
+  color: #d9dce1;
+  font: 500 12px/1.4 "Cascadia Code", Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.devin-boot-progress {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.devin-boot-progress span {
+  display: block;
+  width: 34%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #587ca5, #a2bdd8);
+  animation: devin-boot-progress 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes devin-boot-progress {
+  to { transform: translateX(195%); }
+}
+
+.devin-boot-footnote {
+  margin: 14px 0 0;
+  text-align: center;
+}
+
+.devin-boot-form,
+.devin-boot-field {
+  display: grid;
+}
+
+.devin-boot-form {
+  gap: 16px;
+}
+
+.devin-boot-field {
+  gap: 7px;
+}
+
+.devin-boot-field > span {
+  color: #d1d2d5;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.devin-boot-field > small {
+  color: #74777e;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.devin-boot-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 10px;
+  outline: none;
+  color: #f1f1f2;
+  background: #111216;
+  font: 12px/1.4 "Cascadia Code", Consolas, monospace;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.devin-boot-field input:focus {
+  border-color: rgba(116, 158, 204, 0.7);
+  box-shadow: 0 0 0 3px rgba(74, 117, 164, 0.13);
+}
+
+.devin-boot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 4px;
+}
+
+.devin-boot-action {
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid rgba(255, 255, 255, 0.105);
+  border-radius: 9px;
+  color: #d6d7da;
+  background: rgba(255, 255, 255, 0.035);
+  font: 600 11px/1 "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.devin-boot-action.primary {
+  border-color: #6f91b6;
+  color: #0c1218;
+  background: #a8c2dc;
+}
+
+.devin-boot-action:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.devin-boot-action:disabled,
+.devin-boot-field input:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.devin-boot-feedback,
+.devin-boot-warning {
+  min-height: 18px;
+  margin: 0;
+  color: #878a91;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.devin-boot-feedback.success { color: #8fc5a5; }
+.devin-boot-feedback.error,
+.devin-boot-warning { color: #d39a91; }
+.devin-boot-feedback.pending { color: #96adc5; }
+
+.devin-boot-warning {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(193, 119, 105, 0.18);
+  border-radius: 9px;
+  background: rgba(193, 119, 105, 0.06);
+}
+
+@media (max-width: 620px) {
+  .devin-boot-overlay { padding: 18px; }
+  .devin-boot-card { width: 100%; padding: 22px; border-radius: 16px; }
+  .devin-boot-copy { padding: 24px 0 18px; }
+  .devin-boot-actions { display: grid; grid-template-columns: 1fr; }
+  .devin-boot-action { width: 100%; }
+}

@@ -10,16 +10,22 @@ Normal desktop startup does not require WSL, a local Python process, a backend
 sidecar or local models. Closing the window also does not stop remote work: the
 front door releases the DEVIN session only after its idle/busy checks pass.
 
-The local `frontendDist` bundle is intentionally small. It shows connection
-status, invokes the protected Rust command `connect_frontdoor`, and is replaced
-by the same-origin `/app` served through the front door after authentication.
+The local `frontendDist` bundle is intentionally small. It provides first-run
+onboarding, connection/retry/settings views and invokes protected Rust
+commands. After authentication it is replaced by the same-origin `/app` served
+through the front door.
 
 The cockpit roadmap and its no-NVML status contract are recorded in
 `DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md`.
 
 ## Configuration
 
-Run the interactive helper from Windows PowerShell:
+On first launch the app asks for the front-door root URL and token. The native
+form can test TCP reachability without sending the token or activating DEVIN,
+then saves through Rust. From an error screen, **Impostazioni** reopens the same
+form; an empty token field preserves the existing protected token.
+
+The PowerShell configurator remains an administrative fallback:
 
 ```powershell
 npm run desktop:configure
@@ -31,8 +37,9 @@ It prompts for the URL and a hidden token, then writes:
 %APPDATA%\DEVIN\desktop.json
 ```
 
-The directory ACL is reduced to the current Windows user and `SYSTEM`. The file
-schema is:
+Both paths reduce the directory ACL to the current Windows user and `SYSTEM`.
+Rust uses a same-directory temporary file, flushes it, and atomically replaces
+the configuration. The file schema is:
 
 ```json
 {
@@ -42,10 +49,10 @@ schema is:
 }
 ```
 
-Rust validates scheme, host, path and token length. It probes only TCP
-reachability, builds `/app?token=...` with URL encoding and navigates the
-webview without returning the token to JavaScript. The front door converts the
-query token into an `HttpOnly` cookie and redirects to a clean `/app` URL.
+Rust validates scheme, host, path and token length. Stored credentials are
+never returned to JavaScript. Rust builds `/app?token=...` with URL encoding
+and navigates the webview; the front door converts the query token into an
+`HttpOnly` cookie and redirects to a clean `/app` URL.
 
 For development, `DEVIN_DESKTOP_CONFIG` can select another JSON file;
 `DEVIN_FRONTDOOR_URL` and `DEVIN_FRONTDOOR_TOKEN` override individual fields.
