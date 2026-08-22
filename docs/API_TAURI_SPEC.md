@@ -55,6 +55,19 @@
 - `GET /api/routing/status` and `POST /api/routing/plan` for the no-auto-switch
   role-routing preview
 
+### Goal Mode control
+
+- `POST /api/goal/run` starts one validated background Goal at a time;
+- `GET /api/goal` returns the bounded cockpit projection, including typed
+  acceptance criteria, evaluation, attempts, reason and budgets;
+- `GET /api/goal/{goal_run_id}` returns the internal status for diagnostics;
+- `POST /api/goal/{goal_run_id}/stop` requests cooperative cancellation. It
+  reports `stopping` until the current actor/verifier step completes and never
+  kills its worker thread.
+
+Goal resume is intentionally absent until the backend can persist and validate
+a real Goal checkpoint. A new run must not be presented as a resume.
+
 ## Governance APIs (P5–P8)
 
 ### Knowledge exchange

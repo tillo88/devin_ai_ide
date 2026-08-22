@@ -17,6 +17,8 @@ const state = {
   projects: [],
   runs: [],
   goals: [],
+  goalCriteriaDraft: [],
+  goalPoll: null,
   commandItems: [],
 };
 
@@ -373,6 +375,7 @@ function renderMind(status, health = {}) {
 }
 
 const activeGoalStatuses = new Set(["starting", "running", "stopping", "awaiting_approval"]);
+const liveGoalStatuses = new Set(["starting", "running", "stopping"]);
 
 function goalCriterionLabel(criterion) {
   if (criterion?.label) return criterion.label;
@@ -391,6 +394,146 @@ function setMeter(id, ratio) {
   if (meter) meter.style.width = `${Math.max(0, Math.min(1, ratio || 0)) * 100}%`;
 }
 
+function setGoalFeedback(message, kind = "") {
+  const feedback = $("goal-form-feedback");
+  if (!feedback) return;
+  feedback.textContent = message;
+  feedback.dataset.kind = kind;
+}
+
+function goalCriterionPlaceholder(type) {
+  return {
+    tests_pass: "Nessun parametro richiesto",
+    file_exists: "es. src/main.py",
+    absence_of_pattern: "es. TODO|FIXME",
+    contains_text: "percorso :: testo atteso",
+  }[type] || "Valore";
+}
+
+function renderGoalCriteriaDraft() {
+  const draft = $("goal-criteria-draft");
+  if (!draft) return;
+  if (!state.goalCriteriaDraft.length) {
+    draft.innerHTML = '<div class="goal-draft-item"><span>Nessun criterio aggiunto.</span></div>';
+    return;
+  }
+  draft.innerHTML = state.goalCriteriaDraft.map((criterion, index) => `
+    <div class="goal-draft-item">
+      <span>${escapeHtml(goalCriterionLabel(criterion))}</span>
+      <button type="button" data-remove-goal-criterion="${index}" title="Rimuovi criterio">×</button>
+    </div>`).join("");
+}
+
+function addGoalCriterion(type, rawValue = "") {
+  const value = String(rawValue || "").trim();
+  let criterion;
+  if (type === "tests_pass") {
+    criterion = { type, params: {} };
+  } else if (type === "file_exists") {
+    if (!value) throw new Error("Indica il percorso del file atteso.");
+    criterion = { type, params: { path: value } };
+  } else if (type === "absence_of_pattern") {
+    if (!value) throw new Error("Indica il pattern che non deve comparire.");
+    criterion = { type, params: { pattern: value } };
+  } else if (type === "contains_text") {
+    const separator = value.indexOf("::");
+    const path = separator >= 0 ? value.slice(0, separator).trim() : "";
+    const text = separator >= 0 ? value.slice(separator + 2).trim() : "";
+    if (!path || !text) throw new Error("Usa il formato: percorso :: testo atteso.");
+    criterion = { type, params: { path, text } };
+  } else {
+    throw new Error("Tipo di criterio non supportato dal form.");
+  }
+
+  const signature = JSON.stringify(criterion);
+  if (!state.goalCriteriaDraft.some((item) => JSON.stringify(item) === signature)) {
+    state.goalCriteriaDraft.push(criterion);
+  }
+  renderGoalCriteriaDraft();
+  setGoalFeedback("Criterio aggiunto.", "ok");
+}
+
+function currentLiveGoal() {
+  return [...state.goals].reverse().find((goal) => liveGoalStatuses.has(goal.status));
+}
+
+function syncGoalLaunchState() {
+  const projectLabel = $("goal-project-label");
+  if (projectLabel) {
+    projectLabel.textContent = state.selectedProjectPath
+      ? (state.selectedProjectPath.split(/[\\/]/).filter(Boolean).at(-1) || state.selectedProjectPath)
+      : "Seleziona un progetto";
+    projectLabel.title = state.selectedProjectPath || "";
+  }
+  const start = $("goal-start-button");
+  if (start) {
+    const live = currentLiveGoal();
+    start.disabled = !state.selectedProjectPath || Boolean(live);
+    start.title = live
+      ? "Un Goal è già in esecuzione"
+      : (!state.selectedProjectPath ? "Seleziona prima un progetto" : "Avvia sul progetto selezionato");
+  }
+}
+
+async function refreshGoals() {
+  const goals = await fetchJson("/api/goal").catch(() => ({ goal_runs: [] }));
+  renderGoalPanel(goals);
+}
+
+function updateGoalPolling(isLive) {
+  if (isLive && !state.goalPoll) {
+    state.goalPoll = window.setInterval(refreshGoals, 2000);
+  } else if (!isLive && state.goalPoll) {
+    window.clearInterval(state.goalPoll);
+    state.goalPoll = null;
+  }
+}
+
+async function startGoal() {
+  if (!state.selectedProjectPath) throw new Error("Seleziona prima un progetto.");
+  if (currentLiveGoal()) throw new Error("Un Goal è già in esecuzione.");
+  const objective = $("goal-objective-input")?.value.trim() || "";
+  if (!objective) throw new Error("Descrivi l'obiettivo da raggiungere.");
+  if (!state.goalCriteriaDraft.length) throw new Error("Aggiungi almeno un criterio verificabile.");
+
+  const mode = $("goal-mode-select")?.value || "maintenance";
+  const approval = mode === "scaffold" ? "auto" : ($("goal-approval-select")?.value || "manual");
+  const budgetSteps = Number.parseInt($("goal-budget-steps")?.value || "12", 10);
+  const budgetMinutes = Number.parseInt($("goal-budget-minutes")?.value || "30", 10);
+  if (!(budgetSteps >= 1 && budgetSteps <= 100)) throw new Error("Il budget step deve essere tra 1 e 100.");
+  if (!(budgetMinutes >= 1 && budgetMinutes <= 480)) throw new Error("Il budget tempo deve essere tra 1 e 480 minuti.");
+
+  const start = $("goal-start-button");
+  if (start) start.disabled = true;
+  setGoalFeedback("Avvio del Goal in corso…");
+  const result = await postJson("/api/goal/run", {
+    project_path: state.selectedProjectPath,
+    objective,
+    acceptance: state.goalCriteriaDraft,
+    mode,
+    approval_policy: approval,
+    budget_steps: budgetSteps,
+    budget_seconds: budgetMinutes * 60,
+    role: $("goal-role-select")?.value || "scaffolder",
+  });
+  if (result.error) throw new Error(result.error);
+  setGoalFeedback(`Goal avviato: ${result.goal_run_id}`, "ok");
+  const launcher = $("goal-launcher");
+  if (launcher) launcher.open = false;
+  appendChatMessage("assistant", `Goal Mode avviata sul progetto ${activeProjectLabel()}.`);
+  await refreshGoals();
+}
+
+async function stopGoal(goalRunId) {
+  if (!goalRunId) return;
+  const button = $("goal-stop-button");
+  if (button) button.disabled = true;
+  const result = await postJson(`/api/goal/${encodeURIComponent(goalRunId)}/stop`, {});
+  if (result.error) throw new Error(result.error);
+  setGoalFeedback(result.reason || "Stop richiesto.", "ok");
+  await refreshGoals();
+}
+
 function renderGoalPanel(payload) {
   const goals = Array.isArray(payload?.goal_runs) ? payload.goal_runs : [];
   state.goals = goals;
@@ -402,6 +545,14 @@ function renderGoalPanel(payload) {
     if (empty) empty.hidden = false;
     if (summary) summary.hidden = true;
     setText("goal-status-badge", "idle");
+    const badge = $("goal-status-badge");
+    if (badge) badge.dataset.status = "idle";
+    const reason = $("goal-reason");
+    if (reason) reason.hidden = true;
+    const stop = $("goal-stop-button");
+    if (stop) stop.hidden = true;
+    updateGoalPolling(false);
+    syncGoalLaunchState();
     return;
   }
 
@@ -415,9 +566,23 @@ function renderGoalPanel(payload) {
   setText("goal-objective", goal.objective || "Goal senza descrizione");
   const policy = goal.requires_checkpoint ? "supervisione" : "autonomo";
   setText("goal-meta", `${goal.role || "scaffolder"} · ${goal.mode || "maintenance"} · ${policy}`);
+  const reason = $("goal-reason");
+  if (reason) {
+    reason.textContent = goal.reason || "";
+    reason.hidden = !goal.reason;
+  }
+
+  const stop = $("goal-stop-button");
+  if (stop) {
+    stop.hidden = !liveGoalStatuses.has(goal.status);
+    stop.disabled = goal.status === "stopping";
+    stop.dataset.goalRunId = goal.goal_run_id || "";
+    stop.textContent = goal.status === "stopping" ? "Stop richiesto…" : "Ferma dopo lo step corrente";
+  }
 
   const attempts = Array.isArray(goal.attempts) ? goal.attempts : [];
-  const latestEvaluation = [...attempts].reverse().find((attempt) => attempt?.evaluation)?.evaluation;
+  const latestEvaluation = goal.evaluation
+    || [...attempts].reverse().find((attempt) => attempt?.evaluation)?.evaluation;
   const results = Array.isArray(latestEvaluation?.results) ? latestEvaluation.results : [];
   const checklist = $("goal-checklist");
   if (checklist) {
@@ -443,6 +608,8 @@ function renderGoalPanel(payload) {
   const budgetSeconds = Number(goal.budget_seconds || 0);
   setText("goal-time-count", `${Math.round(elapsedSeconds / 60)}m / ${budgetSeconds ? Math.round(budgetSeconds / 60) : "—"}m`);
   setMeter("goal-time-fill", budgetSeconds ? elapsedSeconds / budgetSeconds : 0);
+  updateGoalPolling(liveGoalStatuses.has(goal.status));
+  syncGoalLaunchState();
 }
 
 function renderGovernanceStatus(knowledge, council, routing) {
@@ -833,6 +1000,7 @@ async function selectProject(projectPath) {
   renderRunLog(null);
   state.selectedProjectPath = projectPath || "";
   refreshActiveScope();
+  syncGoalLaunchState();
   state.selectedChatId = null;
   state.chatLoaded = true;
   document.querySelectorAll(".project-card").forEach((card) => {
@@ -2049,6 +2217,81 @@ async function refresh() {
 $("refresh-app")?.addEventListener("click", refresh);
 $("routing-preview-button")?.addEventListener("click", previewCapabilityRoute);
 
+function setupGoalControls() {
+  const type = $("goal-criterion-type");
+  const value = $("goal-criterion-value");
+  const syncCriterionInput = () => {
+    if (!type || !value) return;
+    value.placeholder = goalCriterionPlaceholder(type.value);
+    value.disabled = type.value === "tests_pass";
+    if (value.disabled) value.value = "";
+  };
+  type?.addEventListener("change", syncCriterionInput);
+  syncCriterionInput();
+
+  $("goal-add-criterion")?.addEventListener("click", () => {
+    try {
+      addGoalCriterion(type?.value || "tests_pass", value?.value || "");
+      if (value) value.value = "";
+    } catch (err) {
+      setGoalFeedback(err.message || String(err), "error");
+    }
+  });
+  value?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    $("goal-add-criterion")?.click();
+  });
+
+  document.querySelectorAll("[data-goal-preset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      try {
+        if (button.dataset.goalPreset === "tests") addGoalCriterion("tests_pass");
+        if (button.dataset.goalPreset === "no-todos") addGoalCriterion("absence_of_pattern", "TODO|FIXME");
+      } catch (err) {
+        setGoalFeedback(err.message || String(err), "error");
+      }
+    });
+  });
+
+  $("goal-criteria-draft")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-goal-criterion]");
+    if (!button) return;
+    const index = Number.parseInt(button.dataset.removeGoalCriterion, 10);
+    if (Number.isInteger(index)) state.goalCriteriaDraft.splice(index, 1);
+    renderGoalCriteriaDraft();
+    setGoalFeedback("Criterio rimosso.");
+  });
+
+  const mode = $("goal-mode-select");
+  const approval = $("goal-approval-select");
+  const syncApproval = () => {
+    if (!approval) return;
+    const scaffold = mode?.value === "scaffold";
+    if (scaffold) approval.value = "auto";
+    approval.disabled = scaffold;
+    approval.title = scaffold ? "Lo scaffold applica automaticamente per contratto" : "Policy di approvazione";
+  };
+  mode?.addEventListener("change", syncApproval);
+  syncApproval();
+
+  $("goal-start-button")?.addEventListener("click", () => {
+    startGoal().catch((err) => {
+      setGoalFeedback(err.message || String(err), "error");
+      syncGoalLaunchState();
+    });
+  });
+  $("goal-stop-button")?.addEventListener("click", (event) => {
+    stopGoal(event.currentTarget.dataset.goalRunId).catch((err) => {
+      setGoalFeedback(err.message || String(err), "error");
+      event.currentTarget.disabled = false;
+    });
+  });
+
+  renderGoalCriteriaDraft();
+  syncGoalLaunchState();
+}
+
 // 2026-07-18 (PWA slice): toggle dei pannelli laterali come overlay ai
 // breakpoint mobile. Nessuna logica di toggle preesistente da riusare
 // (verificato): minimo indispensabile qui; i bottoni sono nascosti su
@@ -2114,5 +2357,6 @@ document.querySelectorAll("[data-workspace-target]").forEach((button) => {
 
 setupChatComposer();
 setupCommandPalette();
+setupGoalControls();
 refresh();
 setInterval(refresh, 15000);

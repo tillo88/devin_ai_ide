@@ -18,6 +18,7 @@ from devin.core.goal_runner import (
     RESULT_BLOCKED,
     RESULT_BUDGET,
     RESULT_NEEDS_APPROVAL,
+    RESULT_STOPPED,
     RESULT_SUCCESS,
     STEP_BLOCKED,
     STEP_CHANGED,
@@ -297,3 +298,39 @@ def test_history_passata_all_executor(tmp_path: Path):
     res = run_goal(goal, tmp_path, executor)
     assert res.status == RESULT_SUCCESS
     assert seen_history_len == [0, 1]  # la history cresce a ogni step
+
+
+def test_stop_cooperativo_prima_della_valutazione_non_avvia_attori(tmp_path: Path):
+    calls = []
+
+    def actor(goal, root, ctx):
+        calls.append(ctx.attempt_index)
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder")
+
+    goal = _goal([Criterion("file_exists", {"path": "never.py"})])
+    res = run_goal(goal, tmp_path, actor, should_stop=lambda: True)
+
+    assert res.status == RESULT_STOPPED
+    assert res.attempts == []
+    assert calls == []
+
+
+def test_stop_richiesto_durante_step_attende_attempt_completo(tmp_path: Path):
+    stop = {"requested": False}
+
+    def actor(goal, root, ctx):
+        (Path(root) / "done.txt").write_text("ok\n", encoding="utf-8")
+        stop["requested"] = True
+        return StepOutcome(STEP_CHANGED, strategy="scaffolder", produced_changes=True)
+
+    goal = Goal(
+        objective="crea il file",
+        acceptance=[Criterion("file_exists", {"path": "done.txt"})],
+        mode=MODE_SCAFFOLD,
+    )
+    res = run_goal(goal, tmp_path, actor, should_stop=lambda: stop["requested"])
+
+    assert res.status == RESULT_STOPPED
+    assert len(res.attempts) == 1
+    assert res.attempts[0].strategy == "scaffolder"
+    assert "fine dello step" in res.reason

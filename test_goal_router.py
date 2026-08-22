@@ -5,6 +5,7 @@ Non tocca l'orchestrator: `execute_goal_run` riceve un esecutore iniettato.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,19 @@ def test_goal_from_request_goal_intero():
 def test_goal_from_request_invalido():
     req = goal_router.GoalRunRequest(project_path="/tmp/x", objective="", acceptance=[])
     with pytest.raises(GoalError):
+        goal_router.goal_from_request(req)
+
+
+def test_goal_from_request_intero_rispetta_i_massimi_server():
+    req = goal_router.GoalRunRequest(
+        project_path="/tmp/x",
+        goal={
+            "objective": "o",
+            "acceptance": [{"type": "tests_pass", "params": {}}],
+            "budget_steps": 101,
+        },
+    )
+    with pytest.raises(GoalError, match="massimo"):
         goal_router.goal_from_request(req)
 
 
@@ -180,6 +194,7 @@ def test_goal_panel_record_exposes_machine_verifiable_progress():
         "budget_steps": 12,
         "budget_seconds": 900,
         "attempts": [{"index": 0, "satisfied": False}],
+        "evaluation": {"satisfied": False, "results": []},
         "reason": "",
         "started_at": "now",
         "updated_at": "now",
@@ -193,5 +208,72 @@ def test_goal_panel_record_exposes_machine_verifiable_progress():
     assert panel["acceptance"][0]["type"] == "tests_pass"
     assert panel["budget_steps"] == 12
     assert panel["attempts"][0]["satisfied"] is False
+    assert panel["evaluation"]["satisfied"] is False
     assert "project_path" not in panel
     assert "result" not in panel
+
+
+def test_goal_stop_imposta_evento_e_stato_stopping():
+    gid = "goal_stop_1"
+    goal_router._goal_runs[gid] = {
+        "goal_run_id": gid,
+        "status": "running",
+        "reason": "",
+        "updated_at": "now",
+    }
+    goal_router._goal_stop_events[gid] = goal_router.threading.Event()
+
+    try:
+        result = asyncio.run(goal_router.api_goal_stop(gid))
+        assert result["status"] == "stopping"
+        assert goal_router._goal_stop_events[gid].is_set()
+        assert goal_router._goal_runs[gid]["status"] == "stopping"
+        assert "fine dello step" in goal_router._goal_runs[gid]["reason"]
+    finally:
+        goal_router._goal_stop_events.pop(gid, None)
+        goal_router._goal_runs.pop(gid, None)
+
+
+def test_execute_goal_run_consuma_stop_event_e_lo_rimuove(tmp_path: Path):
+    from devin.core.goal_mode import Criterion, Goal
+
+    gid = "goal_stop_2"
+    goal = Goal(
+        objective="o",
+        acceptance=[Criterion("file_exists", {"path": "never.py"})],
+        mode=MODE_SCAFFOLD,
+    )
+    goal_router._goal_runs[gid] = {
+        "goal_run_id": gid, "status": "stopping", "reason": "", "attempts": [],
+        "result": None, "started_at": "now", "finished_at": None,
+    }
+    event = goal_router.threading.Event()
+    event.set()
+    goal_router._goal_stop_events[gid] = event
+
+    goal_router.execute_goal_run(
+        gid,
+        goal,
+        str(tmp_path),
+        lambda *_: pytest.fail("l'attore non deve partire"),
+    )
+
+    assert goal_router._goal_runs[gid]["status"] == "stopped"
+    assert gid not in goal_router._goal_stop_events
+    goal_router._goal_runs.pop(gid, None)
+
+
+def test_api_goal_run_rifiuta_un_secondo_goal_attivo():
+    gid = "goal_single_flight"
+    goal_router._goal_runs[gid] = {"goal_run_id": gid, "status": "running"}
+    req = goal_router.GoalRunRequest(
+        project_path="/tmp/x",
+        objective="secondo",
+        acceptance=[{"type": "tests_pass", "params": {}}],
+    )
+    try:
+        result = asyncio.run(goal_router.api_goal_run(req))
+        assert result["goal_run_id"] == gid
+        assert "gia' in esecuzione" in result["error"]
+    finally:
+        goal_router._goal_runs.pop(gid, None)
