@@ -50,6 +50,44 @@
 - `POST /api/diff/preview` for read-only diff summaries in the center work-stream
 - `POST /api/diff/apply` behind explicit browser confirmation in the workspace shell
 - `GET /api/terminal/output` for read-only run logs in the center work-stream
+- `GET /api/knowledge-exchange/status` for reviewed cross-role artifact counts
+- `GET /api/council/status` for Evidence Council coverage
+- `GET /api/routing/status` and `POST /api/routing/plan` for the no-auto-switch
+  role-routing preview
+
+## Governance APIs (P5–P8)
+
+### Knowledge exchange
+
+- `GET /api/knowledge-exchange/status`
+- `GET /api/knowledge-exchange/promoted?audience=<role>`
+- `POST /api/knowledge-exchange/proposals`
+- `POST /api/knowledge-exchange/reviews`
+
+Proposals begin in quarantine. Approvals require verified source evidence and
+verified evidence from an independent reviewer role. These endpoints never
+read or merge raw AutoMem/Understory stores.
+
+### Federated Evidence Council
+
+- `GET /api/council/status`
+- `POST /api/council/plans`
+- `POST /api/council/aggregate`
+- `POST /api/council/arbiter/resolve`
+
+Council APIs build blind bounded review packets and candidate verdicts. Every
+response keeps `promotion_performed=false`; arbiter resolution needs a verified
+content-addressed experiment result.
+
+### Capability routing
+
+- `GET /api/routing/status`
+- `POST /api/routing/plan`
+- `POST /api/routing/canary/assess`
+
+Routing is a planning contract. `activation_required=true` means the existing
+rig orchestrator must perform a separately authorized transition. The API never
+starts, stops or swaps a model and always reports `automatic_switch=false`.
 
 
 ## Health & Models
