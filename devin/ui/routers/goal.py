@@ -109,6 +109,31 @@ def _attempt_record(attempt: Attempt) -> dict[str, Any]:
         "status": attempt.status,
         "detail": attempt.detail,
         "satisfied": attempt.evaluation.get("satisfied"),
+        "evaluation": dict(attempt.evaluation),
+    }
+
+
+def _goal_panel_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Bounded UI projection for the read-only Goal panel."""
+    return {
+        key: record.get(key)
+        for key in (
+            "goal_run_id",
+            "status",
+            "objective",
+            "mode",
+            "role",
+            "approval_policy",
+            "requires_checkpoint",
+            "acceptance",
+            "budget_steps",
+            "budget_seconds",
+            "attempts",
+            "reason",
+            "started_at",
+            "updated_at",
+            "finished_at",
+        )
     }
 
 
@@ -209,6 +234,9 @@ async def api_goal_run(req: GoalRunRequest):
             "role": role,
             "approval_policy": goal.approval_policy,
             "requires_checkpoint": goal.requires_checkpoint(),
+            "acceptance": [criterion.to_dict() for criterion in goal.acceptance],
+            "budget_steps": goal.budget_steps,
+            "budget_seconds": goal.budget_seconds,
             "project_path": project,
             "attempts": [],
             "result": None,
@@ -259,7 +287,4 @@ async def api_goal_status(goal_run_id: str):
 @router.get("/api/goal")
 async def api_goal_list():
     with _lock:
-        return {"goal_runs": [
-            {k: r[k] for k in ("goal_run_id", "status", "objective", "started_at", "finished_at")}
-            for r in _goal_runs.values()
-        ]}
+        return {"goal_runs": [_goal_panel_record(record) for record in _goal_runs.values()]}

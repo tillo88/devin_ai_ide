@@ -14,6 +14,9 @@ The local `frontendDist` bundle is intentionally small. It shows connection
 status, invokes the protected Rust command `connect_frontdoor`, and is replaced
 by the same-origin `/app` served through the front door after authentication.
 
+The cockpit roadmap and its no-NVML status contract are recorded in
+`DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md`.
+
 ## Configuration
 
 Run the interactive helper from Windows PowerShell:
@@ -64,8 +67,8 @@ C:\Users\tillo\AppData\Local\DEVIN\DEVIN Desktop.cmd
 
 The generated launcher is installation-stable: it invokes the scripts already
 under `%LOCALAPPDATA%\DEVIN\desktop-host`, so it does not retain a WSL, USB or
-source-checkout path. The host preserves `src-tauri\target` between runs for
-incremental Rust builds.
+source-checkout path. The host preserves `src-tauri\target` between runs so
+compiled dependencies remain reusable.
 
 Use the silent launcher for the normal GUI-only experience:
 
@@ -97,3 +100,11 @@ cargo test --manifest-path src-tauri/Cargo.toml
 The older WSL/local-backend scripts remain available only for explicit legacy
 development workflows. They are not called by `desktop:windows-host` or by the
 generated DEVIN Desktop launchers.
+
+## Development cache policy
+
+`src-tauri/target` is a regenerable Cargo build cache, not application data.
+The dev profile disables Rust debug symbols and incremental objects because
+the previous defaults grew the native host cache to about 7 GB. Cache cleanup
+must target only the resolved native host `src-tauri\target`; it must never
+delete the source checkout, `%APPDATA%\DEVIN` configuration or DEVIN logs.

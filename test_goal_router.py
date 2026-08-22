@@ -165,3 +165,33 @@ def test_goal_project_usa_allowlist_e_linked_work_dir(monkeypatch, tmp_path: Pat
     ProjectSpace(str(project)).set_work_dir(str(linked))
 
     assert goal_router._resolve_goal_project_path(str(project)) == str(linked.resolve())
+
+
+def test_goal_panel_record_exposes_machine_verifiable_progress():
+    record = {
+        "goal_run_id": "goal_panel",
+        "status": "running",
+        "objective": "porta i test al verde",
+        "mode": "maintenance",
+        "role": "swarm",
+        "approval_policy": "manual",
+        "requires_checkpoint": True,
+        "acceptance": [{"type": "tests_pass", "params": {}, "label": "Suite verde"}],
+        "budget_steps": 12,
+        "budget_seconds": 900,
+        "attempts": [{"index": 0, "satisfied": False}],
+        "reason": "",
+        "started_at": "now",
+        "updated_at": "now",
+        "finished_at": None,
+        "project_path": "/private/workspace",
+        "result": {"large": "internal"},
+    }
+
+    panel = goal_router._goal_panel_record(record)
+
+    assert panel["acceptance"][0]["type"] == "tests_pass"
+    assert panel["budget_steps"] == 12
+    assert panel["attempts"][0]["satisfied"] is False
+    assert "project_path" not in panel
+    assert "result" not in panel
