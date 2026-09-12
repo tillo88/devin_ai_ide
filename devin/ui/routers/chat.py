@@ -36,7 +36,7 @@ import json
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
@@ -142,6 +142,24 @@ _WEB_INTENT_PHRASES = [
     "versione attuale di", "changelog", "breaking changes", "come si installa",
     "come si usa la libreria", "esempi di utilizzo di", "api di", "release notes",
 ]
+
+
+def _model_alias(model_id: str) -> str:
+    """Alias leggibile del modello per la superficie primaria.
+
+    Il rig espone come model id il path assoluto del GGUF (AIClient lo scopre
+    da /v1/models): stamparlo in chat non dice niente all'operatore e mostra la
+    struttura del filesystem. Qui l'alias si RICAVA dal path a runtime — nessun
+    nome di modello e' scritto nel repository, come richiede
+    docs/AI_RIG_MODEL_SLOT.md.
+    """
+    raw = str(model_id or "").strip()
+    if not raw:
+        return "sconosciuto"
+    nome = PurePosixPath(raw.replace("\\", "/")).name or raw
+    if nome.lower().endswith(".gguf"):
+        nome = nome[: -len(".gguf")]
+    return nome or raw
 
 
 def _wants_web_search(message: str) -> bool:
@@ -505,11 +523,13 @@ async def api_chat(req: ChatRequest):
     # etichettava sempre il modello locale -> la chat sembrava girare su qwen
     # anche quando rispondeva Ornith sul rig.
     _endpoint_url, model_name = ai._get_endpoints(selected_mode)
+    model_label = _model_alias(model_name)
 
     config_key = "reasoning" if selected_mode == "reasoning" else "coder"
     model_cfg = ai.config.get("models", {}).get("local_models", {}).get(config_key, {})
     model_detail = {
-        "name": model_name,
+        "name": model_label,
+        "model_id": model_name,
         "file": model_cfg.get("file", ""),
         "description": model_cfg.get("description", ""),
         "ctx_size": model_cfg.get("ctx_size", ""),
@@ -535,7 +555,9 @@ async def api_chat(req: ChatRequest):
         if web_search_error:
             yield f"event: warning\ndata: {json.dumps({'message': f'Web search non disponibile: {web_search_error}'})}\n\n"
 
-        yield f"event: meta\ndata: {json.dumps({'mode': selected_mode, 'model': model_name, 'detail': model_detail})}\n\n"
+        # 'model' e' l'alias mostrato in chat; 'model_id' resta per la
+        # diagnostica tecnica, non per la superficie primaria.
+        yield f"event: meta\ndata: {json.dumps({'mode': selected_mode, 'model': model_label, 'model_id': model_name, 'detail': model_detail})}\n\n"
 
         try:
             for chunk in ai.stream(messages, mode=selected_mode):

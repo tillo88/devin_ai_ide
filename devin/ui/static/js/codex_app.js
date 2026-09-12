@@ -10,6 +10,15 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   selectedRunId: null,
+  // Ricerca web: "auto" lascia decidere al backend sull'intento del messaggio,
+  // "forzata" la chiede esplicitamente. Prima il frontend mandava sempre true,
+  // quindi anche "rispondi solo con OK" faceva partire una ricerca.
+  webForced: false,
+  // Ultimo snapshot buono di /api/mind/status: un poll fallito non deve
+  // cancellare quello che sappiamo gia'.
+  lastMind: null,
+  lastHealth: null,
+  mindFailures: 0,
   selectedRunStatus: null,
   pipelineStage: null,
   selectedProjectPath: "",
@@ -2290,6 +2299,45 @@ function parseSseBlock(block) {
   return event;
 }
 
+const THINK_OPEN = "<think>";
+const THINK_CLOSE = "</think>";
+
+// Separa il reasoning dalla risposta, reggendo anche un blocco ancora APERTO:
+// durante lo streaming <think> arriva molto prima della sua chiusura.
+function splitReasoning(raw) {
+  const reasoning = [];
+  let answer = "";
+  let rest = raw;
+  for (;;) {
+    const open = rest.indexOf(THINK_OPEN);
+    if (open === -1) { answer += rest; break; }
+    answer += rest.slice(0, open);
+    const after = rest.slice(open + THINK_OPEN.length);
+    const close = after.indexOf(THINK_CLOSE);
+    if (close === -1) { reasoning.push(after); break; }
+    reasoning.push(after.slice(0, close));
+    rest = after.slice(close + THINK_CLOSE.length);
+  }
+  return { reasoning: reasoning.join("\n").trim(), answer };
+}
+
+// Risposta pulita nel corpo, reasoning in un pannello richiudibile.
+function renderAssistantStream(node, raw) {
+  const { reasoning, answer } = splitReasoning(raw);
+  node.textContent = answer;
+  const article = node.parentElement;
+  if (!article) return;
+  let panel = article.querySelector(".reasoning-panel");
+  if (!reasoning) { panel?.remove(); return; }
+  if (!panel) {
+    panel = document.createElement("details");
+    panel.className = "reasoning-panel";
+    panel.innerHTML = '<summary>Reasoning</summary><pre></pre>';
+    article.insertBefore(panel, node);
+  }
+  panel.querySelector("pre").textContent = reasoning;
+}
+
 function applyChatEvent(event, assistantNode) {
   if (!event.data) return;
 
@@ -2301,23 +2349,39 @@ function applyChatEvent(event, assistantNode) {
   }
 
   if (event.type === "message" && payload.token) {
-    assistantNode.textContent += payload.token;
+    assistantNode._raw = (assistantNode._raw || "") + payload.token;
+    renderAssistantStream(assistantNode, assistantNode._raw);
     $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
     return;
   }
 
   if (event.type === "meta") {
-    assistantNode.textContent += `[model: ${payload.model ?? "unknown"}]\n`;
+    // Alias nella superficie primaria; il model id completo (sul rig e' il path
+    // assoluto del GGUF) resta nel tooltip, per la diagnostica.
+    const article = assistantNode.parentElement;
+    const topline = article?.querySelector(".chat-message-topline");
+    if (topline) {
+      let chip = topline.querySelector(".chat-model-chip");
+      if (!chip) {
+        chip = document.createElement("span");
+        chip.className = "chat-model-chip";
+        topline.appendChild(chip);
+      }
+      chip.textContent = payload.model ?? "sconosciuto";
+      chip.title = payload.model_id ? `model id: ${payload.model_id}` : "";
+    }
     return;
   }
 
   if (event.type === "info" || event.type === "warning") {
-    assistantNode.textContent += `[${event.type}] ${payload.message ?? ""}\n`;
+    assistantNode._raw = (assistantNode._raw || "") + `[${event.type}] ${payload.message ?? ""}\n`;
+    renderAssistantStream(assistantNode, assistantNode._raw);
     return;
   }
 
   if (event.type === "error") {
-    assistantNode.textContent += `[error] ${payload.error ?? "stream failed"}`;
+    assistantNode._raw = (assistantNode._raw || "") + `[error] ${payload.error ?? "stream failed"}`;
+    renderAssistantStream(assistantNode, assistantNode._raw);
   }
 }
 
@@ -2335,7 +2399,7 @@ async function sendChatMessage(message) {
       const formData = new FormData();
       formData.append("message", message);
       formData.append("mode", $("chat-mode")?.value ?? "auto");
-      formData.append("use_web_search", "true");  // ricerca web sempre attiva
+      formData.append("use_web_search", state.webForced ? "true" : "false");
       formData.append("project_path", state.selectedProjectPath || "");
       formData.append("chat_id", state.selectedChatId || "");
       selectedFiles.forEach((file) => formData.append("files", file));
@@ -2351,7 +2415,7 @@ async function sendChatMessage(message) {
         body: JSON.stringify({
           message,
           mode: $("chat-mode")?.value ?? "auto",
-          use_web_search: true,  // ricerca web sempre attiva
+          use_web_search: Boolean(state.webForced),
           project_path: state.selectedProjectPath || null,
           chat_id: state.selectedChatId || null,
         }),
@@ -2844,7 +2908,7 @@ async function refresh() {
     const projectQuery = state.selectedProjectPath
       ? `?project_path=${encodeURIComponent(state.selectedProjectPath)}` : "";
     const [mind, health, workspace, knowledge, council, routing, tools, operations, goals] = await Promise.all([
-      fetchJson("/api/mind/status"),
+      fetchJson("/api/mind/status").catch(() => null),
       fetchJson("/api/health").catch(() => ({})),
       fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
       fetchJson(`/api/knowledge-exchange/status${projectQuery}`).catch(() => ({})),
@@ -2855,8 +2919,25 @@ async function refresh() {
       fetchJson("/api/goal").catch(() => ({ goal_runs: [] })),
     ]);
 
+    // Un singolo poll fallito non e' un fault del cockpit: le altre chiamate
+    // sono gia' fail-soft, questa non lo era e trascinava tutto in "error"
+    // mentre la risposta arrivava regolarmente.
+    if (mind) {
+      state.lastMind = mind;
+      state.lastHealth = health;
+      state.mindFailures = 0;
+    } else {
+      state.mindFailures += 1;
+    }
+    const mindDaMostrare = mind || state.lastMind;
+
     state.mindLoaded = true;
-    renderMind(mind, health);
+    if (mindDaMostrare) {
+      renderMind(mindDaMostrare, mind ? health : state.lastHealth || {});
+      if (!mind && !state.selectedRunId) setText("mind-state", "aggiornamento");
+    } else if (!state.selectedRunId) {
+      setText("mind-state", state.mindFailures >= MIND_FAILURES_BEFORE_ERROR ? "error" : "aggiornamento");
+    }
     renderGoalPanel(goals);
     renderGovernanceStatus(knowledge, council, routing, tools, operations);
     renderProjects(workspace);
@@ -2867,9 +2948,34 @@ async function refresh() {
     }
   } catch (err) {
     console.error(err);
-    if (!state.selectedRunId) setText("mind-state", "error");
+    // Fault verificato solo dopo piu' fallimenti consecutivi: finche' abbiamo
+    // uno snapshot buono lo teniamo, invece di mentire con "error".
+    state.mindFailures += 1;
+    if (!state.selectedRunId) {
+      if (state.lastMind && state.mindFailures < MIND_FAILURES_BEFORE_ERROR) {
+        renderMind(state.lastMind, state.lastHealth || {});
+        setText("mind-state", "aggiornamento");
+      } else {
+        setText("mind-state", "error");
+      }
+    }
   }
 }
+
+// Il badge globale passa a "error" solo dopo tre poll falliti di fila.
+const MIND_FAILURES_BEFORE_ERROR = 3;
+
+// Ricerca web: auto (default) oppure forzata. In auto il backend decide
+// sull'intento del messaggio; forzata la chiede comunque.
+$("web-mode-chip")?.addEventListener("click", (event) => {
+  state.webForced = !state.webForced;
+  const chip = event.currentTarget;
+  chip.dataset.webMode = state.webForced ? "forzata" : "auto";
+  chip.textContent = state.webForced ? "\u{1F310} web forzata" : "\u{1F310} web auto";
+  chip.title = state.webForced
+    ? "Ricerca web: forzata su ogni messaggio. Clicca per tornare in automatico."
+    : "Ricerca web: automatica \u2014 il backend la attiva solo su intento esplicito. Clicca per forzarla.";
+});
 
 $("refresh-app")?.addEventListener("click", refresh);
 $("routing-preview-button")?.addEventListener("click", previewCapabilityRoute);
