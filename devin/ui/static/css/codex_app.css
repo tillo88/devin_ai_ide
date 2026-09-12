@@ -4854,3 +4854,22 @@ body.right-collapsed .mind-panel {
   .devin-boot-actions { display: grid; grid-template-columns: 1fr; }
   .devin-boot-action { width: 100%; }
 }
+
+/* C6 — alias del modello e pannello reasoning (2026-09-12) */
+.chat-model-chip {
+  margin-left: auto;
+  font-size: 0.72rem;
+  opacity: 0.65;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.reasoning-panel {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.8rem;
+  opacity: 0.75;
+  border-left: 2px solid currentColor;
+  padding-left: 0.6rem;
+}
+.reasoning-panel > summary { cursor: pointer; user-select: none; }
+.reasoning-panel > pre { white-space: pre-wrap; margin: 0.4rem 0 0 0; }
+.web-chip { cursor: pointer; }
+.web-chip[data-web-mode="forzata"] { font-weight: 600; opacity: 1; }
