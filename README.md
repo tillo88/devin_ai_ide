@@ -1,7 +1,7 @@
 # DEVIN AI IDE — continuity brief
 
 **Updated:** 2026-08-22
-**Primary workspace:** il checkout Git verificato con `git rev-parse`; WSL è opzionale.
+**Primary workspace:** the checkout verified with `git rev-parse`. The code that actually runs is `/opt/devin-ai-ide-frontend` on the rig; there is no WSL on the Windows machine. See `AGENTS.md` §1.
 
 DEVIN AI IDE is a local-first coding-agent workspace: FastAPI backend, Codex-like `/app` prototype UI, local/rig model routing, safe memory, project-aware chat, scaffold/maintenance runs, and an early training/eval loop.
 
@@ -73,6 +73,6 @@ Preferred launcher after the Windows host has been prepared:
 C:\Users\tillo\AppData\Local\DEVIN\DEVIN Desktop.cmd
 ```
 
-The repo-side `scripts/DEVIN Desktop.cmd` is only a delegating helper. The desktop app runs from a native Windows host in `%LOCALAPPDATA%\DEVIN\desktop-host`, while the FastAPI backend remains headless in WSL `Ubuntu`.
+The repo-side `scripts/DEVIN Desktop.cmd` is only a delegating helper. The desktop app runs from a native Windows host in `%LOCALAPPDATA%\DEVIN\desktop-host` and is a thin client: it talks to the frontdoor on the rig at port 5000. The FastAPI backend runs **on the rig**, from `/opt/devin-ai-ide-frontend`, not in WSL — there is no WSL on the Windows machine. See `AGENTS.md` §1-3.
 
 The main Workspace is intentionally light: project switching uses lite project overview, and Runs/Training/Memory/Knowledge/Sandbox/Settings live in Diagnostics tabs. External folders such as ForgeStudio must be linked with the Workspace `Link` button before crawl/sandbox can access them.
