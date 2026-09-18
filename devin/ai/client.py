@@ -20,6 +20,50 @@ except ImportError:
 _DEFAULT_CONFIG_PATH = str(Path(__file__).resolve().parents[2] / "config" / "settings.json")
 
 
+# ============================================================
+# CAMPIONAMENTO E RAGIONAMENTO
+# ============================================================
+# Misurato nella campagna del 17/09 sui task ostili: a temperatura 0 (e sotto
+# 0.3) un modello che ragiona entra in cerchio — 11.000 caratteri di "but what
+# if... maybe... need choose sensible" senza mai chiudere, e zero codice in
+# uscita. I valori giusti sono quelli dichiarati da chi pubblica il modello,
+# non lo zero che sembra "deterministico". Questo e' il profilo "coding
+# preciso" dei Qwen 3.8; sta qui come RETE, non come verita': se
+# settings.json lo dichiara, vince settings.json.
+_CAMPIONAMENTO_RETE = {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+}
+
+# Lo sforzo di ragionamento arriva al modello attraverso chat_template_kwargs.
+# Verificato sul rig: "xhigh" e l'assenza del parametro danno lo stesso
+# conteggio di token, "medium" uno diverso — quindi la manopola arriva davvero
+# al chat template e non viene ignorata.
+_SFORZI_AMMESSI = ("low", "medium", "high", "xhigh")
+
+# Un modello che pensa, a 8,8 token/s su un 27B, non risponde in 60 secondi.
+# I timeout storici (60/90/150 s) sono stati scritti per un modello che non
+# pensava: con il ragionamento acceso garantiscono il taglio a meta' frase.
+# Misurato: un task difficile in regime xhigh ha impiegato 1728 s.
+_TIMEOUT_PER_SFORZO = {
+    "": 180,
+    "low": 180,
+    "medium": 600,
+    "high": 1200,
+    "xhigh": 2400,
+}
+
+# Quando il server non separa il pensiero in `reasoning_content` (build vecchia,
+# o --reasoning-format diverso da deepseek), il pensiero arriva dentro
+# `content` fra questi marcatori. Non e' un formato che scegliamo noi: e' quello
+# che il modello emette, e va riconosciuto per non scriverlo nello storico.
+_APRE_PENSIERO = "<think>"
+_CHIUDE_PENSIERO = "</think>"
+
+
 class RigUnavailableError(RuntimeError):
     """The required DEVIN model slot is not safely reachable."""
 
@@ -80,6 +124,10 @@ class AIClient:
         # --- CARICA CONFIG ---
         self.config = self._load_config(config_path)
         models_cfg = self.config.get("models", {})
+
+        # Ultimo ragionamento visto da local(): chi lo vuole lo legge,
+        # ma non finisce mai nella risposta ne' nello storico della chat.
+        self.ultimo_ragionamento = ""
         local_cfg = models_cfg.get("local_models", {})
 
         # Il model-slot del rig e' raggiungibile solo su loopback: direttamente
@@ -485,13 +533,105 @@ class AIClient:
         if self._is_remote_url(url):
             self._circuit_breaker_record_failure()
 
-    def local(self, messages, mode="reasoning", timeout=None):
+    # ============================================================
+    # CAMPIONAMENTO, SFORZO, CORPO DELLA RICHIESTA
+    # ============================================================
+
+    def _campionamento(self):
+        """I parametri di campionamento dichiarati in configurazione.
+
+        Prima erano inchiodati a 0.2 in tre call site diversi (local, cloud,
+        stream) e a 0.1/0.0 nei chiamanti di complete(). Inchiodarli significa
+        che nessuno puo' correggerli senza toccare il codice, e che tre percorsi
+        della stessa applicazione possono misurare tre modelli diversi.
+        """
+        dichiarato = self.config.get("models", {}).get("sampling", {}) or {}
+        valori = dict(_CAMPIONAMENTO_RETE)
+        for chiave in _CAMPIONAMENTO_RETE:
+            if chiave in dichiarato:
+                valori[chiave] = dichiarato[chiave]
+        return valori
+
+    def _sforzo(self, sforzo=""):
+        """Normalizza lo sforzo di ragionamento richiesto.
+
+        Un valore non previsto e' un errore di chi chiama, non una cosa da
+        correggere di nascosto: senza questa alzata, uno sforzo scritto male
+        verrebbe ignorato dal server e la richiesta girerebbe in un regime
+        diverso da quello creduto, senza che niente lo dica (guardrail:
+        nessun fallback silenzioso).
+        """
+        if not sforzo:
+            sforzo = (self.config.get("models", {})
+                          .get("reasoning", {})
+                          .get("default_effort", "") or "")
+        sforzo = str(sforzo).strip().lower()
+        if sforzo and sforzo not in _SFORZI_AMMESSI:
+            raise ValueError(
+                "sforzo di ragionamento non previsto: {!r} (ammessi: {})".format(
+                    sforzo, ", ".join(_SFORZI_AMMESSI)))
+        return sforzo
+
+    def _timeout_ragionato(self, sforzo, timeout=None):
+        """Il tetto di attesa segue lo sforzo dichiarato, non un numero fisso."""
+        if timeout is not None:
+            return timeout
+        dichiarati = self.config.get("models", {}).get("reasoning", {}).get("timeouts", {}) or {}
+        if sforzo in dichiarati:
+            return int(dichiarati[sforzo])
+        return _TIMEOUT_PER_SFORZO.get(sforzo, _TIMEOUT_PER_SFORZO[""])
+
+    def _corpo(self, model, messages, sforzo="", stream=False, max_tokens=None,
+               temperature=None):
+        """Costruisce UNA volta il corpo della richiesta.
+
+        Tre copie dello stesso dizionario in tre metodi erano il motivo per cui
+        la temperatura era 0.2 in due posti e 0.1 in un terzo.
+        """
+        corpo = {"model": model, "messages": messages}
+        corpo.update(self._campionamento())
+        if temperature is not None:
+            corpo["temperature"] = temperature
+        if max_tokens is not None:
+            corpo["max_tokens"] = max_tokens
+        if stream:
+            corpo["stream"] = True
+        if sforzo:
+            corpo["chat_template_kwargs"] = {"reasoning_effort": sforzo}
+        return corpo
+
+    @staticmethod
+    def _spezza_pensiero(testo):
+        """Separa pensiero e risposta quando il server li consegna uniti.
+
+        Restituisce (pensiero, risposta). Se non c'e' nessun marcatore, e'
+        tutta risposta. Se il pensiero e' aperto e mai chiuso — cioe' la
+        risposta si e' troncata mentre il modello ancora pensava — e' tutto
+        pensiero e la risposta e' vuota: dichiararlo vuoto e' piu' onesto che
+        consegnare il ragionamento spacciandolo per risposta.
+        """
+        if _APRE_PENSIERO not in testo:
+            return "", testo
+        prima, _, resto = testo.partition(_APRE_PENSIERO)
+        if _CHIUDE_PENSIERO not in resto:
+            return resto, prima
+        pensiero, _, dopo = resto.partition(_CHIUDE_PENSIERO)
+        return pensiero, (prima + dopo)
+
+    def local(self, messages, mode="reasoning", timeout=None, sforzo=""):
         """
         Chiama endpoint locale/rig con retry e backoff esponenziale.
         Copre: Timeout, ConnectionError, HTTPError (502/503/504), ChunkedEncodingError.
+
+        Restituisce la RISPOSTA, senza il ragionamento: se il modello lo ha
+        consegnato dentro `content` fra <think> e </think>, o separato in
+        `reasoning_content`, il pensiero finisce in self.ultimo_ragionamento e
+        NON nella stringa di ritorno. Serve perche' chi chiama questo metodo
+        (planner, critic, coder) ci cerca dentro del JSON o un diff: del
+        ragionamento in testa glielo spacca.
         """
-        if timeout is None:
-            timeout = 60 if mode == "reasoning" else 90
+        sforzo = self._sforzo(sforzo)
+        timeout = self._timeout_ragionato(sforzo, timeout)
 
         last_exception = None
 
@@ -502,17 +642,18 @@ class AIClient:
                 print(f"[AIClient] POST {url} (mode={mode}, model={model}, timeout={timeout}s, attempt={attempt+1}/{self.MAX_RETRIES})")
                 r = requests.post(
                     url,
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0.2
-                    },
+                    json=self._corpo(model, messages, sforzo=sforzo),
                     timeout=timeout,
                     headers=self._auth_headers(url)
                 )
                 r.raise_for_status()
                 data = r.json()
-                content = data["choices"][0]["message"]["content"]
+                messaggio = data["choices"][0]["message"]
+                content = messaggio.get("content") or ""
+                ragionamento = messaggio.get("reasoning_content") or ""
+                if not ragionamento:
+                    ragionamento, content = self._spezza_pensiero(content)
+                self.ultimo_ragionamento = ragionamento
 
                 # Successo: registra per circuit breaker
                 if self._is_remote_url(url):
@@ -558,7 +699,7 @@ class AIClient:
             response = self.openai.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0.2
+                temperature=self._campionamento()["temperature"]
             )
             return response.choices[0].message.content
 
@@ -576,8 +717,15 @@ class AIClient:
 
         return result
 
-    def complete(self, prompt, max_tokens=80, temperature=0.1, mode="coder"):
-        """Per autocomplete e stream."""
+    def complete(self, prompt, max_tokens=80, temperature=None, mode="coder",
+                 sforzo=None):
+        """Per autocomplete e riassunti brevi.
+
+        Qui lo sforzo di ragionamento va tenuto BASSO, e non per gusto: con
+        max_tokens=80 e il ragionamento acceso, gli 80 token se li mangia
+        interi il pensiero e la funzione restituisce una stringa vuota. Chi
+        vuole un altro regime lo dichiara passando `sforzo`.
+        """
         messages = [{"role": "user", "content": prompt}]
 
         if self.use_openai and self.openai:
@@ -585,7 +733,8 @@ class AIClient:
                 response = self.openai.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=messages,
-                    temperature=temperature,
+                    temperature=(self._campionamento()["temperature"]
+                                 if temperature is None else temperature),
                     max_tokens=max_tokens
                 )
                 return response.choices[0].message.content
@@ -593,52 +742,91 @@ class AIClient:
                 print(f"Errore OpenAI: {e}")
                 return None
 
+        if sforzo is None:
+            sforzo = (self.config.get("models", {})
+                          .get("reasoning", {})
+                          .get("effort_for_completions", "low"))
+        sforzo = self._sforzo(sforzo)
         try:
             url, model = self._get_endpoints(mode)
             r = requests.post(
                 url,
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens
-                },
-                timeout=60,
+                json=self._corpo(model, messages, sforzo=sforzo,
+                                 max_tokens=max_tokens, temperature=temperature),
+                timeout=self._timeout_ragionato(sforzo),
                 headers=self._auth_headers(url)
             )
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
+            messaggio = r.json()["choices"][0]["message"]
+            testo_risposta = messaggio.get("content") or ""
+            ragionamento = messaggio.get("reasoning_content") or ""
+            if not ragionamento:
+                ragionamento, testo_risposta = self._spezza_pensiero(testo_risposta)
+            self.ultimo_ragionamento = ragionamento
+            return testo_risposta
 
         except Exception as e:
             print(f"Errore chiamata {mode}: {e}")
             self.refresh()
             return None
 
-    def stream(self, messages, mode="reasoning"):
+    @staticmethod
+    def _quanto_trattenere(coda, marcatore):
+        """Quanti caratteri finali di `coda` potrebbero essere l'INIZIO di
+        `marcatore`.
+
+        Serve perche' lo stream spezza i pezzi dove capita e "<think>" puo'
+        arrivare come "<th" + "ink>". Trattenere sempre len(marcatore)-1
+        caratteri funziona ma ritarda OGNI pezzo di testo; qui si trattiene
+        solo quando la coda finisce davvero con un possibile inizio di
+        marcatore, che nel testo normale non capita quasi mai.
         """
-        Streaming token-by-token -- con retry e backoff.
+        massimo = min(len(marcatore) - 1, len(coda))
+        for k in range(massimo, 0, -1):
+            if coda.endswith(marcatore[:k]):
+                return k
+        return 0
+
+    def stream_eventi(self, messages, mode="reasoning", sforzo=""):
+        """Streaming che DISTINGUE il ragionamento dalla risposta.
+
+        Produce dizionari {"tipo": ..., "testo": ...} con tipo fra
+        "ragionamento", "risposta" e "avviso".
+
+        Perche' separati. Il server consegna il pensiero in
+        `reasoning_content`, un campo a parte da `content`. Il codice
+        precedente leggeva solo `delta.content`: il ragionamento veniva
+        buttato via senza dirlo, e per tutti i minuti in cui il modello
+        pensava l'interfaccia non riceveva nulla — DEVIN sembrava piantato.
+        Tenerli invece UNITI sarebbe peggio: il pensiero finirebbe nello
+        storico della chat e gli verrebbe rimandato al turno dopo, cioe'
+        gli insegneremmo a ripetersi.
         """
+        sforzo = self._sforzo(sforzo)
+        timeout = self._timeout_ragionato(sforzo)
+
         for attempt in range(self.MAX_RETRIES):
             url = ""
+            # Lo stato del riconoscimento di <think> vive DENTRO il tentativo:
+            # un retry riparte da capo, e un pensiero rimasto aperto nel
+            # tentativo fallito non deve sporcare quello nuovo.
+            dentro_il_pensiero = False
+            coda = ""
+
             try:
                 url, model = self._get_endpoints(mode)
                 with requests.post(
                     url,
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0.2,
-                        "stream": True
-                    },
-                    timeout=120,
+                    json=self._corpo(model, messages, sforzo=sforzo, stream=True),
+                    timeout=timeout,
                     stream=True,
                     headers=self._auth_headers(url)
                 ) as r:
                     # 4xx = richiesta RIFIUTATA da un server RAGGIUNGIBILE: ritentare
                     # identico (o svegliare il rig) non serve. Causa tipica: contesto
-                    # troppo lungo (es. 🌐 web search acceso su un modello locale con
-                    # finestra piccola). Cattura il motivo vero e fermati con un messaggio
-                    # utile, invece di bruciare 3 retry senza dire perché.
+                    # troppo lungo (es. web search acceso con una finestra piccola).
+                    # Cattura il motivo vero e fermati con un messaggio utile, invece
+                    # di bruciare 3 retry senza dire perche'.
                     if 400 <= r.status_code < 500:
                         body = ""
                         try:
@@ -647,40 +835,89 @@ class AIClient:
                             pass
                         print(f"[AIClient] {mode} HTTP {r.status_code} — richiesta rifiutata dal server: {body}")
                         looks_like_ctx = any(k in body.lower() for k in ("context", "exceed", "n_ctx", "too long", "token"))
-                        hint = ("Contesto troppo lungo per il modello DEVIN: spegni il 🌐 web search "
+                        hint = ("Contesto troppo lungo per il modello DEVIN: spegni il web search "
                                 "o inizia una nuova conversazione." if (looks_like_ctx or r.status_code == 400)
                                 else "")
-                        yield f"\n[Richiesta rifiutata dal modello (HTTP {r.status_code}). {hint} Dettaglio server: {body[:200]}]"
+                        yield {"tipo": "avviso",
+                               "testo": f"\n[Richiesta rifiutata dal modello (HTTP {r.status_code}). "
+                                        f"{hint} Dettaglio server: {body[:200]}]"}
                         return
                     r.raise_for_status()
 
                     for line in r.iter_lines():
                         if not line:
                             continue
-
                         line = line.decode('utf-8')
                         if not line.startswith('data: '):
                             continue
-
-                        data = line[6:]
-                        if data == '[DONE]':
-                            return
-
+                        dati = line[6:]
+                        if dati == '[DONE]':
+                            # NON si torna da qui: sotto c'e' la coda trattenuta
+                            # da svuotare. Uscire di corsa perdeva le ultime
+                            # lettere di ogni risposta.
+                            break
                         try:
-                            chunk = json.loads(data)
-                            content = chunk.get('choices', [{}])[0].get('delta', {}).get('content')
-                            if content:
-                                yield content  # YIELD IMMEDIATO, nessun buffer
+                            pezzo = json.loads(dati)
                         except json.JSONDecodeError:
                             continue
 
+                        delta = (pezzo.get('choices') or [{}])[0].get('delta') or {}
+
+                        # 1) La via pulita: il server ha separato lui il pensiero.
+                        pensiero = delta.get('reasoning_content')
+                        if pensiero:
+                            yield {"tipo": "ragionamento", "testo": pensiero}
+
+                        testo = delta.get('content')
+                        if not testo:
+                            continue
+
+                        # 2) La via sporca: il pensiero arriva dentro `content`
+                        # fra <think> e </think>, e i marcatori possono essere
+                        # spezzati fra due pezzi.
+                        coda += testo
+                        while coda:
+                            if dentro_il_pensiero:
+                                fine = coda.find(_CHIUDE_PENSIERO)
+                                if fine == -1:
+                                    tieni = self._quanto_trattenere(coda, _CHIUDE_PENSIERO)
+                                    if len(coda) > tieni:
+                                        yield {"tipo": "ragionamento",
+                                               "testo": coda[:len(coda) - tieni]}
+                                        coda = coda[len(coda) - tieni:]
+                                    break
+                                if fine:
+                                    yield {"tipo": "ragionamento", "testo": coda[:fine]}
+                                coda = coda[fine + len(_CHIUDE_PENSIERO):]
+                                dentro_il_pensiero = False
+                                continue
+
+                            inizio = coda.find(_APRE_PENSIERO)
+                            if inizio == -1:
+                                tieni = self._quanto_trattenere(coda, _APRE_PENSIERO)
+                                if len(coda) > tieni:
+                                    yield {"tipo": "risposta",
+                                           "testo": coda[:len(coda) - tieni]}
+                                    coda = coda[len(coda) - tieni:]
+                                break
+                            if inizio:
+                                yield {"tipo": "risposta", "testo": coda[:inizio]}
+                            coda = coda[inizio + len(_APRE_PENSIERO):]
+                            dentro_il_pensiero = True
+
+                    # Che sia arrivato [DONE] o che lo stream sia finito da solo,
+                    # quello che e' rimasto trattenuto va consegnato.
+                    if coda:
+                        yield {"tipo": "ragionamento" if dentro_il_pensiero else "risposta",
+                               "testo": coda}
+                    return
+
             except RigUnavailableError as e:
-                yield f"\n[Slot DEVIN non disponibile: {e}]"
+                yield {"tipo": "avviso", "testo": f"\n[Slot DEVIN non disponibile: {e}]"}
                 return
             except Exception as e:
                 print(f"[AIClient] Stream error {mode} (attempt {attempt+1}/{self.MAX_RETRIES}): {e}")
 
-                # Registra fallimento per circuit breaker
                 if url:
                     self._record_rig_failure(url)
 
@@ -690,5 +927,18 @@ class AIClient:
                     time.sleep(backoff)
                     self.refresh(try_wake=(attempt == self.MAX_RETRIES - 2), wait_after_wake=True)
                 else:
-                    yield f"\n[Stream error after {self.MAX_RETRIES} attempts: {e}]"
+                    yield {"tipo": "avviso",
+                           "testo": f"\n[Stream error after {self.MAX_RETRIES} attempts: {e}]"}
                     return
+
+    def stream(self, messages, mode="reasoning", sforzo=""):
+        """Streaming di solo TESTO DELLA RISPOSTA, per chi non vuole il pensiero.
+
+        Resta la firma di prima (produce stringhe) perche' autocomplete e
+        devin/ai/stream.py la usano cosi'. In piu', adesso il ragionamento non
+        finisce dentro il testo: chi chiamava questo metodo prima riceveva
+        <think> grezzo in mezzo alla risposta.
+        """
+        for evento in self.stream_eventi(messages, mode=mode, sforzo=sforzo):
+            if evento["tipo"] in ("risposta", "avviso"):
+                yield evento["testo"]
