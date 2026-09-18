@@ -4873,3 +4873,37 @@ body.right-collapsed .mind-panel {
 .reasoning-panel > pre { white-space: pre-wrap; margin: 0.4rem 0 0 0; }
 .web-chip { cursor: pointer; }
 .web-chip[data-web-mode="forzata"] { font-weight: 600; opacity: 1; }
+
+/* Manopola del ragionamento: stesso vestito del chip del web, altro colore,
+   perche' sono due interruttori diversi e non vanno confusi a colpo d'occhio. */
+.effort-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--accent-warm, #f0a868);
+  border: 1px solid rgba(240, 168, 104, 0.35);
+  border-radius: 999px;
+  padding: 4px 9px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.effort-chip[data-effort-mode="medium"],
+.effort-chip[data-effort-mode="xhigh"] { font-weight: 600; opacity: 1; }
+.effort-chip[data-effort-mode="xhigh"] { border-color: rgba(240, 168, 104, 0.75); }
+
+/* Il pannello del ragionamento resta leggibile anche quando e' lungo: senza un
+   tetto, mezz'ora di pensiero spinge la risposta fuori dallo schermo. */
+.reasoning-panel > pre {
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.reasoning-panel[open] > summary { font-weight: 600; }
+
+/* Quanto e' costata la risposta, accanto al nome del modello. */
+.chat-misura-chip {
+  margin-left: 0.6rem;
+  font-size: 0.72rem;
+  opacity: 0.55;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

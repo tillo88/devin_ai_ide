@@ -14,6 +14,9 @@ const state = {
   // "forzata" la chiede esplicitamente. Prima il frontend mandava sempre true,
   // quindi anche "rispondi solo con OK" faceva partire una ricerca.
   webForced: false,
+  // Regime di ragionamento scelto a mano: "" lascia decidere alla
+  // configurazione del rig. Vedi REGIMI_PENSIERO piu' sotto.
+  reasoningEffort: "",
   // Ultimo snapshot buono di /api/mind/status: un poll fallito non deve
   // cancellare quello che sappiamo gia'.
   lastMind: null,
@@ -2322,20 +2325,83 @@ function splitReasoning(raw) {
 }
 
 // Risposta pulita nel corpo, reasoning in un pannello richiudibile.
+// Il pensiero puo' arrivare per DUE strade, e vanno unite invece che messe in
+// concorrenza:
+//   1. dentro il testo, fra <think> e </think>, quando il server non li separa;
+//   2. sull'evento SSE `reasoning`, che il backend emette leggendo il campo
+//      `reasoning_content` del modello.
+// Prima questa funzione, non trovando marcatori inline, faceva panel?.remove():
+// col pensiero che arriva per la seconda strada avrebbe cancellato a ogni token
+// della risposta il pannello appena riempito.
+function reasoningCompleto(node, raw) {
+  const inline = splitReasoning(raw).reasoning || "";
+  const dallEvento = node._reasoning || "";
+  if (!dallEvento) return inline;
+  return inline ? `${dallEvento}\n${inline}` : dallEvento;
+}
+
+function formatDurata(secondi) {
+  const s = Math.max(0, Math.round(secondi || 0));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+function testoRiepilogo(node) {
+  const fatto = node._reasoningDone;
+  if (fatto) {
+    const token = fatto.tokens ? ` · ${fatto.tokens.toLocaleString("it-IT")} token` : "";
+    return `Ragionamento — ${formatDurata(fatto.seconds)}${token}`;
+  }
+  const trascorsi = node._reasoningStart ? (Date.now() - node._reasoningStart) / 1000 : 0;
+  return `Ragionamento — sta pensando (${formatDurata(trascorsi)})`;
+}
+
+function fermaCronometroRagionamento(node) {
+  if (node._reasoningTimer) {
+    clearInterval(node._reasoningTimer);
+    node._reasoningTimer = null;
+  }
+}
+
+function avviaCronometroRagionamento(node) {
+  if (node._reasoningTimer) return;
+  node._reasoningStart = node._reasoningStart || Date.now();
+  node._reasoningTimer = setInterval(() => {
+    const article = node.parentElement;
+    const panel = article?.querySelector(".reasoning-panel");
+    // Il cronometro si spegne da solo se il pannello non e' piu' nel documento
+    // o se e' passato troppo tempo: un intervallo orfano resterebbe a girare
+    // per sempre se l'utente annulla la richiesta a meta'.
+    if (!panel || !panel.isConnected || (Date.now() - node._reasoningStart) > 7200000) {
+      fermaCronometroRagionamento(node);
+      return;
+    }
+    const sommario = panel.querySelector("summary");
+    if (sommario) sommario.textContent = testoRiepilogo(node);
+  }, 500);
+}
+
 function renderAssistantStream(node, raw) {
-  const { reasoning, answer } = splitReasoning(raw);
+  const answer = splitReasoning(raw).answer;
+  const reasoning = reasoningCompleto(node, raw);
   node.textContent = answer;
   const article = node.parentElement;
   if (!article) return;
   let panel = article.querySelector(".reasoning-panel");
-  if (!reasoning) { panel?.remove(); return; }
+  if (!reasoning) { fermaCronometroRagionamento(node); panel?.remove(); return; }
   if (!panel) {
     panel = document.createElement("details");
     panel.className = "reasoning-panel";
-    panel.innerHTML = '<summary>Reasoning</summary><pre></pre>';
+    panel.innerHTML = '<summary></summary><pre></pre>';
+    // Aperto mentre pensa (altrimenti la finestra resta vuota per minuti e
+    // DEVIN sembra piantato), richiuso appena comincia a rispondere.
+    panel.open = !node._reasoningDone;
     article.insertBefore(panel, node);
   }
-  panel.querySelector("pre").textContent = reasoning;
+  panel.querySelector("summary").textContent = testoRiepilogo(node);
+  const pre = panel.querySelector("pre");
+  pre.textContent = reasoning;
+  if (panel.open && !node._reasoningDone) pre.scrollTop = pre.scrollHeight;
 }
 
 function applyChatEvent(event, assistantNode) {
@@ -2355,6 +2421,34 @@ function applyChatEvent(event, assistantNode) {
     return;
   }
 
+  if (event.type === "reasoning" && payload.token) {
+    // Il pensiero NON entra in _raw: _raw e' quello che diventa la risposta
+    // mostrata e, lato server, quello che finisce nello storico della chat.
+    assistantNode._reasoning = (assistantNode._reasoning || "") + payload.token;
+    assistantNode._reasoningStart = assistantNode._reasoningStart || Date.now();
+    avviaCronometroRagionamento(assistantNode);
+    renderAssistantStream(assistantNode, assistantNode._raw || "");
+    $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+    return;
+  }
+
+  if (event.type === "reasoning_done") {
+    // Il modello ha smesso di pensare e sta per rispondere: fermo il
+    // cronometro, scrivo quanto ci ha messo e richiudo il pannello.
+    assistantNode._reasoningDone = {
+      seconds: Number(payload.seconds) || 0,
+      tokens: Number(payload.tokens) || 0,
+    };
+    fermaCronometroRagionamento(assistantNode);
+    const pannello = assistantNode.parentElement?.querySelector(".reasoning-panel");
+    if (pannello) {
+      pannello.open = false;
+      const sommario = pannello.querySelector("summary");
+      if (sommario) sommario.textContent = testoRiepilogo(assistantNode);
+    }
+    return;
+  }
+
   if (event.type === "meta") {
     // Alias nella superficie primaria; il model id completo (sul rig e' il path
     // assoluto del GGUF) resta nel tooltip, per la diagnostica.
@@ -2369,6 +2463,36 @@ function applyChatEvent(event, assistantNode) {
       }
       chip.textContent = payload.model ?? "sconosciuto";
       chip.title = payload.model_id ? `model id: ${payload.model_id}` : "";
+    }
+    return;
+  }
+
+  if (event.type === "done") {
+    // Il tempo di pensiero arriva separato dal tempo di scrittura: tenerli
+    // uniti renderebbe `tps` una cifra senza senso (trenta token dopo mezz'ora
+    // di ragionamento darebbero 0,02 token/s).
+    fermaCronometroRagionamento(assistantNode);
+    if (payload.reasoning_seconds) {
+      assistantNode._reasoningDone = {
+        seconds: Number(payload.reasoning_seconds) || 0,
+        tokens: Number(payload.reasoning_tokens) || 0,
+      };
+      const pannello = assistantNode.parentElement?.querySelector(".reasoning-panel");
+      const sommario = pannello?.querySelector("summary");
+      if (sommario) sommario.textContent = testoRiepilogo(assistantNode);
+    }
+    const topline = assistantNode.parentElement?.querySelector(".chat-message-topline");
+    if (topline && payload.tps) {
+      let misura = topline.querySelector(".chat-misura-chip");
+      if (!misura) {
+        misura = document.createElement("span");
+        misura.className = "chat-misura-chip";
+        topline.appendChild(misura);
+      }
+      misura.textContent = `${payload.tps} tok/s`;
+      misura.title = `${payload.tokens} token di risposta in ${formatDurata(
+        (payload.elapsed || 0) - (payload.reasoning_seconds || 0))}`
+        + (payload.reasoning_seconds ? `; ${formatDurata(payload.reasoning_seconds)} di ragionamento` : "");
     }
     return;
   }
@@ -2400,6 +2524,7 @@ async function sendChatMessage(message) {
       formData.append("message", message);
       formData.append("mode", $("chat-mode")?.value ?? "auto");
       formData.append("use_web_search", state.webForced ? "true" : "false");
+      formData.append("reasoning_effort", state.reasoningEffort || "");
       formData.append("project_path", state.selectedProjectPath || "");
       formData.append("chat_id", state.selectedChatId || "");
       selectedFiles.forEach((file) => formData.append("files", file));
@@ -2416,6 +2541,7 @@ async function sendChatMessage(message) {
           message,
           mode: $("chat-mode")?.value ?? "auto",
           use_web_search: Boolean(state.webForced),
+          reasoning_effort: state.reasoningEffort || null,
           project_path: state.selectedProjectPath || null,
           chat_id: state.selectedChatId || null,
         }),
@@ -2975,6 +3101,29 @@ $("web-mode-chip")?.addEventListener("click", (event) => {
   chip.title = state.webForced
     ? "Ricerca web: forzata su ogni messaggio. Clicca per tornare in automatico."
     : "Ricerca web: automatica \u2014 il backend la attiva solo su intento esplicito. Clicca per forzarla.";
+});
+
+// Regime di ragionamento. "auto" lascia decidere alla configurazione del rig;
+// gli altri due sono i regimi misurati nella campagna del 17/09: "medio"
+// risponde in 2-8 minuti sui task normali, "alto" risolve anche i due task che
+// nessun modello passava a tetto basso, ma puo' costare mezz'ora a risposta.
+const REGIMI_PENSIERO = [
+  { valore: "", etichetta: "\u{1F9E0} pensiero auto",
+    titolo: "Ragionamento: quello dichiarato dalla configurazione del rig. Clicca per sceglierlo a mano." },
+  { valore: "medium", etichetta: "\u{1F9E0} pensiero medio",
+    titolo: "Ragionamento medio: 2-8 minuti sui task normali. Clicca per alzarlo." },
+  { valore: "xhigh", etichetta: "\u{1F9E0} pensiero alto",
+    titolo: "Ragionamento alto: risolve i casi difficili, ma puo' costare mezz'ora a risposta. Clicca per tornare in automatico." },
+];
+
+$("effort-mode-chip")?.addEventListener("click", (event) => {
+  const chip = event.currentTarget;
+  const indice = REGIMI_PENSIERO.findIndex((r) => r.valore === state.reasoningEffort);
+  const prossimo = REGIMI_PENSIERO[(indice + 1) % REGIMI_PENSIERO.length];
+  state.reasoningEffort = prossimo.valore;
+  chip.dataset.effortMode = prossimo.valore || "auto";
+  chip.textContent = prossimo.etichetta;
+  chip.title = prossimo.titolo;
 });
 
 $("refresh-app")?.addEventListener("click", refresh);
