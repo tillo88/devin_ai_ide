@@ -251,6 +251,11 @@ class ChatRequest(BaseModel):
     use_web_search: bool = False
     history: Optional[list] = None  # [{"role": "user"/"assistant", "content": "..."}], gestito dal frontend
     chat_id: Optional[str] = None   # modalita' Progetti: conversazione specifica (.devin/chats/<id>.json)
+    # Regime di ragionamento per QUESTA richiesta. Vuoto = quello
+    # dichiarato in models.reasoning.default_effort. Misurato sul rig:
+    # "medium" bastano 2-8 minuti sui task normali, il regime largo
+    # risolve i task difficili ma costa mezz'ora a risposta.
+    reasoning_effort: Optional[str] = None
 
 
 @router.post("/api/chat")
@@ -471,10 +476,13 @@ async def api_chat(req: ChatRequest):
         refresh_messages=int(continuity_cfg.get("refresh_messages", 6)),
     ):
         def _summarize_continuity(prompt: str):
+            # Niente temperatura 0 qui: e' il regime in cui un modello che
+            # ragiona entra in cerchio (misurato: 11.000 caratteri senza mai
+            # chiudere). Il campionamento lo decide la configurazione, e
+            # complete() chiede da se' uno sforzo basso.
             return ai.complete(
                 prompt,
                 max_tokens=int(continuity_cfg.get("summary_max_tokens", 1200)),
-                temperature=0.0,
                 mode="reasoning",
             )
 
@@ -546,7 +554,14 @@ async def api_chat(req: ChatRequest):
 
     async def generate_sse(model_name: str, model_detail: dict):
         token_count = 0
+        # Il ragionamento si conta a parte dalla risposta. Tenerli insieme
+        # renderebbe `tps` una cifra senza significato: con un modello che
+        # pensa, trenta token dopo mezz'ora di ragionamento darebbero 0,02
+        # token/s, che non descrive ne' la velocita' del modello ne' l'attesa
+        # dell'utente. Qui si dichiarano tutti e due.
+        reasoning_count = 0
         start_time = time.time()
+        first_answer_at = None
         full_response = ""
 
         if auto_web_enabled:
@@ -560,18 +575,48 @@ async def api_chat(req: ChatRequest):
         yield f"event: meta\ndata: {json.dumps({'mode': selected_mode, 'model': model_label, 'model_id': model_name, 'detail': model_detail})}\n\n"
 
         try:
-            for chunk in ai.stream(messages, mode=selected_mode):
+            # stream_eventi() distingue i canali. La risposta continua ad
+            # arrivare come `data: {"token": ...}` — cosi' un client che non
+            # conosce il ragionamento si comporta esattamente come prima — e il
+            # pensiero viaggia su un evento suo, che il frontend puo' mostrare
+            # mentre arriva invece di lasciare la finestra vuota per minuti.
+            for evento in ai.stream_eventi(messages, mode=selected_mode,
+                                           sforzo=req.reasoning_effort or ""):
+                tipo = evento["tipo"]
+                testo = evento["testo"]
+                if tipo == "ragionamento":
+                    reasoning_count += 1
+                    yield f"event: reasoning\ndata: {json.dumps({'token': testo})}\n\n"
+                    await asyncio.sleep(0)
+                    continue
+                if tipo == "avviso":
+                    yield f"event: warning\ndata: {json.dumps({'message': testo.strip()})}\n\n"
+                    await asyncio.sleep(0)
+                    continue
+                if first_answer_at is None:
+                    first_answer_at = time.time()
+                    yield (f"event: reasoning_done\ndata: "
+                           f"{json.dumps({'tokens': reasoning_count, 'seconds': round(first_answer_at - start_time, 1)})}\n\n")
                 token_count += 1
-                full_response += chunk
-                yield f"data: {json.dumps({'token': chunk})}\n\n"
+                # Nello storico della chat va SOLO la risposta: il pensiero
+                # rimandato indietro al turno dopo insegnerebbe al modello a
+                # ripetersi.
+                full_response += testo
+                yield f"data: {json.dumps({'token': testo})}\n\n"
                 await asyncio.sleep(0)
 
             elapsed = time.time() - start_time
             # #16 audit: token_count conta i CHUNK SSE. Con llama-server è ~1 token
             # per chunk, quindi tps ≈ token/s (approssimazione onesta, non esatta:
             # un chunk può contenere più token in altri backend).
-            tps = round(token_count / elapsed, 1) if elapsed > 0 else 0
-            yield f"event: done\ndata: {json.dumps({'tokens': token_count, 'tps': tps, 'elapsed': round(elapsed, 1)})}\n\n"
+            # I secondi di ragionamento NON entrano nel calcolo: `tps` deve
+            # descrivere la velocita' con cui la risposta esce, e il tempo di
+            # pensiero si legge a parte in `reasoning_seconds`.
+            pensiero = round((first_answer_at or time.time()) - start_time, 1)
+            scrittura = max(0.0, elapsed - pensiero)
+            tps = round(token_count / scrittura, 1) if scrittura > 0 else 0
+            yield (f"event: done\ndata: "
+                   f"{json.dumps({'tokens': token_count, 'tps': tps, 'elapsed': round(elapsed, 1), 'reasoning_tokens': reasoning_count, 'reasoning_seconds': pensiero})}\n\n")
 
             if chat_persistence and full_response.strip():
                 chat_persistence.append("assistant", full_response)
@@ -704,7 +749,8 @@ async def api_chat_vision(message: str = Form(""), image: UploadFile = File(None
 async def api_chat_document(message: str = Form(""), document: UploadFile = File(None),
                              files: Optional[List[UploadFile]] = File(None),
                              mode: str = Form("auto"), project_path: str = Form(""),
-                             use_web_search: bool = Form(False), chat_id: str = Form("")):
+                             use_web_search: bool = Form(False), chat_id: str = Form(""),
+                             reasoning_effort: str = Form("")):
     """Allegati chat multi-file. Estrae testo dai formati noti e, per file
     strani o binari, inietta una scheda tecnica sicura invece di rifiutarli."""
     uploads = []
@@ -729,7 +775,8 @@ async def api_chat_document(message: str = Form(""), document: UploadFile = File
         content = ("\n\n".join(attachment_blocks) + "\n\n" + (message or "Analizza gli allegati.")).strip()
 
     req = ChatRequest(message=content, mode=mode, project_path=project_path or None,
-                       use_web_search=use_web_search, chat_id=chat_id or None)
+                       use_web_search=use_web_search, chat_id=chat_id or None,
+                       reasoning_effort=reasoning_effort or None)
     return await api_chat(req)
 
 
