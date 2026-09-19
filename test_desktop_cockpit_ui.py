@@ -34,7 +34,8 @@ def test_cockpit_exposes_lifecycle_model_context_and_goal_surfaces():
 def test_cockpit_uses_structured_goal_and_health_apis_without_nvml_ui_claims():
     script = SCRIPT.read_text(encoding="utf-8")
     assert 'fetchJson("/api/health")' in script
-    assert 'fetchJson("/api/goal")' in script
+    assert 'fetchJson(`/api/goal?${query}`)' in script
+    assert 'new URLSearchParams({ project_path: project })' in script
     assert "renderGoalPanel(goals)" in script
     assert 'postJson("/api/goal/run"' in script
     assert "stopGoal(goalRunId)" in script

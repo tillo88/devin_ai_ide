@@ -399,3 +399,19 @@ def test_goal_event_stream_termina_sull_evento_finale():
         assert event["data"]["status"] == "success"
     finally:
         goal_router._goal_runs.pop(gid, None)
+
+
+def test_goal_list_scopes_project_without_exposing_other_objectives(monkeypatch):
+    """A linked workspace resolves to its work_dir, while the slot stays global."""
+    monkeypatch.setattr(goal_router, "_goal_runs", {
+        "a": {"goal_run_id": "a", "project_path": "/work/a", "objective": "alpha", "status": "passed"},
+        "b": {"goal_run_id": "b", "project_path": "/work/b", "objective": "private beta", "status": "running"},
+    })
+    monkeypatch.setattr(goal_router, "_resolve_goal_project_path", lambda path: {"/metadata/a": "/work/a"}[path])
+    result = asyncio.run(goal_router.api_goal_list("/metadata/a"))
+    assert [g["goal_run_id"] for g in result["goal_runs"]] == ["a"]
+    assert "private beta" not in json.dumps(result)
+    assert result["any_active"] is True
+    assert "project_path" not in result["goal_runs"][0]
+    assert asyncio.run(goal_router.api_goal_list(""))["goal_runs"] == []
+    assert len(asyncio.run(goal_router.api_goal_list())["goal_runs"]) == 2

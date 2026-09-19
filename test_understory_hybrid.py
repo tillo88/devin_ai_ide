@@ -363,7 +363,8 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert '/static/js/codex_app.js' in html
     assert 'fonts.googleapis.com' not in html
     assert '/api/mind/status' in js
-    assert '/api/runs' not in js
+    assert 'Cronologia del rig' in html
+    assert 'fetchJson("/api/runs")' in js
     assert '/api/runs' in diagnostics_js
     assert '/events/stream' in js
     assert '/api/chat' in js
@@ -387,7 +388,8 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert 'manifest-diff-apply' in html
     assert '/api/terminal/output' in js
     assert 'run-log-output' in html
-    assert 'run-list' not in html
+    assert 'id="runs-workspace"' in html
+    assert 'id="run-list"' in html
     assert 'id="timeline"' in html
     assert 'function applyRunEventToActivity' in js
     assert 'showRunStatus(payload.run_id, "starting")' in js
