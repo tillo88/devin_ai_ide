@@ -4907,3 +4907,88 @@ body.right-collapsed .mind-panel {
   opacity: 0.55;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* Workspace: dedicated Goal and Runs pages, with a compact context rail. */
+:root {
+  --bg: #06111f;
+  --panel: #0b1828;
+  --panel-2: #102238;
+  --border: rgba(73, 158, 215, .22);
+  --accent: #388bff;
+  --accent-2: #24d6c4;
+}
+.workspace-mode-bar { overflow-x: auto; }
+.workspace-mode-button { flex-shrink: 0; }
+.workstream-panel[data-center-view="goal"] > .center-chat-view,
+.workstream-panel[data-center-view="runs"] > .center-chat-view { display: none !important; }
+.goal-workspace[hidden], .runs-workspace[hidden] { display: none !important; }
+.goal-workspace, .runs-workspace {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+}
+.goal-workspace > .section-title-row { margin-bottom: 20px; }
+.goal-workspace h2 { margin: 0; font-size: 22px; color: var(--text); }
+.goal-workspace .goal-launcher { padding: 18px; border: 1px solid var(--border); border-radius: 12px; }
+.goal-workspace .goal-launcher > summary { font-size: 15px; }
+.goal-workspace .goal-form { gap: 18px; padding-top: 18px; }
+.goal-workspace .goal-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.goal-workspace .goal-field > span, .goal-workspace .goal-builder-label { font-size: 12px; }
+.goal-workspace input, .goal-workspace select, .goal-workspace textarea { font-size: 14px; min-height: 38px; }
+.goal-workspace .goal-field textarea { min-height: 110px; }
+.goal-workspace .goal-preset-row button, .goal-workspace .tiny-button { font-size: 12px; min-height: 32px; }
+.goal-workspace .goal-draft-item, .goal-workspace .goal-form-feedback { font-size: 12px; }
+.goal-workspace .goal-start-button { min-height: 44px; font-size: 14px; background: #1466da; color: white; }
+.goal-workspace .goal-summary { margin-top: 22px; }
+.goal-workspace .goal-objective strong { font-size: 17px; }
+.goal-workspace .goal-check strong, .goal-workspace .goal-event strong { font-size: 13px; }
+.goal-workspace .goal-check small, .goal-workspace .goal-event small,
+.goal-workspace .goal-evidence, .goal-workspace .goal-meta,
+.goal-workspace .goal-budget > span:first-child { font-size: 12px; }
+.goal-workspace .goal-event-feed { max-height: 230px; }
+.goal-glance > strong { color: var(--accent-2); font-size: 12px; }
+.goal-glance p { color: var(--text); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.goal-glance > small { color: var(--muted); }
+.workspace-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.workspace-page-heading h1 { margin: 0; font-size: 22px; }
+.workspace-page-heading p, #runs-feedback { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.runs-search-label { display: block; margin: 22px 0 8px; color: var(--muted); font-size: 12px; }
+#runs-search { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); }
+.runs-workspace .run-card { width: 100%; display: grid; text-align: left; gap: 8px; padding: 16px; cursor: pointer; overflow-wrap: anywhere; }
+.runs-workspace .run-card strong { color: var(--text); }
+.runs-workspace .run-card small { color: var(--accent-2); }
+@media (min-width: 1101px) {
+  .workspace-grid { grid-template-columns: 240px minmax(0, 1fr) 290px; }
+}
+@media (max-width: 1100px) {
+  .workspace-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  .goal-workspace, .runs-workspace { padding: 14px; }
+  .goal-workspace .goal-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .goal-workspace .goal-criterion-entry { display: flex; flex-wrap: wrap; }
+  .goal-workspace .goal-criterion-entry > * { min-width: 0; max-width: 100%; }
+  .goal-workspace .goal-criterion-entry input { flex: 1 1 120px; }
+}
+@media (min-width: 769px) and (max-width: 1100px) {
+  .workspace-grid { grid-template-columns: 230px minmax(0, 1fr); }
+}
+/* The old command bar used a three-cell grid for five children. */
+.topbar { display: flex; height: 72px; min-height: 72px; flex-wrap: nowrap; padding: 0 14px; }
+.topbar .brand { flex: 0 0 auto; }
+.topbar-status { flex: 0 0 auto; flex-wrap: nowrap; gap: 6px; }
+.topbar-status .status-pill { display: none; }
+.topbar-telemetry { flex: 1 1 auto; }
+@media (max-width: 1100px) {
+  .topbar-command { display: none; }
+  .topbar-status .command-open-button, .topbar-status a { display: none; }
+}
+@media (max-width: 620px) {
+  .topbar { padding: 0 8px; gap: 6px; }
+  .topbar .brand { gap: 6px; }
+  .topbar .brand-mark { display: none; }
+  .topbar-telemetry .telemetry-card:last-child { display: none; }
+  .topbar-telemetry { justify-content: flex-end; }
+  .workspace-mode-context { display: none; }
+}

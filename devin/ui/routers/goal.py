@@ -602,6 +602,16 @@ async def api_goal_status(goal_run_id: str):
 
 
 @router.get("/api/goal")
-async def api_goal_list():
+async def api_goal_list(project_path: str | None = None):
+    # Omitted query preserves the existing global API; empty means general chat.
+    project = _resolve_goal_project_path(project_path) if project_path else None
     with _lock:
-        return {"goal_runs": [_goal_panel_record(record) for record in _goal_runs.values()]}
+        records = list(_goal_runs.values())
+        scoped = records if project_path is None else [
+            record for record in records
+            if project is not None and record.get("project_path") == project
+        ]
+        return {
+            "goal_runs": [_goal_panel_record(record) for record in scoped],
+            "any_active": any(record.get("status") in ACTIVE_GOAL_STATUSES for record in records),
+        }

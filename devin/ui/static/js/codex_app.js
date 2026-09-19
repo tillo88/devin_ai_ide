@@ -49,6 +49,9 @@ const state = {
   projects: [],
   runs: [],
   goals: [],
+  anyGoalActive: false,
+  goalsRequest: 0,
+  runsRequest: 0,
   goalCriteriaDraft: [],
   goalEvents: [],
   goalPoll: null,
@@ -224,7 +227,7 @@ function formatBytes(value) {
 }
 
 function setCenterView(view) {
-  const requested = ["chat", "editor", "diff", "log", "governance"].includes(view) ? view : "chat";
+  const requested = ["chat", "goal", "runs", "editor", "diff", "log", "governance"].includes(view) ? view : "chat";
   let next = requested;
   if (requested === "editor" && !state.selectedProjectPath) next = "chat";
   if (requested === "diff" && !state.reviewedManifestPayload) next = "chat";
@@ -238,6 +241,10 @@ function setCenterView(view) {
   if (diff) diff.hidden = next !== "diff";
   const log = $("run-log-workspace");
   if (log) log.hidden = next !== "log";
+  const goalPanel = $("goal-panel");
+  if (goalPanel) goalPanel.hidden = next !== "goal";
+  const runsPanel = $("runs-workspace");
+  if (runsPanel) runsPanel.hidden = next !== "runs";
   const governance = $("governance-workspace");
   if (governance) governance.hidden = next !== "governance";
   document.querySelectorAll("[data-center-view]").forEach((button) => {
@@ -245,9 +252,13 @@ function setCenterView(view) {
     button.classList.toggle("active", button.dataset.centerView === next);
     button.setAttribute("aria-pressed", button.dataset.centerView === next ? "true" : "false");
   });
+  document.querySelectorAll("[data-open-view]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.openView === next);
+    button.setAttribute("aria-pressed", String(button.dataset.openView === next));
+  });
   setText(
     "workspace-mode-context",
-    next === "editor"
+    next === "runs" ? "Tutti i progetti" : next === "editor"
       ? (state.selectedFilePath || "Nessun file selezionato")
       : next === "diff"
         ? `run ${state.reviewedChangeRunId || "?"}`
@@ -867,7 +878,7 @@ function syncGoalLaunchState() {
   }
   const start = $("goal-start-button");
   if (start) {
-    const live = currentLiveGoal();
+    const live = state.anyGoalActive || currentLiveGoal();
     start.disabled = !state.selectedProjectPath || Boolean(live);
     start.title = live
       ? "Un Goal è già in esecuzione"
@@ -876,8 +887,20 @@ function syncGoalLaunchState() {
 }
 
 async function refreshGoals() {
-  const goals = await fetchJson("/api/goal").catch(() => ({ goal_runs: [] }));
-  renderGoalPanel(goals);
+  const project = state.selectedProjectPath;
+  const request = ++state.goalsRequest;
+  try {
+    const query = new URLSearchParams({ project_path: project });
+    const goals = await fetchJson(`/api/goal?${query}`);
+    if (project !== state.selectedProjectPath || request !== state.goalsRequest) return;
+    if (goals.error) throw new Error(goals.error);
+    state.anyGoalActive = Boolean(goals.any_active);
+    renderGoalPanel(goals);
+  } catch (error) {
+    if (project !== state.selectedProjectPath || request !== state.goalsRequest) return;
+    setText("goal-glance-status", "Stato non disponibile");
+    setGoalFeedback("Impossibile aggiornare i Goal. Riprova.", "error");
+  }
 }
 
 function updateGoalPolling(isLive) {
@@ -1068,6 +1091,9 @@ function renderGoalPanel(payload) {
   const empty = $("goal-empty");
   const summary = $("goal-summary");
   if (!goal) {
+    setText("goal-glance-status", "Nessun goal");
+    setText("goal-glance-objective", state.selectedProjectPath ? "Definisci un obiettivo e i criteri di verifica." : "Seleziona un progetto per iniziare.");
+    setText("goal-glance-checks", "Nessun criterio valutato");
     if (empty) empty.hidden = false;
     if (summary) summary.hidden = true;
     setText("goal-status-badge", "idle");
@@ -1091,6 +1117,8 @@ function renderGoalPanel(payload) {
     badge.dataset.status = goal.status || "unknown";
   }
   setText("goal-objective", goal.objective || "Goal senza descrizione");
+  setText("goal-glance-status", goal.status || "unknown");
+  setText("goal-glance-objective", goal.objective || "Goal senza descrizione");
   const policy = goal.requires_checkpoint ? "supervisione" : "autonomo";
   setText("goal-meta", `${goal.role || "scaffolder"} · ${goal.mode || "maintenance"} · ${policy}`);
   const reason = $("goal-reason");
@@ -1111,6 +1139,7 @@ function renderGoalPanel(payload) {
   const latestEvaluation = goal.evaluation
     || [...attempts].reverse().find((attempt) => attempt?.evaluation)?.evaluation;
   const results = Array.isArray(latestEvaluation?.results) ? latestEvaluation.results : [];
+  setText("goal-glance-checks", `${results.filter((result) => result.passed === true).length} / ${(goal.acceptance || []).length} criteri superati`);
   const checklist = $("goal-checklist");
   if (checklist) {
     checklist.innerHTML = (goal.acceptance || []).map((criterion, index) => {
@@ -1549,6 +1578,7 @@ async function loadProjectOverview(projectPath = state.selectedProjectPath) {
 
   const params = new URLSearchParams({ project_path: projectPath, lite: "true" });
   const overview = await fetchJson(`/api/project/overview?${params.toString()}`);
+  if (projectPath !== state.selectedProjectPath) return;
   const chats = overview.chats ?? [];
   if (state.selectedChatId && !chats.some((chat) => chat.chat_id === state.selectedChatId)) {
     state.selectedChatId = null;
@@ -1572,6 +1602,7 @@ async function renderActivityRail(projectPath) {
     include_files: "false",
   }).toString()}`, {});
 
+  if (projectPath !== state.selectedProjectPath) return;
   // Cartella di lavoro
   const wd = full.work_dir || "";
   if (wd) {
@@ -1599,6 +1630,7 @@ async function renderActivityRail(projectPath) {
   if (runEl) {
     try {
       const lr = await fetchJson(`/api/project/last_run?${new URLSearchParams({ project_path: projectPath }).toString()}`, {});
+      if (projectPath !== state.selectedProjectPath) return;
       if (lr && lr.run_id) {
         const icon = runStatusIcon(lr.status);
         const resumeBtn = lr.resumable
@@ -1686,6 +1718,17 @@ async function selectProject(projectPath) {
   renderTimeline([]);
   resetRunLogWorkspace();
   state.selectedProjectPath = projectPath || "";
+  setText("activity-run", "Caricamento del progetto...");
+  setText("workdir-box", "Caricamento...");
+  if ($("workdir-files")) $("workdir-files").replaceChildren();
+  if ($("context-tags")) $("context-tags").replaceChildren();
+  renderApprovalBanner("", null);
+  state.goalsRequest += 1;
+  state.goalCriteriaDraft = [];
+  if ($("goal-objective-input")) $("goal-objective-input").value = "";
+  renderGoalCriteriaDraft();
+  renderGoalPanel({ goal_runs: [] });
+  setGoalFeedback("I criteri vengono verificati sul progetto selezionato.");
   setCenterView("chat");
   resetProjectEditor();
   resetManifestReview();
@@ -1699,6 +1742,7 @@ async function selectProject(projectPath) {
 
   try {
     await Promise.all([
+      refreshGoals(),
       loadProjectOverview(state.selectedProjectPath),
       loadTrainingOverview(),
       loadProjectTree().catch((treeError) => {
@@ -1790,33 +1834,41 @@ async function createWorkspaceProject() {
   appendChatMessage("assistant", `Progetto creato: ${result.name}. Puoi allegare file, aggiungere knowledge o chiedermi di scaffoldare il codice.`);
 }
 
-function renderRuns(runs) {
+async function loadRuns() {
+  const request = ++state.runsRequest;
+  setText("runs-feedback", "Caricamento della cronologia...");
+  try {
+    const runs = await fetchJson("/api/runs");
+    if (request !== state.runsRequest) return;
+    if (!Array.isArray(runs)) throw new Error("Risposta non valida");
+    state.runs = runs;
+    renderRuns();
+  } catch (error) {
+    if (request !== state.runsRequest) return;
+    setText("runs-feedback", "Cronologia non disponibile. Riprova con Aggiorna.");
+    if ($("run-list")) $("run-list").replaceChildren();
+  }
+}
+
+function renderRuns() {
   const list = $("run-list");
-  state.runs = runs ?? [];
   if (!list) return;
-
-  if (!runs?.length) {
-    list.innerHTML = '<div class="empty-card">Nessun run recente.</div>';
-    renderTimeline([]);
-    return;
-  }
-
-  if (!state.selectedRunId || !runs.some((run) => run.run_id === state.selectedRunId)) {
-    state.selectedRunId = runs[0].run_id;
-  }
-
-  list.innerHTML = runs
-    .slice(0, 8)
-    .map((run) => `
-      <button class="run-card ${run.run_id === state.selectedRunId ? "active" : ""}" data-run-id="${escapeHtml(run.run_id)}">
-        <strong>${escapeHtml(run.run_id)}</strong>
-        <span>${escapeHtml(run.status)} - ${escapeHtml(new Date(run.mtime).toLocaleString())}</span>
-      </button>
-    `)
-    .join("");
-
+  const query = ($("runs-search")?.value || "").trim().toLowerCase();
+  const runs = state.runs.filter((run) => `${run.run_id} ${run.status}`.toLowerCase().includes(query));
+  setText("runs-feedback", state.runs.length ? `${runs.length} di ${state.runs.length} run` : "Nessun run registrato.");
+  list.innerHTML = runs.map((run) => `
+    <button type="button" class="run-card ${run.run_id === state.selectedRunId ? "active" : ""}" data-run-id="${escapeHtml(run.run_id)}">
+      <strong>${escapeHtml(run.run_id)}</strong>
+      <span>${escapeHtml(run.status || "unknown")} &middot; ${escapeHtml(new Date(run.mtime).toLocaleString())}</span>
+      <small>Apri log ed eventi</small>
+    </button>
+  `).join("");
   list.querySelectorAll("[data-run-id]").forEach((button) => {
-    button.addEventListener("click", () => selectRun(button.dataset.runId));
+    button.addEventListener("click", async () => {
+      const selected = selectRun(button.dataset.runId);
+      setCenterView("log");
+      await selected;
+    });
   });
 }
 
@@ -1978,6 +2030,7 @@ function appendTimelineEvent(event) {
 async function loadRunEvents(runId) {
   if (!runId) return;
   const payload = await fetchJson(`/api/run/${encodeURIComponent(runId)}/events?limit=100`);
+  if (runId !== state.selectedRunId) return;
   const events = payload.events ?? [];
   state.runEvents = events;
   state.lastEventSeq = events.length ? Number(events[events.length - 1].seq ?? -1) : -1;
@@ -2022,8 +2075,10 @@ async function loadRunLog(runId = state.selectedRunId) {
   try {
     const params = new URLSearchParams({ run_id: runId, lines: "160" });
     const payload = await fetchJson(`/api/terminal/output?${params.toString()}`);
+    if (runId !== state.selectedRunId) return;
     renderRunLog(payload);
   } catch (err) {
+    if (runId !== state.selectedRunId) return;
     renderRunLog({ error: err.message });
   }
 }
@@ -2038,6 +2093,7 @@ function scheduleRunLogRefresh() {
 
 async function selectRun(runId) {
   if (!runId) return;
+  if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
   state.selectedRunId = runId;
   state.runEvents = [];
   state.runLogPayload = null;
@@ -3033,7 +3089,7 @@ async function refresh() {
   try {
     const projectQuery = state.selectedProjectPath
       ? `?project_path=${encodeURIComponent(state.selectedProjectPath)}` : "";
-    const [mind, health, workspace, knowledge, council, routing, tools, operations, goals] = await Promise.all([
+    const [mind, health, workspace, knowledge, council, routing, tools, operations] = await Promise.all([
       fetchJson("/api/mind/status").catch(() => null),
       fetchJson("/api/health").catch(() => ({})),
       fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
@@ -3042,7 +3098,7 @@ async function refresh() {
       fetchJson("/api/routing/status").catch(() => ({})),
       fetchJson("/api/tools/status").catch(() => ({})),
       fetchJson("/api/operations/active").catch(() => ({ operations: [] })),
-      fetchJson("/api/goal").catch(() => ({ goal_runs: [] })),
+
     ]);
 
     // Un singolo poll fallito non e' un fault del cockpit: le altre chiamate
@@ -3064,7 +3120,7 @@ async function refresh() {
     } else if (!state.selectedRunId) {
       setText("mind-state", state.mindFailures >= MIND_FAILURES_BEFORE_ERROR ? "error" : "aggiornamento");
     }
-    renderGoalPanel(goals);
+    await refreshGoals();
     renderGovernanceStatus(knowledge, council, routing, tools, operations);
     renderProjects(workspace);
     renderSteward();  // fail-soft, non blocca il refresh
@@ -3128,6 +3184,18 @@ $("effort-mode-chip")?.addEventListener("click", (event) => {
 
 $("refresh-app")?.addEventListener("click", refresh);
 $("routing-preview-button")?.addEventListener("click", previewCapabilityRoute);
+function openWorkspaceView(view) {
+  setCenterView(view);
+  if (view === "runs") loadRuns();
+  if (view === "goal") refreshGoals();
+}
+$("show-goal-view")?.addEventListener("click", () => openWorkspaceView("goal"));
+$("show-runs-view")?.addEventListener("click", () => openWorkspaceView("runs"));
+$("refresh-runs")?.addEventListener("click", loadRuns);
+$("runs-search")?.addEventListener("input", renderRuns);
+document.querySelectorAll("[data-open-view]").forEach((button) => {
+  button.addEventListener("click", () => openWorkspaceView(button.dataset.openView));
+});
 $("show-chat-view")?.addEventListener("click", () => setCenterView("chat"));
 $("show-editor-view")?.addEventListener("click", () => setCenterView("editor"));
 $("show-diff-view")?.addEventListener("click", () => setCenterView("diff"));
