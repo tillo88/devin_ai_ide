@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-local-workspace-changes"
+description = "Enables the apply_local_workspace_changes command without any pre-configured scope."
+commands.allow = ["apply_local_workspace_changes"]
+
+[[permission]]
+identifier = "deny-apply-local-workspace-changes"
+description = "Denies the apply_local_workspace_changes command without any pre-configured scope."
+commands.deny = ["apply_local_workspace_changes"]

@@ -105,6 +105,22 @@ function apiUrl(path) {
   return API_BASE + path;
 }
 
+function desktopBridgeAvailable() {
+  return typeof window !== "undefined"
+    && typeof window.__TAURI__?.core?.invoke === "function";
+}
+
+async function desktopInvoke(command, args = {}) {
+  if (!desktopBridgeAvailable()) {
+    throw new Error("Il bridge cartelle locali e' disponibile solo nell'app desktop DEVIN.");
+  }
+  return window.__TAURI__.core.invoke(command, args);
+}
+
+function selectedProjectRecord(projectPath = state.selectedProjectPath) {
+  return (state.projects || []).find((project) => project.path === projectPath) || null;
+}
+
 async function fetchJson(url, options = {}) {
   const headers = { Accept: "application/json", ...(options.headers ?? {}) };
   const res = await fetch(apiUrl(url), { ...options, headers });
@@ -1499,7 +1515,11 @@ function renderProjects(payload) {
         <button class="project-card ${project.path === state.selectedProjectPath ? "active" : ""}" data-project-path="${escapeHtml(project.path)}" title="${escapeHtml(project.name)}${project.path ? ` — ${escapeHtml(project.path)}` : ""}">
           <strong>${escapeHtml(project.name)}</strong>
           <span>${project.linked ? "linked · " : ""}${escapeHtml(project.chats ?? 0)} chat - ${escapeHtml(project.knowledge ?? 0)} knowledge</span>
-          ${project.work_dir ? `<span class="project-workdir" title="${escapeHtml(project.work_dir)}">📁 ${escapeHtml(project.work_dir.split(/[\\/]/).pop())}</span>` : ""}
+          ${project.local_workspace
+            ? `<span class="project-workdir" title="Snapshot locale verificato">PC · ${escapeHtml(project.local_workspace.display_name || project.name)}</span>`
+            : project.work_dir
+              ? `<span class="project-workdir" title="${escapeHtml(project.work_dir)}">📁 ${escapeHtml(project.work_dir.split(/[\\/]/).pop())}</span>`
+              : ""}
         </button>
         <button class="chat-delete-button" data-remove-project-path="${escapeHtml(project.path)}" data-remove-project-linked="${project.linked ? "1" : ""}" title="${project.linked ? "Scollega progetto (i file restano)" : "Sposta il progetto nel cestino"}">×</button>
       </div>
@@ -1660,12 +1680,31 @@ async function renderActivityRail(projectPath) {
   if (projectPath !== state.selectedProjectPath) return;
   // Cartella di lavoro
   const wd = full.work_dir || "";
-  if (wd) {
+  const localWorkspace = full.local_workspace || null;
+  if (localWorkspace) {
+    workBox.innerHTML = `<i class="folder-ico">PC</i> <span title="Mirror gestito sul rig">${escapeHtml(localWorkspace.display_name || "workspace locale")} · snapshot verificato</span>`;
+    workBox.classList.add("linked");
+    const button = $("workdir-set-button");
+    if (button) {
+      button.textContent = "Sincronizza";
+      button.title = "Invia un nuovo snapshot filtrato dalla cartella locale";
+    }
+  } else if (wd) {
     workBox.innerHTML = `<i class="folder-ico">📁</i> <span title="${escapeHtml(wd)}">${escapeHtml(wd.split(/[\\/]/).pop())}</span>`;
     workBox.classList.add("linked");
+    const button = $("workdir-set-button");
+    if (button) {
+      button.textContent = "Collega";
+      button.title = "Collega la cartella su cui DEVIN lavora";
+    }
   } else {
     workBox.textContent = "Nessuna cartella collegata: i run girano nel progetto.";
     workBox.classList.remove("linked");
+    const button = $("workdir-set-button");
+    if (button) {
+      button.textContent = "Collega";
+      button.title = "Collega la cartella su cui DEVIN lavora";
+    }
   }
   if (filesEl) renderWorkdirFileSummary();
 
@@ -1873,13 +1912,26 @@ async function createProjectChat(continueCurrent = false) {
 
 
 async function linkWorkspaceFolder() {
-  // Prima prova il picker nativo (funziona solo se il backend gira sulla
-  // stessa macchina con display, es. dev su Windows). Se non disponibile
-  // (app Tauri o backend headless sul rig), chiede il path e lo registra.
+  // Nell'app desktop il path Windows resta esclusivamente nel processo Tauri:
+  // il backend riceve uno snapshot bounded e un bridge_id opaco.
+  if (desktopBridgeAvailable()) {
+    const receipt = await desktopInvoke("select_and_sync_local_workspace", { projectPath: null });
+    if (!receipt) return;
+    await refresh();
+    await selectProject(receipt.project_path);
+    appendChatMessage(
+      "assistant",
+      `Workspace locale collegato: ${receipt.local_workspace.display_name}. ${receipt.local_workspace.files} file nel mirror verificato${receipt.local_workspace.excluded_entries ? `, ${receipt.local_workspace.excluded_entries} elementi esclusi per sicurezza` : ""}; il percorso Windows resta su questo PC.`,
+    );
+    return;
+  }
+
+  // Browser normale: resta disponibile il contratto storico per cartelle che
+  // esistono DAVVERO sulla macchina del backend.
   let result = await postJson("/api/workspace/pick_folder", {}).catch(() => ({ error: "picker non disponibile" }));
   if (result.error || !result.path) {
     const path = await promptModal(
-      "Incolla il percorso della cartella (sulla macchina del backend)",
+      "Incolla il percorso della cartella SUL BACKEND (per cartelle Windows usa l'app desktop)",
       { placeholder: "/home/tillo/progetti/mio-progetto", okLabel: "Collega" });
     if (!path) return;
     result = await postJson("/api/workspace/link_path", { path });
@@ -2206,6 +2258,14 @@ async function resumeRun(projectPath, runId) {
 }
 
 async function decideRunChanges(projectPath, runId, action) {
+  const localWorkspace = selectedProjectRecord(projectPath)?.local_workspace || null;
+  if (localWorkspace && ["apply", "rollback"].includes(action) && !desktopBridgeAvailable()) {
+    appendChatMessage(
+      "assistant",
+      "Questo progetto nasce da una cartella locale: Applica/Rollback va eseguito nell'app desktop, che verifica i digest prima di scrivere sul PC.",
+    );
+    return;
+  }
   const reviewedManifestMatches = (
     state.reviewedChangeRunId === runId
     && state.reviewedChangeProjectPath === projectPath
@@ -2233,14 +2293,41 @@ async function decideRunChanges(projectPath, runId, action) {
     const result = await postJson(`/api/run/changes/${action}`, {
       path: projectPath,
       run_id: runId,
-      commit: action === "apply",
+      // Il mirror locale non contiene .git per design: il commit resta una
+      // decisione dell'utente nel repository Windows, dopo l'apply verificato.
+      commit: action === "apply" && !localWorkspace,
       expected_entry_digest: reviewedManifestMatches ? state.reviewedManifestDigest : null,
     });
     if (result?.error) {
       appendChatMessage("assistant", `Decisione non applicata: ${result.error}`);
       return;
     }
+    let localReceipt = null;
+    let localApplyError = null;
+    if (localWorkspace && ["apply", "rollback"].includes(action)) {
+      try {
+        localReceipt = await desktopInvoke("apply_local_workspace_changes", {
+          bridgeId: localWorkspace.bridge_id,
+          projectPath,
+          runId,
+          entryDigest: result.entry_digest || (reviewedManifestMatches ? state.reviewedManifestDigest : ""),
+        });
+      } catch (error) {
+        localApplyError = error?.message || String(error);
+      }
+    }
     appendChatMessage("assistant", `Run ${runId}: ${result.status}.`);
+    if (localReceipt) {
+      appendChatMessage(
+        "assistant",
+        `PC aggiornato con controllo conflitti (${localReceipt.files} file). Copia di recupero: ${localReceipt.recovery_path}.`,
+      );
+    } else if (localApplyError) {
+      appendChatMessage(
+        "assistant",
+        `ATTENZIONE: il mirror sul rig e' ${result.status}, ma il PC non e' stato modificato: ${localApplyError}. Risolvi il conflitto locale prima di sincronizzare di nuovo.`,
+      );
+    }
     if (reviewedManifestMatches) {
       state.reviewedManifestDecision = result.status || action;
       setText("manifest-diff-status", result.status || action);
@@ -2750,9 +2837,24 @@ async function setProjectWorkDir() {
     appendChatMessage("assistant", "Seleziona prima un progetto dalla sidebar.");
     return;
   }
-  const current = (state.projects || []).find((p) => p.path === state.selectedProjectPath)?.work_dir || "";
+  const project = selectedProjectRecord();
+  const localWorkspace = project?.local_workspace || null;
+  if (desktopBridgeAvailable()) {
+    const receipt = localWorkspace
+      ? await desktopInvoke("sync_local_workspace", { bridgeId: localWorkspace.bridge_id })
+      : await desktopInvoke("select_and_sync_local_workspace", { projectPath: state.selectedProjectPath });
+    if (!receipt) return;
+    appendChatMessage(
+      "assistant",
+      `${localWorkspace ? "Snapshot locale aggiornato" : "Cartella locale collegata"}: ${receipt.local_workspace.files} file${receipt.local_workspace.excluded_entries ? `, ${receipt.local_workspace.excluded_entries} elementi esclusi per sicurezza` : ""}; percorso Windows custodito solo da Tauri.`,
+    );
+    await refresh();
+    await renderActivityRail(state.selectedProjectPath);
+    return;
+  }
+  const current = project?.work_dir || "";
   const value = window.prompt(
-    "Cartella di lavoro per questo progetto (path assoluto consentito; vuoto = scollega):", current);
+    "Cartella di lavoro SUL BACKEND (path assoluto consentito; vuoto = scollega). Per una cartella Windows usa l'app desktop:", current);
   if (value === null) return;
   const result = await postJson("/api/project/workdir", {
     project_path: state.selectedProjectPath,
@@ -2789,7 +2891,9 @@ function commandActions() {
     {
       id: "link-folder",
       title: "Collega cartella progetto",
-      description: "Autorizza una cartella esterna per chat, crawl e sandbox",
+      description: desktopBridgeAvailable()
+        ? "Scegli una cartella del PC e crea un mirror verificato sul rig"
+        : "Autorizza una cartella esistente sulla macchina del backend",
       icon: "↧",
       group: "Workspace",
       run: () => linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`)),

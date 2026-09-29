@@ -18,10 +18,23 @@ La barra usa gli stati Goal e l'ultimo run del progetto; apre Goal, Runs, il
 change manifest verificato e il log bounded. Non inventa percentuali e non
 trasforma `success` in `verified_success`.
 
-Il prossimo incremento è il redesign visivo del cockpit. Il bundle corrente
-mostra già il nuovo flusso, ma conserva palette, densità e componenti della
-vecchia interfaccia. Il mockup dell'owner resta una direzione visuale, non una
-fonte di telemetria.
+Il redesign visivo del cockpit e' in corso sul branch
+`codex/frontend-visual-redesign`. Il commit `ccd2609` introduce la gerarchia
+graphite/blu desaturato senza cambiare il contratto Goal/Run/review.
+
+Sul medesimo branch, come incremento separato, e' stato integrato il bridge per
+le cartelle Windows locali: Tauri apre il picker nativo e conserva il path solo
+nel registro locale protetto; il rig riceve uno snapshot filtrato e bounded in
+un mirror gestito e versionato. `Applica` e `Rollback` esportano esclusivamente
+il manifest approvato e scrivono sul PC solo se i fingerprint locali
+coincidono, conservando una copia di recupero. Il browser normale continua ad
+accettare soltanto path che esistono sulla macchina del backend.
+
+Playwright e Chromium sono installati fuori dal repository sotto
+`%LOCALAPPDATA%\DEVIN\test-tools\playwright`; il replay cockpit si avvia con
+`scripts/test-workspace-browser.mjs` impostando `PLAYWRIGHT_MODULE` e
+`PLAYWRIGHT_BROWSERS_PATH`. Nessuna dipendenza Playwright e' stata aggiunta al
+progetto.
 
 ## Workspace da usare
 

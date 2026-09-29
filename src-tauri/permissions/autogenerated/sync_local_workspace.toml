@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sync-local-workspace"
+description = "Enables the sync_local_workspace command without any pre-configured scope."
+commands.allow = ["sync_local_workspace"]
+
+[[permission]]
+identifier = "deny-sync-local-workspace"
+description = "Denies the sync_local_workspace command without any pre-configured scope."
+commands.deny = ["sync_local_workspace"]

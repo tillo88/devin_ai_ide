@@ -159,6 +159,7 @@ from devin.ui.routers.council import router as council_router
 from devin.ui.routers.routing_profiles import router as routing_profiles_router
 from devin.ui.routers.governance import router as governance_router
 from devin.ui.routers.workspace import router as workspace_router
+from devin.ui.routers.local_workspace import router as local_workspace_router
 from devin.ui.routers.models_desktop import (
     router as models_desktop_router,
     # Re-export shim (piano rischio 1): 6 test chiamano
@@ -237,6 +238,7 @@ app.include_router(council_router)
 app.include_router(routing_profiles_router)
 app.include_router(governance_router)
 app.include_router(workspace_router)
+app.include_router(local_workspace_router)
 app.include_router(models_desktop_router)
 app.include_router(status_router)
 app.include_router(diff_router)
@@ -722,7 +724,16 @@ def _build_project_context(message: str, persistence_key: str,
         # una knowledge irrilevante, es. un CHECKSUMS.txt caricato per prova,
         # per oscurare del tutto i file veri del progetto).
         if req_project_path:
-            files_ctx = ps.retrieve_from_files(message, top_k=3, max_chars=1500)
+            # Il progetto workspace possiede chat/knowledge; i file operativi
+            # vivono nel work_dir collegato (anche nel mirror Tauri). Usare il
+            # ProjectSpace operativo evita che la chat indicizzi soltanto la
+            # cartella metadata quasi vuota invece del codice selezionato.
+            files_ps = ps
+            work_dir = ps.get_work_dir()
+            if work_dir:
+                validated_work_dir = _validated_project_path(work_dir, allow_general=False)
+                files_ps = ProjectSpace(validated_work_dir)
+            files_ctx = files_ps.retrieve_from_files(message, top_k=3, max_chars=1500)
             if files_ctx:
                 parts.append(
                     f"CONTENUTO DAI FILE DEL PROGETTO (estratti rilevanti):\n{files_ctx}")

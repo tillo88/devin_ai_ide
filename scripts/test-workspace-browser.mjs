@@ -15,7 +15,18 @@ let delayAlpha = false;
 let alphaFinished;
 let runsUnavailable = false;
 page.on('pageerror', error => errors.push(error.message));
-await page.addInitScript(() => { window.EventSource = undefined; });
+await page.addInitScript(() => {
+  window.EventSource = undefined;
+  window.__bridgeCalls = [];
+  window.__TAURI__ = {core: {invoke: async (command, args) => {
+    window.__bridgeCalls.push({command, args});
+    const bridgeId = '12345678-1234-4234-9234-123456789abc';
+    return {
+      status: 'synced', project_path: args?.projectPath || '/projects/beta',
+      local_workspace: {schema:'devin_local_workspace_snapshot_v1',bridge_id:bridgeId,display_name:'Local fixture',snapshot_digest:'ab'.repeat(32),files:3,bytes:24,updated_at:'2026-09-29T10:00:00Z'},
+    };
+  }}};
+});
 const goal = project => ({ goal_run_id: `goal_${project}`, status: 'passed', objective: `Obiettivo ${project}`, acceptance: [{type: 'tests_pass', params: {}}], evaluation: {results: [{passed: true, detail: 'Fixture: test eseguiti'}]}, budget_steps: 12, budget_seconds: 1800, attempts: [], started_at: '2026-09-19T10:00:00Z', finished_at: '2026-09-19T10:02:00Z' });
 await page.route('**/*', async route => {
   const u = new URL(route.request().url());
@@ -36,7 +47,10 @@ await page.route('**/*', async route => {
     writes.push({path: u.pathname, data: route.request().postDataJSON()});
     data = {goal_run_id:'goal_fixture'};
   } else if (u.pathname === '/api/workspace/projects') {
-    data = {projects: [{name: 'Alpha', path: '/projects/alpha'}, {name: 'Beta', path: '/projects/beta'}]};
+    data = {projects: [
+      {name: 'Alpha', path: '/projects/alpha'},
+      {name: 'Beta', path: '/projects/beta', work_dir:'/backend/opaque-digest', local_workspace:{schema:'devin_local_workspace_snapshot_v1',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'ab'.repeat(32),files:3,bytes:24}},
+    ]};
   } else if (u.pathname === '/api/goal') {
     const project = u.searchParams.get('project_path');
     const alpha = project === '/projects/alpha';
@@ -56,7 +70,8 @@ await page.route('**/*', async route => {
   } else if (u.pathname.endsWith('/events')) {
     data = {events:[]};
   } else if (u.pathname === '/api/project/overview') {
-    data = {chats:[],pins:[],knowledge:[],work_dir:'',description:'Progetto di prova'};
+    const local = u.searchParams.get('project_path') === '/projects/beta';
+    data = {chats:[],pins:[],knowledge:[],work_dir:local?'/backend/opaque-digest':'',description:'Progetto di prova',local_workspace:local?{schema:'devin_local_workspace_snapshot_v1',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'ab'.repeat(32),files:3,bytes:24}:null};
   } else if (u.pathname === '/api/project/tree') {
     data = {files:[],entries:[]};
   } else if (/history|chats$/.test(u.pathname)) {
@@ -111,6 +126,17 @@ try {
   await page.locator('#refresh-runs').click();
   await page.waitForFunction(() => document.querySelector('#runs-feedback').textContent.includes('non disponibile'));
   assert.equal(await page.locator('#run-list button').count(),0);
+  // The remote page can invoke only the narrow Tauri bridge: JS passes an
+  // opaque id/project, never an arbitrary Windows path.
+  await page.locator('[data-project-path="/projects/beta"]').click();
+  await page.waitForFunction(() => document.querySelector('#workdir-set-button').textContent === 'Sincronizza');
+  await page.locator('#workdir-set-button').click();
+  await page.waitForFunction(() => window.__bridgeCalls.length === 1);
+  const bridgeCall = await page.evaluate(() => window.__bridgeCalls[0]);
+  assert.equal(bridgeCall.command,'sync_local_workspace');
+  assert.equal(bridgeCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
+  assert.equal(Object.hasOwn(bridgeCall.args,'path'),false);
+  assert.equal(await page.locator('#workdir-box').textContent().then(text => text.includes('/backend/')),false);
   for (const width of [1000, 390]) {
     await page.setViewportSize({width,height:900});
     await page.locator('#show-goal-view').click();
@@ -127,5 +153,5 @@ try {
     if (output) await page.screenshot({path:path.join(output,`goal-${width}.png`)});
   }
   assert.deepEqual(errors,[]);
-  console.log('PASS: Goal navigation/submission, project race, Runs search/log/error, diff guard, responsive 1440/1000/390; no live APIs');
+  console.log('PASS: Goal navigation/submission, project race, Runs search/log/error, diff guard, local bridge opacity, responsive 1440/1000/390; no live APIs');
 } finally { await browser.close(); }

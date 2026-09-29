@@ -2,9 +2,11 @@
 
 // DEVIN Desktop is a thin client for the authenticated, always-on front door
 // on the rig. The backend, workspaces and model lifecycle all remain on the
-// rig; this process only validates local connection settings and navigates the
-// native webview. No local backend or model is spawned, and closing the window
-// does not stop a remote session (the front door owns its idle policy).
+// rig. This process validates local connection settings, navigates the native
+// webview and owns the narrow local-folder bridge (picker, bounded snapshots,
+// conflict-checked apply). No local backend or model is spawned, and closing
+// the window does not stop a remote session (the front door owns its idle
+// policy).
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -15,7 +17,13 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
+use sha2::Digest;
 use tauri::Manager;
+
+mod local_workspace;
+use local_workspace::{
+    apply_local_workspace_changes, select_and_sync_local_workspace, sync_local_workspace,
+};
 
 const CONFIG_SCHEMA: &str = "devin_desktop_frontdoor_v1";
 const CONFIG_FILE: &str = "desktop.json";
@@ -381,12 +389,36 @@ fn connect_frontdoor(app: tauri::AppHandle) -> Result<(), String> {
             config.frontdoor_url.origin().ascii_serialization()
         ));
     }
+    register_remote_workspace_capability(&app, &config)?;
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Finestra DEVIN non disponibile".to_string())?;
     window
         .navigate(access_url(&config))
         .map_err(|err| format!("Navigazione verso DEVIN fallita: {err}"))
+}
+
+fn register_remote_workspace_capability(
+    app: &tauri::AppHandle,
+    config: &DesktopConfig,
+) -> Result<(), String> {
+    use tauri::ipc::CapabilityBuilder;
+
+    let origin = config.frontdoor_url.origin().ascii_serialization();
+    let identifier = format!(
+        "devin-local-workspace-{:x}",
+        sha2::Sha256::digest(origin.as_bytes())
+    );
+    app.add_capability(
+        CapabilityBuilder::new(identifier)
+            .remote(format!("{origin}/*"))
+            .local(false)
+            .window("main")
+            .permission("allow-select-and-sync-local-workspace")
+            .permission("allow-sync-local-workspace")
+            .permission("allow-apply-local-workspace-changes"),
+    )
+    .map_err(|err| format!("Capability workspace remoto non registrabile: {err}"))
 }
 
 #[tauri::command]
@@ -438,11 +470,15 @@ fn save_frontdoor_config(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             connect_frontdoor,
             desktop_config_status,
             test_frontdoor_connection,
-            save_frontdoor_config
+            save_frontdoor_config,
+            select_and_sync_local_workspace,
+            sync_local_workspace,
+            apply_local_workspace_changes
         ])
         .run(tauri::generate_context!())
         .expect("error while running DEVIN AI IDE desktop shell");

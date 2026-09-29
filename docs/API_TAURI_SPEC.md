@@ -42,6 +42,31 @@
 - `connect_frontdoor`: probes reachability, obtains the credential inside Rust
   and navigates to the token bootstrap URL.
 
+**Local workspace bridge (`v0.3`)**:
+
+- `select_and_sync_local_workspace(projectPath?)`: opens the native folder
+  picker, creates a filtered ZIP snapshot (100 MiB / 10,000 files, no links,
+  secrets, VCS or generated trees), uploads it and stores the Windows path only
+  in `%APPDATA%\DEVIN\local-workspaces.json`;
+- `sync_local_workspace(bridgeId)`: repeats the bounded snapshot using the
+  opaque registry id; JavaScript cannot supply an arbitrary local path;
+- `apply_local_workspace_changes(bridgeId, projectPath, runId, entryDigest)`:
+  downloads an approved export, verifies every local `before` fingerprint,
+  writes atomically and preserves overwritten/deleted files in the local
+  recovery directory.
+
+These three commands are exposed to the configured frontdoor origin through a
+runtime capability for that exact origin and window. They also verify the
+caller origin inside Rust. The remote page receives display metadata and the
+opaque bridge id, never the local filesystem path or frontdoor token.
+
+Backend endpoints:
+
+- `POST /api/local-workspace/snapshot`: authenticated raw ZIP upload into a
+  versioned managed mirror below `workspace/_local_mirrors`;
+- `GET /api/local-workspace/export/{run_id}`: digest-bound ZIP containing only
+  files declared by an applied or rolled-back change manifest.
+
 ## Web/Tauri Shell Routes
 
 ### GET /app
