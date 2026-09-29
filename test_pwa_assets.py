@@ -13,6 +13,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from devin.ui.routers.pages import APP_SHELL_VERSION
+
 SW_PATH = Path("devin/ui/static/sw.js")
 
 
@@ -52,6 +54,7 @@ def test_service_worker_source_shell_only_cache_and_network_only_api():
     source = SW_PATH.read_text(encoding="utf-8")
     # Cache versionata + cleanup delle vecchie cache su activate.
     assert 'CACHE_VERSION = "devin-shell-v' in source
+    assert f'CACHE_VERSION = "devin-shell-{APP_SHELL_VERSION}"' in source
     assert "caches.delete" in source
     # Precache SOLO shell: route HTML + asset SPA + manifest + icone.
     for shell_url in (
@@ -104,9 +107,9 @@ def test_app_shell_includes_pwa_meta_and_sw_registration():
     assert "apple-mobile-web-app-capable" in html
     assert "mobile-web-app-capable" in html
     assert "serviceWorker" in html
-    assert "navigator.serviceWorker.register('/sw.js?v=v16'" in html
+    assert f"navigator.serviceWorker.register('/sw.js?v={APP_SHELL_VERSION}'" in html
     assert "updateViaCache: 'none'" in html
-    assert '/static/css/codex_app.css?v=v16' in html
-    assert '/static/js/codex_app.js?v=v16' in html
+    assert f'/static/css/codex_app.css?v={APP_SHELL_VERSION}' in html
+    assert f'/static/js/codex_app.js?v={APP_SHELL_VERSION}' in html
     assert "no-store" in response.headers["Cache-Control"]
     assert response.headers["Pragma"] == "no-cache"
