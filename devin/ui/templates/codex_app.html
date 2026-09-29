@@ -129,6 +129,34 @@
         <button class="workspace-mode-button" id="show-governance-view" type="button" data-center-view="governance">Governance</button>
         <span class="workspace-mode-context" id="workspace-mode-context">General chat</span>
       </nav>
+      <section class="project-flow" id="project-flow" aria-label="Flusso operativo del progetto">
+        <div class="project-flow-heading">
+          <span>Flusso progetto</span>
+          <strong id="project-flow-next">Seleziona o crea un progetto</strong>
+        </div>
+        <div class="project-flow-track">
+          <button class="project-flow-stage" type="button" data-flow-stage="project" data-flow-view="chat">
+            <span class="project-flow-index">1</span>
+            <span class="project-flow-copy"><small>Progetto</small><strong id="flow-project-state">da scegliere</strong></span>
+          </button>
+          <button class="project-flow-stage" type="button" data-flow-stage="goal" data-flow-view="goal">
+            <span class="project-flow-index">2</span>
+            <span class="project-flow-copy"><small>Goal</small><strong id="flow-goal-state">in attesa</strong></span>
+          </button>
+          <button class="project-flow-stage" type="button" data-flow-stage="run" data-flow-view="runs">
+            <span class="project-flow-index">3</span>
+            <span class="project-flow-copy"><small>Esecuzione</small><strong id="flow-run-state">nessun run</strong></span>
+          </button>
+          <button class="project-flow-stage" type="button" data-flow-stage="review" data-flow-view="diff">
+            <span class="project-flow-index">4</span>
+            <span class="project-flow-copy"><small>Revisione</small><strong id="flow-review-state">non richiesta</strong></span>
+          </button>
+          <button class="project-flow-stage" type="button" data-flow-stage="evidence" data-flow-view="log">
+            <span class="project-flow-index">5</span>
+            <span class="project-flow-copy"><small>Evidenze</small><strong id="flow-evidence-state">non disponibili</strong></span>
+          </button>
+        </div>
+      </section>
       <div class="chat-thread center-chat-view" id="chat-thread" aria-live="polite">
         <div class="chat-hero">
           <div class="chat-hero-mark">&#129504;</div>

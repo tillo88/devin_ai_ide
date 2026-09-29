@@ -5,6 +5,7 @@ import {
   parseLogOutput,
   structuredFaults,
 } from "./run_log.js";
+import { projectFlowSnapshot } from "./project_flow.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -23,6 +24,8 @@ const state = {
   lastHealth: null,
   mindFailures: 0,
   selectedRunStatus: null,
+  lastProjectRun: null,
+  lastProjectRunLookup: "idle",
   pipelineStage: null,
   selectedProjectPath: "",
   selectedChatId: null,
@@ -268,6 +271,7 @@ function setCenterView(view) {
             ? "deny-by-default · stato reale"
           : activeProjectLabel(),
   );
+  renderProjectFlow();
 }
 
 function resetProjectEditor() {
@@ -310,6 +314,7 @@ function resetManifestReview() {
   if (rail) rail.innerHTML = "";
   const rows = $("manifest-diff-rows");
   if (rows) rows.innerHTML = '<div class="manifest-diff-empty">In attesa di un manifest verificato.</div>';
+  renderProjectFlow();
 }
 
 function resetRunLogWorkspace() {
@@ -1106,6 +1111,7 @@ function renderGoalPanel(payload) {
     ensureGoalEvents(null);
     updateGoalPolling(false);
     syncGoalLaunchState();
+    renderProjectFlow();
     return;
   }
 
@@ -1172,6 +1178,7 @@ function renderGoalPanel(payload) {
   ensureGoalEvents(goal);
   updateGoalPolling(liveGoalStatuses.has(goal.status));
   syncGoalLaunchState();
+  renderProjectFlow();
 }
 
 const governanceBudgetLabels = {
@@ -1366,10 +1373,37 @@ async function previewCapabilityRoute() {
   }
 }
 
-const terminalRunStatuses = new Set([
-  "success", "verified_success", "syntax_only", "failed", "timeout", "stopped",
-  "stalled", "awaiting_approval", "rejected", "rolled_back", "applied_uncommitted",
-]);
+function setProjectFlowStage(name, status, label, activeView) {
+  const stage = document.querySelector(`[data-flow-stage="${name}"]`);
+  if (!stage) return;
+  stage.dataset.status = status;
+  stage.classList.toggle("active", Boolean(activeView));
+  if (activeView) stage.setAttribute("aria-current", "step");
+  else stage.removeAttribute("aria-current");
+  setText(`flow-${name}-state`, label);
+}
+
+function renderProjectFlow() {
+  const goal = [...state.goals].reverse().find((candidate) => activeGoalStatuses.has(candidate.status))
+    || state.goals.at(-1);
+  const run = state.lastProjectRun;
+  const manifestStatus = state.reviewedManifestDecision
+    || run?.change_manifest_status
+    || (state.reviewedManifestPayload && state.reviewedChangeRunId === run?.run_id ? "pending" : "");
+  const snapshot = projectFlowSnapshot({
+    projectSelected: Boolean(state.selectedProjectPath),
+    projectLabel: activeProjectLabel(),
+    goalStatus: goal?.status || "",
+    run,
+    runLookup: state.lastProjectRunLookup,
+    manifestStatus,
+    centerView: state.centerView,
+  });
+  Object.entries(snapshot.stages).forEach(([name, stage]) => {
+    setProjectFlowStage(name, stage.status, stage.label, stage.active);
+  });
+  setText("project-flow-next", snapshot.nextAction);
+}
 
 function runStatusIcon(status) {
   return {
@@ -1399,6 +1433,10 @@ function showRunStatus(runId, status, { updateBadge = true, completed = false } 
   if (!runId) return;
   state.selectedRunId = runId;
   state.selectedRunStatus = status || "running";
+  if (state.selectedProjectPath) {
+    state.lastProjectRun = { ...(state.lastProjectRun || {}), run_id: runId, status: state.selectedRunStatus };
+    state.lastProjectRunLookup = "loaded";
+  }
   setText("mind-state", state.selectedRunStatus);
   setText("run-log-status", state.selectedRunStatus);
   const logBadge = $("run-log-status");
@@ -1410,6 +1448,7 @@ function showRunStatus(runId, status, { updateBadge = true, completed = false } 
       runEl.innerHTML = `<span class="run-badge">${runStatusIcon(state.selectedRunStatus)} ${escapeHtml(state.selectedRunStatus)}</span> <span class="run-id">${escapeHtml(runId)}</span>`;
     }
   }
+  renderProjectFlow();
 }
 
 function applyRunEventToActivity(event) {
@@ -1561,6 +1600,8 @@ function renderChatList(chats = []) {
 
 async function loadProjectOverview(projectPath = state.selectedProjectPath) {
   if (!projectPath) {
+    state.lastProjectRun = null;
+    state.lastProjectRunLookup = "idle";
     state.selectedChatId = null;
     renderChatList([]);
     await loadChatHistory();
@@ -1573,6 +1614,7 @@ async function loadProjectOverview(projectPath = state.selectedProjectPath) {
     if (tags) tags.innerHTML = '<span class="context-empty">Seleziona un progetto.</span>';
     setText("activity-run", "Nessun run selezionato.");
     renderApprovalBanner("", null);
+    renderProjectFlow();
     return;
   }
 
@@ -1597,10 +1639,23 @@ async function renderActivityRail(projectPath) {
   const runEl = $("activity-run");
   if (!workBox) return;
 
-  const full = await fetchJson(`/api/project/overview?${new URLSearchParams({
-    project_path: projectPath,
-    include_files: "false",
-  }).toString()}`, {});
+  state.lastProjectRunLookup = "loading";
+  renderProjectFlow();
+  let full;
+  try {
+    full = await fetchJson(`/api/project/overview?${new URLSearchParams({
+      project_path: projectPath,
+      include_files: "false",
+    }).toString()}`, {});
+  } catch (_) {
+    if (projectPath !== state.selectedProjectPath) return;
+    state.lastProjectRun = null;
+    state.lastProjectRunLookup = "error";
+    if (runEl) runEl.textContent = "Stato del progetto non disponibile.";
+    renderApprovalBanner(projectPath, null);
+    renderProjectFlow();
+    return;
+  }
 
   if (projectPath !== state.selectedProjectPath) return;
   // Cartella di lavoro
@@ -1632,6 +1687,8 @@ async function renderActivityRail(projectPath) {
       const lr = await fetchJson(`/api/project/last_run?${new URLSearchParams({ project_path: projectPath }).toString()}`, {});
       if (projectPath !== state.selectedProjectPath) return;
       if (lr && lr.run_id) {
+        state.lastProjectRun = lr;
+        state.lastProjectRunLookup = "loaded";
         const icon = runStatusIcon(lr.status);
         const resumeBtn = lr.resumable
           ? ` <button class="run-resume-btn" data-resume-run="${escapeHtml(lr.run_id)}" title="Riprendi il run interrotto da dove era arrivato">▶ Riprendi</button>`
@@ -1660,14 +1717,21 @@ async function renderActivityRail(projectPath) {
           projectPath, review.dataset.reviewChangeRun,
         ));
         renderApprovalBanner(projectPath, lr);
+        renderProjectFlow();
       } else {
+        state.lastProjectRun = null;
+        state.lastProjectRunLookup = "empty";
         runEl.textContent = "Nessun run recente in questo progetto.";
         if (!state.selectedRunId) setText("mind-state", "ready");
         renderApprovalBanner(projectPath, null);
+        renderProjectFlow();
       }
     } catch (_) {
-      runEl.textContent = "Nessun run recente in questo progetto.";
+      state.lastProjectRun = null;
+      state.lastProjectRunLookup = "error";
+      runEl.textContent = "Stato run non disponibile.";
       renderApprovalBanner(projectPath, null);
+      renderProjectFlow();
     }
   }
 }
@@ -1712,6 +1776,8 @@ async function selectProject(projectPath) {
   }
   state.selectedRunId = null;
   state.selectedRunStatus = null;
+  state.lastProjectRun = null;
+  state.lastProjectRunLookup = projectPath ? "loading" : "idle";
   state.lastEventSeq = -1;
   setPipelineStage(null);
   setText("mind-state", "ready");
@@ -3189,6 +3255,43 @@ function openWorkspaceView(view) {
   if (view === "runs") loadRuns();
   if (view === "goal") refreshGoals();
 }
+document.querySelectorAll("[data-flow-stage]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const stage = button.dataset.flowStage;
+    if (stage === "project") {
+      setCenterView("chat");
+      return;
+    }
+    if (stage === "goal") {
+      openWorkspaceView("goal");
+      return;
+    }
+    if (stage === "run") {
+      openWorkspaceView("runs");
+      return;
+    }
+    const run = state.lastProjectRun;
+    if (stage === "review") {
+      if (state.reviewedManifestPayload && state.reviewedChangeRunId === run?.run_id) {
+        setCenterView("diff");
+      } else if (state.selectedProjectPath && run?.status === "awaiting_approval") {
+        reviewRunChanges(state.selectedProjectPath, run.run_id);
+      } else {
+        openWorkspaceView("runs");
+      }
+      return;
+    }
+    if (stage === "evidence") {
+      if (!run?.run_id) {
+        openWorkspaceView("runs");
+        return;
+      }
+      selectRun(run.run_id)
+        .then(() => setCenterView("log"))
+        .catch((err) => console.error(err));
+    }
+  });
+});
 $("show-goal-view")?.addEventListener("click", () => openWorkspaceView("goal"));
 $("show-runs-view")?.addEventListener("click", () => openWorkspaceView("runs"));
 $("refresh-runs")?.addEventListener("click", loadRuns);
