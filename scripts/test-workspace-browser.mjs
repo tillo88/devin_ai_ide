@@ -66,14 +66,50 @@ await page.route('**/*', async route => {
     if (runsUnavailable) return route.fulfill({status:503, json:{error:'fixture unavailable'}});
     data = [{run_id:'run_fixture',status:'failed',mtime:'2026-09-19T10:00:00Z'}];
   } else if (u.pathname === '/api/terminal/output') {
-    data = {output:'[ERROR] Fixture failure',lines_returned:1};
+    data = {output:'[INFO] Starting bounded verification\n[WARNING] Retry budget at 50%\n[ERROR] Fixture failure\n[INFO] Evidence preserved',lines_returned:4,file_size:124};
   } else if (u.pathname.endsWith('/events')) {
-    data = {events:[]};
+    data = {events:[{seq:1,run_id:'run_fixture',type:'test_failure',level:'error',message:'La suite fixture non passa',timestamp:'2026-09-19T10:00:00Z',data:{status:'failed'}}]};
   } else if (u.pathname === '/api/project/overview') {
     const local = u.searchParams.get('project_path') === '/projects/beta';
     data = {chats:[],pins:[],knowledge:[],work_dir:local?'/backend/opaque-digest':'',description:'Progetto di prova',local_workspace:local?{schema:'devin_local_workspace_snapshot_v1',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'ab'.repeat(32),files:3,bytes:24}:null};
   } else if (u.pathname === '/api/project/tree') {
-    data = {files:[],entries:[]};
+    const local = u.searchParams.get('project_path') === '/projects/beta';
+    data = local
+      ? {scope:'work_dir',count:3,files:[
+          {name:'main.py',path:'src/main.py',is_text:true,size:108},
+          {name:'theme.css',path:'src/theme.css',is_text:true,size:240},
+          {name:'README.md',path:'README.md',is_text:true,size:96},
+        ]}
+      : {scope:'project',count:0,files:[]};
+  } else if (u.pathname === '/api/project/file') {
+    data = {language:'python',size:108,truncated:false,content:'from pathlib import Path\n\n\ndef workspace_name(root: Path) -> str:\n    return root.resolve().name\n'};
+  } else if (u.pathname === '/api/project/last_run') {
+    data = u.searchParams.get('project_path') === '/projects/beta'
+      ? {run_id:'run_review',status:'awaiting_approval',change_manifest_status:'pending'}
+      : {};
+  } else if (u.pathname === '/api/run/changes/run_review') {
+    data = {
+      schema:'change_manifest_v1',status:'pending',entry_digest:'cd'.repeat(32),truncated:false,
+      counts:{create:1,modify:1,delete:0},
+      entries:[
+        {path:'src/main.py',operation:'modify',before_size:74,after_size:108,binary:false},
+        {path:'tests/test_workspace.py',operation:'create',before_size:0,after_size:132,binary:false},
+      ],
+      unified_diff:'--- a/src/main.py\n+++ b/src/main.py\n@@ -1,3 +1,6 @@\n from pathlib import Path\n \n-def workspace_name(root):\n+def workspace_name(root: Path) -> str:\n+    """Return the canonical workspace label."""\n     return root.resolve().name\n--- /dev/null\n+++ b/tests/test_workspace.py\n@@ -0,0 +1,4 @@\n+from pathlib import Path\n+from src.main import workspace_name\n+\n+assert workspace_name(Path("demo")) == "demo"\n',
+    };
+  } else if (u.pathname === '/api/knowledge-exchange/status') {
+    data = {schema:'knowledge_exchange_v1',storage:'store revisionato separato',counts:{quarantine:2,promoted:8,rejected:1,revoked:0}};
+  } else if (u.pathname === '/api/council/status') {
+    data = {axes:['correctness','security','tests','maintainability'],covered_axes:['correctness','tests','maintainability'],missing_axes:['security']};
+  } else if (u.pathname === '/api/routing/status') {
+    data = {roles:{scaffolder:{enabled:true,capabilities:['coding','scaffold'],lifecycle_owner:'backend'},tester:{enabled:true,capabilities:['test','debug'],lifecycle_owner:'backend'},researcher:{enabled:false,future:true,capabilities:['research'],lifecycle_owner:'unassigned'}}};
+  } else if (u.pathname === '/api/tools/status') {
+    data = {policy:{default:'deny',scope:'project'},external_mcp:{status:'disabled',registered_count:0},tools:[
+      {tool_id:'project_reader',access:'read',kind:'built-in',status:'enabled',endpoints:['/api/project/tree','/api/project/file'],guards:['project scope','bounded'],budgets:{max_files:10000,max_preview_bytes:262144}},
+      {tool_id:'change_manifest',access:'review',kind:'built-in',status:'enabled',endpoints:['/api/run/changes'],guards:['digest required','manual approval'],budgets:{max_diff_chars:200000}},
+    ]};
+  } else if (u.pathname === '/api/operations/active') {
+    data = {operations:[{operation_id:'goal_fixture_operation',kind:'goal',status:'running',requested_role:'tester',dispatch:{actor:'tester',phase:'verify',attempt_index:1}}]};
   } else if (/history|chats$/.test(u.pathname)) {
     data = {messages:[],chats:[]};
   }
@@ -122,9 +158,21 @@ try {
   await page.waitForFunction(() => document.querySelector('#run-log-output').textContent.includes('Fixture failure'));
   assert.equal(await page.locator('#run-log-workspace').isVisible(),true);
   assert.equal(await page.locator('#manifest-diff-apply').isDisabled(),true);
+  if (output) await page.screenshot({path:path.join(output,'log-desktop.png')});
   await page.locator('#show-runs-view').click();
   if (output) await page.screenshot({path:path.join(output,'runs-desktop.png')});
+  await page.locator('#activity-run [data-review-change-run]').click();
+  await page.waitForFunction(() => document.querySelector('#manifest-diff-workspace').hidden === false);
+  assert.equal(await page.locator('#manifest-diff-apply').isEnabled(),true);
+  if (output) await page.screenshot({path:path.join(output,'diff-desktop.png')});
+  await page.locator('#show-governance-view').click();
+  await page.locator('#governance-agent-grid .governance-role-card').first().waitFor();
+  if (output) await page.screenshot({path:path.join(output,'governance-desktop.png')});
+  await page.locator('[data-project-file="src/main.py"]').click();
+  await page.waitForFunction(() => document.querySelector('#editor-content').textContent.includes('workspace_name'));
+  if (output) await page.screenshot({path:path.join(output,'editor-desktop.png')});
   runsUnavailable = true;
+  await page.locator('#show-runs-view').click();
   await page.locator('#refresh-runs').click();
   await page.waitForFunction(() => document.querySelector('#runs-feedback').textContent.includes('non disponibile'));
   assert.equal(await page.locator('#run-list button').count(),0);
@@ -139,6 +187,10 @@ try {
   assert.equal(bridgeCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
   assert.equal(Object.hasOwn(bridgeCall.args,'path'),false);
   assert.equal(await page.locator('#workdir-box').textContent().then(text => text.includes('/backend/')),false);
+  await page.locator('[data-project-file="src/main.py"]').click();
+  await page.waitForFunction(() => document.querySelector('#editor-content').textContent.includes('workspace_name'));
+  await page.locator('#activity-run [data-review-change-run]').click();
+  await page.waitForFunction(() => document.querySelector('#manifest-diff-workspace').hidden === false);
   for (const width of [1000, 390]) {
     await page.setViewportSize({width,height:900});
     await page.locator('#show-goal-view').click();
@@ -153,7 +205,25 @@ try {
     const box = await page.locator('#goal-start-button').boundingBox();
     assert.ok(box && box.x >= 0 && box.x+box.width <= width,`start button outside viewport at ${width}`);
     if (output) await page.screenshot({path:path.join(output,`goal-${width}.png`)});
+    for (const [buttonId, panelId, name] of [
+      ['show-editor-view','editor-workspace','editor'],
+      ['show-diff-view','manifest-diff-workspace','diff'],
+      ['show-log-view','run-log-workspace','log'],
+      ['show-governance-view','governance-workspace','governance'],
+    ]) {
+      await page.locator(`#${buttonId}`).click();
+      assert.equal(await page.locator(`#${panelId}`).isVisible(),true,`${name} hidden at ${width}`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true,`${name} overflow at ${width}`);
+      if (name === 'diff' && width === 390) {
+        assert.equal(await page.evaluate(() => {
+          const row = document.querySelector('#manifest-diff-rows .diff-row');
+          const viewport = document.querySelector('#manifest-diff-rows');
+          return Boolean(row && viewport && row.scrollWidth <= viewport.clientWidth + 1);
+        }),true,'mobile diff did not switch to the bounded stacked layout');
+      }
+      if (output) await page.screenshot({path:path.join(output,`${name}-${width}.png`)});
+    }
   }
   assert.deepEqual(errors,[]);
-  console.log('PASS: Goal navigation/submission, project race, Runs search/log/error, diff guard, local bridge opacity, responsive 1440/1000/390; no live APIs');
+  console.log('PASS: Chat/Goal/Runs/Editor/Diff/Log/Governance, submission/race/error guards, local bridge opacity, responsive 1440/1000/390; no live APIs');
 } finally { await browser.close(); }

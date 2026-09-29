@@ -5794,3 +5794,293 @@ body.codex-shell {
   .goal-workspace .goal-launcher > summary small { flex-basis: 100%; white-space: normal; }
   .goal-workspace .goal-form { gap: 17px; padding-top: 17px; }
 }
+
+/* =====================================================================
+   C6.4 - operational workspaces (2026-09-30)
+
+   Editor, verified Diff, bounded Log and Governance are work surfaces, not
+   dashboard widgets.  Give their source text and decisions the same readable
+   scale as Chat/Goal while preserving every existing state and DOM hook.
+   ===================================================================== */
+.editor-workspace,
+.manifest-diff-workspace,
+.run-log-workspace {
+  background: #0c1015;
+}
+
+.editor-header,
+.manifest-diff-header,
+.run-log-header {
+  min-height: 58px;
+  padding: 10px 16px;
+  border-bottom-color: rgba(255, 255, 255, .075);
+  background: rgba(15, 19, 24, .92);
+}
+.editor-file-heading,
+.manifest-diff-heading,
+.run-log-heading { gap: 4px; }
+.editor-file-heading strong,
+.manifest-diff-heading strong,
+.run-log-heading strong { font-size: 13.5px; font-weight: 650; }
+.editor-file-heading span,
+.manifest-diff-heading span,
+.run-log-heading span { color: #808892; font-size: 10.5px; line-height: 1.35; }
+.editor-readonly-badge,
+.manifest-status-badge {
+  padding: 5px 9px;
+  font-size: 10px;
+  letter-spacing: .035em;
+}
+.editor-notice,
+.manifest-diff-summary,
+.run-log-tail-note {
+  padding: 8px 16px;
+  border-bottom-color: rgba(255, 255, 255, .055);
+  color: #858d97;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.editor-code {
+  padding: 22px 24px 48px;
+  color: #e2e7ec;
+  background:
+    linear-gradient(90deg, rgba(143, 180, 216, .04), transparent 74px),
+    #0a0e13;
+  font-size: 13px;
+  line-height: 1.72;
+}
+
+.manifest-diff-header { gap: 10px; }
+.manifest-diff-header .run-decision-btn {
+  min-height: 35px;
+  padding: 7px 11px;
+  border-color: rgba(143, 180, 216, .62);
+  color: #b9cfe2;
+  font-size: 11px;
+  font-weight: 650;
+}
+.manifest-diff-header .run-decision-btn.reject {
+  border-color: rgba(212, 119, 114, .60);
+  color: #e29a95;
+}
+.manifest-diff-layout { grid-template-columns: 224px minmax(0, 1fr); }
+.manifest-file-rail {
+  padding: 10px;
+  border-right-color: rgba(255, 255, 255, .06);
+  background: #0e1217;
+}
+.manifest-file-button {
+  gap: 4px;
+  margin-bottom: 4px;
+  padding: 10px 11px;
+  border-radius: 9px;
+}
+.manifest-file-button span { font-size: 11px; line-height: 1.4; }
+.manifest-file-button small { color: #747c87; font-size: 9px; letter-spacing: .05em; }
+.manifest-file-button.active {
+  border-color: rgba(143, 180, 216, .26);
+  background: rgba(143, 180, 216, .09);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.side-by-side-header { min-height: 43px; padding-inline: 13px; }
+.side-by-side-header strong { font-size: 11.5px; }
+.side-by-side-header span { font-size: 10px; }
+.diff-column-headings { padding: 7px 0; font-size: 9.5px; }
+.diff-rows { background: #090d12; }
+.diff-row {
+  min-width: 900px;
+  grid-template-columns: 46px minmax(380px, 1fr) 46px minmax(380px, 1fr);
+  border-bottom-color: rgba(255, 255, 255, .025);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.diff-row > span,
+.diff-row > code { min-height: 22px; padding: 2px 9px; }
+.diff-line-number { color: #59616b; }
+.diff-row-delete > :nth-child(-n+2),
+.diff-row-change > :nth-child(-n+2) { background: rgba(212, 119, 114, .115); }
+.diff-row-add > :nth-child(n+3),
+.diff-row-change > :nth-child(n+3) { background: rgba(121, 199, 160, .105); }
+.diff-row-meta,
+.diff-row-meta > code { color: #a8bed3; background: rgba(143, 180, 216, .075); }
+.manifest-diff-empty { padding: 22px; font-size: 11.5px; }
+
+.run-log-toolbar {
+  gap: 7px;
+  padding: 9px 14px;
+  border-bottom-color: rgba(255, 255, 255, .06);
+  background: #0e1217;
+}
+.log-filter {
+  min-height: 31px;
+  padding: 6px 10px;
+  border-color: rgba(255, 255, 255, .085);
+  color: #7f8791;
+  font-size: 10.5px;
+}
+.log-filter span { font-size: 9px; }
+.log-filter:hover,
+.log-filter.active {
+  border-color: rgba(143, 180, 216, .34);
+  color: #e5e7e9;
+  background: rgba(143, 180, 216, .075);
+}
+.known-warning-toggle { color: #7f8791; font-size: 10px; }
+.structured-fault-panel {
+  max-height: 190px;
+  border-bottom-color: rgba(212, 119, 114, .12);
+  background: rgba(77, 28, 35, .10);
+}
+.structured-fault-panel > header { padding: 8px 14px; background: #100f13; }
+.structured-fault-panel > header strong { color: #e69a96; font-size: 10px; }
+.structured-fault-panel > header span { font-size: 9.5px; }
+.structured-fault {
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 14px;
+}
+.structured-fault > span { color: #df8b88; font-size: 9.5px; }
+.structured-fault strong { color: #edc2c0; font-size: 11px; }
+.structured-fault small { font-size: 9.5px; }
+#run-log-output.run-log-output { padding: 8px 0 20px; background: #090d12; }
+.run-log-line {
+  min-width: 760px;
+  grid-template-columns: 52px minmax(0, 1fr);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.run-log-line > span,
+.run-log-line > code { padding: 2px 10px; }
+.run-log-line > span { color: #525b66; }
+.run-log-line > code { color: #bac2cb; }
+.run-log-empty { padding: 18px 14px; font-size: 11px; }
+
+.governance-workspace {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(143, 180, 216, .065), transparent 34%),
+    #0c1015;
+}
+.governance-workspace-header {
+  min-height: 68px;
+  padding: 13px 18px;
+  border-bottom-color: rgba(255, 255, 255, .075);
+  background: rgba(13, 17, 22, .94);
+}
+.governance-workspace-header > div { gap: 4px; }
+.governance-workspace-header strong { font-size: 16px; font-weight: 620; }
+.governance-workspace-header span { color: #858d97; font-size: 11px; }
+.governance-policy-badge { padding: 6px 10px; font-size: 10px; }
+.governance-policy-strip {
+  border-bottom-color: rgba(255, 255, 255, .06);
+  background: rgba(255, 255, 255, .055);
+}
+.governance-policy-strip > div { gap: 4px; padding: 12px 17px; background: #0e1217; }
+.governance-policy-strip span { color: #747d88; font-size: 9px; }
+.governance-policy-strip strong { font-size: 11.5px; }
+.governance-dashboard { gap: 14px; padding: 18px; }
+.governance-surface {
+  border-color: rgba(255, 255, 255, .075);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .018);
+}
+.governance-surface.focused {
+  border-color: rgba(143, 180, 216, .48);
+  box-shadow: 0 0 0 3px rgba(143, 180, 216, .075);
+}
+.governance-surface > header {
+  padding: 13px 14px;
+  border-bottom-color: rgba(255, 255, 255, .06);
+  background: rgba(255, 255, 255, .025);
+}
+.governance-surface > header span { color: #89c8b9; font-size: 9px; }
+.governance-surface > header strong { font-size: 13.5px; }
+.governance-surface > header small { color: #7d8590; font-size: 10px; }
+.governance-role-grid { gap: 10px; padding: 12px; }
+.governance-role-card {
+  gap: 7px;
+  padding: 11px;
+  border-color: transparent;
+  background: rgba(0, 0, 0, .18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+}
+.governance-role-card strong { font-size: 12px; }
+.governance-role-card small { color: #7e8792; font-size: 9.5px; }
+.governance-state { padding: 4px 6px; font-size: 9px; }
+.governance-capabilities { gap: 5px; }
+.governance-capabilities span { padding: 3px 6px; font-size: 9px; }
+.governance-dispatch-heading { padding: 10px 13px 7px; }
+.governance-dispatch-heading strong { font-size: 10.5px; }
+.governance-dispatch-heading span { font-size: 9.5px; }
+.governance-dispatch-list { padding: 0 12px 12px; }
+.governance-dispatch-row { padding: 10px; border-color: rgba(255, 255, 255, .06); }
+.governance-dispatch-row code,
+.governance-dispatch-row small,
+.governance-dispatch-row span { font-size: 9.5px; }
+.governance-dispatch-row strong { font-size: 10.5px; }
+.governance-tool-row { gap: 7px; padding: 12px 14px; border-bottom-color: rgba(255, 255, 255, .055); }
+.governance-tool-heading strong { font-size: 11px; }
+.governance-tool-heading span,
+.governance-tool-heading small,
+.governance-tool-row > small { font-size: 9.5px; }
+.governance-tool-endpoints code { padding: 3px 5px; font-size: 8.5px; }
+.governance-count-grid,
+.governance-axis-grid { gap: 8px; padding: 12px; }
+.governance-count-grid > div,
+.governance-axis-grid > div {
+  gap: 4px;
+  padding: 10px;
+  border-color: rgba(255, 255, 255, .055);
+  background: rgba(0, 0, 0, .16);
+}
+.governance-count-grid span,
+.governance-axis-grid span { font-size: 9px; }
+.governance-count-grid strong { font-size: 17px; }
+.governance-axis-grid strong { font-size: 10.5px; }
+.governance-boundary { padding: 0 13px 13px; font-size: 10px; line-height: 1.5; }
+.governance-empty { padding: 15px; font-size: 10.5px; }
+
+@media (max-width: 900px) {
+  .manifest-diff-layout { grid-template-columns: 1fr; }
+  .manifest-file-rail { padding: 8px; }
+  .manifest-file-button { flex-basis: 200px; }
+  .governance-dashboard { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .command-center .cc-run { display: none; }
+  .workspace-mode-bar {
+    gap: 2px;
+    scrollbar-width: none;
+  }
+  .workspace-mode-bar::-webkit-scrollbar { display: none; }
+  .editor-header,
+  .manifest-diff-header,
+  .run-log-header { padding-inline: 12px; }
+  .editor-code { padding: 18px 16px 36px; font-size: 12px; }
+  .manifest-diff-header .run-decision-btn { min-height: 34px; }
+  .manifest-file-rail { max-height: 96px; }
+  .diff-column-headings { display: none; }
+  .diff-row {
+    min-width: 0;
+    grid-template-columns: 38px minmax(0, 1fr);
+    font-size: 10.5px;
+  }
+  .diff-row > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .diff-row > :nth-child(2) { grid-column: 2; grid-row: 1; }
+  .diff-row > :nth-child(3) { grid-column: 1; grid-row: 2; }
+  .diff-row > :nth-child(4) { grid-column: 2; grid-row: 2; }
+  .diff-row > code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .diff-row-context > :nth-child(n + 3),
+  .diff-row-delete > :nth-child(n + 3),
+  .diff-row-add > :nth-child(-n + 2),
+  .diff-row-meta > :not(:nth-child(2)) { display: none; }
+  .diff-row-add > :nth-child(3) { grid-column: 1; grid-row: 1; }
+  .diff-row-add > :nth-child(4) { grid-column: 2; grid-row: 1; }
+  .diff-row-meta > code { grid-column: 1 / -1; grid-row: 1; }
+  .run-log-toolbar { padding-inline: 10px; }
+  .known-warning-toggle { flex-basis: 100%; }
+  .governance-workspace-header { min-height: 62px; padding: 11px 13px; }
+  .governance-workspace-header strong { font-size: 14px; }
+  .governance-policy-strip > div { padding: 10px 12px; }
+  .governance-dashboard { padding: 10px; }
+}
