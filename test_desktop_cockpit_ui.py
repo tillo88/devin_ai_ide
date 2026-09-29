@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parent
 TEMPLATE = ROOT / "devin" / "ui" / "templates" / "codex_app.html"
 SCRIPT = ROOT / "devin" / "ui" / "static" / "js" / "codex_app.js"
 STYLE = ROOT / "devin" / "ui" / "static" / "css" / "codex_app.css"
+FLOW = ROOT / "devin" / "ui" / "static" / "js" / "project_flow.js"
 
 
 def test_cockpit_exposes_lifecycle_model_context_and_goal_surfaces():
@@ -146,3 +147,29 @@ def test_cockpit_exposes_honest_central_governance_workspace():
     assert "built-in ≠ MCP" in html
     assert '.workstream-panel[data-center-view="governance"]' in css
     assert "/api/terminal/input" not in script
+
+
+def test_cockpit_connects_project_goal_run_review_and_evidence():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    script = SCRIPT.read_text(encoding="utf-8")
+    css = STYLE.read_text(encoding="utf-8")
+    flow = FLOW.read_text(encoding="utf-8")
+    for element_id in (
+        "project-flow",
+        "project-flow-next",
+        "flow-project-state",
+        "flow-goal-state",
+        "flow-run-state",
+        "flow-review-state",
+        "flow-evidence-state",
+    ):
+        assert f'id="{element_id}"' in html
+    for stage in ("project", "goal", "run", "review", "evidence"):
+        assert f'data-flow-stage="{stage}"' in html
+    assert "function renderProjectFlow()" in script
+    assert "projectFlowSnapshot" in script
+    assert "state.lastProjectRun = lr" in script
+    assert '"needs_approval"' in flow
+    assert 'lastProjectRunLookup = "error"' in script
+    assert "reviewRunChanges(state.selectedProjectPath, run.run_id)" in script
+    assert ".project-flow-track" in css

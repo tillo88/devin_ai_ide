@@ -59,6 +59,7 @@ def test_service_worker_source_shell_only_cache_and_network_only_api():
         '"/manifest.webmanifest"',
         '"/static/css/codex_app.css"',
         '"/static/js/codex_app.js"',
+        '"/static/js/project_flow.js"',
         '"/static/js/verified_diff.js"',
         '"/static/js/run_log.js"',
         '"/static/icons/icon-192.png"',
@@ -103,9 +104,9 @@ def test_app_shell_includes_pwa_meta_and_sw_registration():
     assert "apple-mobile-web-app-capable" in html
     assert "mobile-web-app-capable" in html
     assert "serviceWorker" in html
-    assert "navigator.serviceWorker.register('/sw.js?v=v15'" in html
+    assert "navigator.serviceWorker.register('/sw.js?v=v16'" in html
     assert "updateViaCache: 'none'" in html
-    assert '/static/css/codex_app.css?v=v15' in html
-    assert '/static/js/codex_app.js?v=v15' in html
+    assert '/static/css/codex_app.css?v=v16' in html
+    assert '/static/js/codex_app.js?v=v16' in html
     assert "no-store" in response.headers["Cache-Control"]
     assert response.headers["Pragma"] == "no-cache"

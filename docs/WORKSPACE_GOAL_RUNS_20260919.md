@@ -26,6 +26,22 @@ Sono scartate anche le risposte tardive di overview, timeline e log per una
 selezione ormai cambiata. Un errore della cronologia viene mostrato come errore,
 non come assenza di run.
 
+## Flusso operativo del progetto (2026-09-29)
+
+Il cockpit collega ora le superfici esistenti in cinque fasi visibili:
+Progetto, Goal, Esecuzione, Revisione ed Evidenze. Lo stato del Goal arriva
+dall'API Goal filtrata per progetto; Esecuzione, Revisione ed Evidenze usano
+l'ultimo run restituito da `/api/project/last_run`, non la cronologia globale.
+La barra non calcola avanzamenti percentuali e non trasforma `success` in
+`verified_success`: mostra lo stato ricevuto dal backend. Un errore nel recupero
+dell'ultimo run appare come stato non disponibile, distinto dall'assenza di run.
+
+Le fasi sono anche scorciatoie operative. Goal apre il builder, Esecuzione apre
+la cronologia, Revisione carica il change manifest verificato quando il run è
+`awaiting_approval`, ed Evidenze seleziona quel run prima di aprire il log
+bounded. Se non esiste un manifest o un run adatto, la scorciatoia porta a Runs
+senza abilitare azioni non disponibili. La shell PWA è `v16`.
+
 ## Validazione ripetibile
 
 La suite Python usa un worktree inizialmente privo di configurazione locale.
