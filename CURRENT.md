@@ -1,6 +1,6 @@
 # DEVIN AI IDE — stato corrente e ripresa
 
-**Aggiornato:** 2026-09-29
+**Aggiornato:** 2026-09-30
 
 **Punto di ingresso:** questo file, poi `AGENTS.md` e
 `docs/CURRENT_ARCHITECTURE.md`.
@@ -20,7 +20,11 @@ trasforma `success` in `verified_success`.
 
 Il redesign visivo del cockpit e' in corso sul branch
 `codex/frontend-visual-redesign`. Il commit `ccd2609` introduce la gerarchia
-graphite/blu desaturato senza cambiare il contratto Goal/Run/review.
+graphite/blu desaturato senza cambiare il contratto Goal/Run/review. Il secondo
+pass C6.3 rialza la leggibilita' delle informazioni operative, alleggerisce i
+rail e rende Chat, composer, Goal e Runs superfici distinte senza cambiare DOM
+o routing. Il replay Playwright ora cattura anche la vista Chat e verifica i
+breakpoint 1440/1000/390 insieme al bridge locale.
 
 Sul medesimo branch, come incremento separato, e' stato integrato il bridge per
 le cartelle Windows locali: Tauri apre il picker nativo e conserva il path solo

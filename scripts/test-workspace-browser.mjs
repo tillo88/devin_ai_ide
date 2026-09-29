@@ -82,10 +82,12 @@ await page.route('**/*', async route => {
 try {
   await page.goto('http://workspace.test/app');
   await page.locator('[data-project-path="/projects/alpha"]').waitFor();
-  await page.locator('#show-goal-view').click();
   assert.equal(await page.locator('#goal-start-button').isDisabled(), true);
   await page.locator('[data-project-path="/projects/alpha"]').click();
+  await page.waitForFunction(() => document.querySelector('#active-scope-label').textContent === 'alpha');
+  if (output) { await fs.mkdir(output,{recursive:true}); await page.screenshot({path:path.join(output,'chat-desktop.png')}); }
   await page.locator('#show-goal-view').click();
+  assert.equal(await page.locator('#goal-start-button').isEnabled(), true);
   await page.waitForFunction(() => document.querySelector('#goal-objective').textContent === 'Obiettivo alpha');
   assert.equal(await page.locator('#chat-thread').isVisible(), false);
   assert.equal(await page.locator('#goal-panel').isVisible(), true);

@@ -5543,3 +5543,254 @@ input[type="search"]:focus,
   .chat-composer { margin: 0 8px 8px; }
   .project-flow { padding-inline: 9px; }
 }
+
+/* =====================================================================
+   C6.3 - legibility and surface refinement (2026-09-30)
+
+   Keep the compact cockpit, but stop treating secondary information as
+   telemetry microcopy.  Borders now describe regions; spacing, contrast and
+   type describe the hierarchy inside them.
+   ===================================================================== */
+body.codex-shell {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.brand-title { font-size: 13px; letter-spacing: .115em; }
+.brand-subtitle { color: #818892; font-size: 10.5px; }
+.topbar-chip span,
+.telemetry-label { font-size: 9px; letter-spacing: .075em; }
+.topbar-chip strong,
+.telemetry-card strong { font-size: 11px; }
+.telemetry-card small { font-size: 9px; }
+
+@media (min-width: 1101px) {
+  .workspace-grid { grid-template-columns: 252px minmax(560px, 1fr) 310px; }
+}
+
+.panel-header {
+  height: 46px;
+  padding-inline: 14px;
+  color: #9aa1aa;
+  font-size: 11px;
+  letter-spacing: .06em;
+}
+
+.workspace-primary-nav { padding: 10px 9px; }
+.workspace-nav-item {
+  min-height: 37px;
+  grid-template-columns: 21px minmax(0, 1fr) auto;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+.workspace-nav-item small { font-size: 9.5px; }
+
+.panel-section { padding: 14px; }
+.panel-section h2,
+.section-title-row h2,
+.mind-panel .panel-section h2,
+.workspace-panel .panel-section h2 {
+  color: #93a7b9;
+  font-size: 10px;
+  letter-spacing: .105em;
+}
+.section-title-row { margin-bottom: 10px; }
+.tiny-button { min-height: 27px; padding-inline: 8px; font-size: 10px; }
+
+.project-list,
+.chat-list { gap: 5px; }
+.project-card { padding: 11px 12px; }
+.project-card strong { font-size: 12px; }
+.project-card span { font-size: 10px; line-height: 1.4; }
+.project-tree-status,
+.project-file-tree,
+.chat-list { font-size: 11px; }
+
+.command-center { min-height: 48px; padding-inline: 15px; }
+.command-center .cc-state { font-size: 11px; }
+.command-center .pipe-step { min-height: 25px; padding-inline: 10px; font-size: 10px; }
+.command-center .cc-run { font-size: 10px; }
+
+.workspace-mode-bar { min-height: 45px; padding-inline: 12px; }
+.workspace-mode-button { min-height: 39px; padding-inline: 11px; font-size: 11.5px; }
+.workspace-mode-context { font-size: 10px; }
+
+.project-flow { padding: 11px 15px 13px; }
+.project-flow-heading { margin-bottom: 9px; font-size: 9.5px; }
+.project-flow-heading strong { font-size: 10.5px; }
+.project-flow-stage { min-height: 46px; padding: 8px 9px; }
+.project-flow-copy small { font-size: 8.5px; letter-spacing: .075em; }
+.project-flow-copy strong { font-size: 10.5px; line-height: 1.25; }
+
+.chat-thread { padding: 24px 30px; }
+.chat-hero { gap: 9px; padding-top: 52px; }
+.chat-hero-sub { color: #9da3ab; font-size: 15px; }
+
+.chat-composer {
+  gap: 11px;
+  margin: 0 20px 18px;
+  padding: 11px;
+  border-color: rgba(143, 180, 216, .14);
+}
+.chat-composer textarea {
+  min-height: 68px;
+  padding: 13px 14px;
+  border-color: transparent;
+  background: #0e1217;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.tool-btn { min-height: 34px; padding: 7px 10px; border-radius: 9px; font-size: 12px; }
+.tool-ico { font-size: 14px; }
+.composer-submit { gap: 6px; }
+.composer-submit .mini-label { font-size: 10px; }
+.web-chip,
+.effort-chip { min-height: 30px; padding: 5px 9px; font-size: 11px; }
+.composer-submit select { min-height: 32px; padding: 6px 8px; font-size: 11px; }
+#chat-send { min-height: 34px; padding-inline: 15px; font-size: 12px; font-weight: 650; }
+
+.mind-panel .panel-section { gap: 9px; }
+.mind-panel .panel-section + .panel-section,
+.mind-panel details.panel-section + .panel-section,
+.mind-panel section.panel-section + details.panel-section {
+  border-top: 0;
+}
+.goal-glance > strong { font-size: 13px; }
+.goal-glance p { margin-block: 1px; font-size: 13px; line-height: 1.55; }
+.goal-glance > small,
+.workdir-box,
+.context-empty { font-size: 11px; line-height: 1.45; }
+.workdir-box {
+  white-space: normal;
+  border-color: transparent;
+  background: rgba(255, 255, 255, .028);
+}
+.activity-timeline .timeline-item {
+  padding: 9px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, .026);
+}
+.activity-timeline .timeline-kind { font-size: 9.5px; }
+.activity-timeline .timeline-item h3 { font-size: 11.5px; }
+.activity-timeline .timeline-item p,
+.activity-timeline .timeline-time { font-size: 10px; }
+.context-tag { padding: 5px 9px; font-size: 10.5px; }
+.governance-card { border-color: transparent; background: rgba(255, 255, 255, .025); }
+.governance-card strong { font-size: 11.5px; }
+.governance-card span,
+.governance-card small,
+.routing-preview-result { font-size: 10.5px; }
+.rail-footer { padding-top: 11px; }
+
+.goal-workspace,
+.runs-workspace {
+  width: min(100%, 980px);
+  margin-inline: auto;
+  padding: 32px clamp(24px, 4vw, 46px) 42px;
+}
+.goal-workspace > .section-title-row { margin-bottom: 22px; }
+.goal-workspace h2,
+.workspace-page-heading h1 {
+  font-size: clamp(23px, 2.4vw, 29px);
+  font-weight: 580;
+  letter-spacing: -.025em;
+}
+.goal-workspace .goal-launcher {
+  padding: 20px;
+  border-color: transparent;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .028);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+}
+.goal-workspace .goal-launcher > summary { padding: 0; font-size: 16px; }
+.goal-workspace .goal-launcher > summary small { font-size: 11px; }
+.goal-workspace .goal-form {
+  gap: 20px;
+  padding: 21px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, .06);
+  margin-top: 17px;
+}
+.goal-workspace .goal-form-grid { gap: 18px; }
+.goal-workspace .goal-field { gap: 7px; }
+.goal-workspace .goal-field > span,
+.goal-workspace .goal-builder-label {
+  color: #9aa2ac;
+  font-size: 11px;
+  letter-spacing: .065em;
+}
+.goal-workspace input,
+.goal-workspace select,
+.goal-workspace textarea {
+  border-color: rgba(255, 255, 255, .09);
+  border-radius: 9px;
+  background: rgba(8, 11, 15, .60);
+}
+.goal-workspace .goal-preset-row { gap: 7px; }
+.goal-workspace .goal-preset-row button {
+  border-color: rgba(143, 180, 216, .16);
+  color: #9ca9b5;
+  background: rgba(143, 180, 216, .055);
+}
+.goal-workspace .goal-start-button { border-radius: 10px; font-weight: 700; }
+.goal-workspace .goal-summary { padding-top: 4px; }
+
+.runs-workspace .workspace-page-heading { align-items: flex-start; }
+.runs-search-label { margin-top: 26px; }
+#runs-search { min-height: 42px; padding-inline: 14px; }
+.runs-workspace .run-card {
+  border-color: transparent;
+  background: rgba(255, 255, 255, .027);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+}
+
+@media (max-width: 620px) {
+  .topbar { padding-inline: 9px; }
+  .topbar .panel-toggle { min-width: 36px; min-height: 36px; padding: 6px; }
+  .brand-title { font-size: 12px; }
+  .brand-subtitle { display: none; }
+  .telemetry-card { width: 88px; padding-inline: 9px; }
+  .telemetry-label { font-size: 8px; }
+  .telemetry-card strong { font-size: 10px; }
+
+  .command-center { min-height: 44px; padding-inline: 10px; }
+  .command-center .cc-pipeline { display: none; }
+  .workspace-mode-bar { min-height: 43px; padding-inline: 8px; }
+  .workspace-mode-button { min-height: 37px; padding-inline: 10px; font-size: 11px; }
+
+  .project-flow {
+    padding: 10px 10px 12px;
+    overflow: hidden;
+  }
+  .project-flow-track {
+    grid-template-columns: repeat(5, 142px);
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .project-flow-track::-webkit-scrollbar { display: none; }
+  .project-flow-stage { scroll-snap-align: start; }
+
+  .chat-thread { padding: 18px; }
+  .chat-hero { padding: 34px 6px; }
+  .chat-hero h1 { font-size: 28px; }
+  .chat-hero-sub { font-size: 14px; }
+  .chat-composer { margin: 0 7px 7px; padding: 9px; }
+  .chat-composer textarea { min-height: 62px; padding: 11px 12px; }
+  .composer-bar { align-items: flex-start; }
+  .composer-submit { width: 100%; justify-content: flex-start; }
+  #chat-send { margin-left: auto; }
+
+  .goal-workspace,
+  .runs-workspace { width: 100%; padding: 20px 13px 32px; }
+  .goal-workspace > .section-title-row { margin-bottom: 16px; }
+  .goal-workspace h2,
+  .workspace-page-heading h1 { font-size: 23px; }
+  .goal-workspace .goal-launcher { padding: 16px; }
+  .goal-workspace .goal-launcher > summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    font-size: 15px;
+  }
+  .goal-workspace .goal-launcher > summary small { flex-basis: 100%; white-space: normal; }
+  .goal-workspace .goal-form { gap: 17px; padding-top: 17px; }
+}
