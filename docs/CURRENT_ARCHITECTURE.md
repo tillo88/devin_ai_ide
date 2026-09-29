@@ -1,8 +1,22 @@
 # DEVIN — architettura corrente e confini operativi
 
-**Aggiornato:** 2026-08-22
+**Aggiornato:** 2026-09-29
 **Stato:** fonte canonica per il collegamento Desktop ↔ rig. I continuity log
 datati restano prove storiche, non configurazione corrente.
+
+## 0. Topologia di sviluppo corrente
+
+Il repository di lavoro primario è `F:\devin_ai_ide` sul PC Windows. Il
+frontend, il bundle Tauri e le verifiche visuali partono da quel checkout. La
+copia `/home/tillo/devin_ai_ide` serve per test Linux e diagnostica;
+`/opt/devin-ai-ide-frontend` è l'unica copia eseguita dal backend di produzione.
+
+Windows espone via SSHFS la home del rig come `Z:\`, `/mnt/ai-rig-shared` come
+posizione di rete `ai-rig-shared` e la home del Raspberry come `R:\`. Queste
+superfici danno visibilità ai file ma non cambiano ownership: il codice si
+modifica in `F:`, i trasferimenti di sorgente passano da GitHub e le operazioni
+Linux/systemd avvengono in una sessione SSH sul relativo host. Dettagli e
+handoff sono in `../CURRENT.md` e `LOCAL_WINDOWS_WORKSPACE_20260929.md`.
 
 ## 1. Un solo backend logico, due superfici
 
@@ -142,6 +156,8 @@ decisione esplicita distinta dalla condivisione di memoria.
 
 - GitHub e i due repository sono la fonte del codice; source deploy e mutazione
   dei servizi restano checkpoint separati.
+- il checkout locale Windows produce branch e PR; SSHFS non è un canale di
+  deploy e non autorizza modifiche dirette a checkout o runtime remoti;
 - Il model-slot broker è l'unico proprietario delle transizioni GPU.
 - Il gate source-deploy `DISABLED_NEUTRAL` resta intenzionalmente rigido. Se
   Clippy è residente, l'orchestrazione deve neutralizzarlo tramite il broker,

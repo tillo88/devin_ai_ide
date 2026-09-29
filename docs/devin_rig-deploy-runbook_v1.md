@@ -1,5 +1,12 @@
 # DEVIN — Runbook deploy sul rig + architettura backend (v1)
 
+> **STORICO — SUPERATO.** Questo file conserva il flusso precedente e contiene
+> riferimenti non più validi a WSL, `/home/tillo/devin_ai_ide` come runtime e
+> backend always-on su `:5000`. Per operare oggi leggere `../CURRENT.md`,
+> `AGENTS.md`, `docs/CURRENT_ARCHITECTURE.md` e
+> `docs/LOCAL_WINDOWS_WORKSPACE_20260929.md`. Non eseguire i comandi sottostanti
+> come runbook corrente.
+
 Istruzioni operative da NON dimenticare. Ricostruite dal repo (`scripts/rig/
 install_devin_backend.sh`, `scripts/deploy-devin-webapp.sh`, `src-tauri/src/
 main.rs`). Se un dettaglio marcato "DA CONFERMARE" e' sbagliato, correggilo qui.

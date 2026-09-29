@@ -1,6 +1,6 @@
 # DEVIN Desktop — checkpoint di validazione operativa
 
-Aggiornato: 2026-08-22
+Aggiornato: 2026-09-29
 
 Questo e' il percorso pratico corrente per collaudare la thin client Windows
 contro il rig. Sostituisce il vecchio flusso WSL/backend locale: l'app Windows
@@ -34,6 +34,13 @@ hardware interessato. Non avviare una nuova istanza server per ogni controllo.
 Il probe **Test senza attivare** della schermata nativa e' soltanto TCP: non
 invia credenziali e non deve cambiare il ruolo residente. La connessione normale
 e' invece un'azione intenzionale che puo' richiedere il model-slot DEVIN.
+
+La release installata e il launcher di sviluppo sono due verifiche diverse.
+Durante il redesign frontend usare
+`%LOCALAPPDATA%\DEVIN\DEVIN Desktop.cmd`, generato dal checkout
+`F:\devin_ai_ide`; l'EXE installato incorpora il bundle della sua build e non si
+aggiorna quando cambia `desktop-host`. Usare l'EXE solo per smoke di release
+dopo una nuova build/reinstallazione.
 
 ## 2. Apertura dell'app e fase di preparazione
 
