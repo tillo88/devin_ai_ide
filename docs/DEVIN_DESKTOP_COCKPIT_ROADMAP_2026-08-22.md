@@ -232,7 +232,8 @@ tempi e finding senza ripetere probe modello/hardware:
 
 ## C6 — interaction polish dopo il primo collaudo live
 
-Stato: **next**, derivato dal collaudo funzionale della release `0.2.0`.
+Stato: **in corso**. I contratti di interazione sono entrati in `main`; il
+prossimo incremento è il redesign visuale dal progetto locale Windows.
 
 - sostituire “web sempre attiva” con `web auto`: il backend attiva la ricerca
   solo per intento esplicito e sceglie la catena SearXNG/TinyFish secondo il
@@ -244,6 +245,25 @@ Stato: **next**, derivato dal collaudo funzionale della release `0.2.0`.
 - separare `<think>` dalla risposta finale in un pannello Reasoning richiudibile;
 - esporre tempo al primo token e tempo totale dello stream con telemetria
   derivata dagli eventi reali, senza percentuali inventate.
+
+### C6.1 — interazione e flusso progetto consegnati
+
+- PR `#29` e `#30`: risposta finale separata dal reasoning, pannello pensiero e
+  relativa manopola raggiungibile;
+- PR `#32`: Goal e Runs diventano viste centrali con isolamento per progetto;
+- PR `#33` (`ccd7e59`): barra Progetto, Goal, Esecuzione, Revisione ed Evidenze,
+  collegata a stati reali, manifest verificato e log bounded;
+- `web auto`, snapshot health fail-soft, identità modello e tempi stream sono
+  già presenti nella shell corrente;
+- cache PWA corrente: `v16`.
+
+### C6.2 — prossimo incremento visuale
+
+La verifica su Windows mostra il nuovo flusso dentro la texture storica. Il
+prossimo lavoro deve aggiornare palette, gerarchia, spaziatura, densità e
+componenti del cockpit senza riscrivere i contratti già consegnati. Il lavoro
+parte da `F:\devin_ai_ide` e viene provato con il launcher Tauri di sviluppo;
+l'EXE installato `0.2.0` resta una release separata finché non viene ricostruito.
 
 Acceptance C6:
 

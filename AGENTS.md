@@ -4,14 +4,18 @@ Practical instructions. Read the first section before touching anything: the
 single most expensive mistake in this project's history has been diagnosing a
 fault on a copy of the code that nobody runs.
 
-## 1. Four copies exist. Only one runs.
+Current handoff and active objective: read `CURRENT.md` first.
+
+## 1. Source, generated copies and runtime are distinct
 
 | where | what it is | who executes it |
 |---|---|---|
+| `F:\devin_ai_ide` (Windows) | **primary development checkout** | local Codex, Git, frontend/Tauri tools |
+| `origin/main` on GitHub | shared repository truth | CI and source deploy |
 | `/opt/devin-ai-ide-frontend` (on the rig) | **the code in production** | `devin-backend.service` |
-| `origin/main` on GitHub | the repository's truth | CI |
-| `/home/tillo/devin_ai_ide` (on the rig) | development checkout | nobody |
-| `F:\devin_ai_ide` (Windows) | working checkout | nobody |
+| `/home/tillo/devin_ai_ide` (on the rig) | Linux verification checkout | pytest/diagnostics, never production |
+| `%LOCALAPPDATA%\DEVIN\desktop-host` | generated Windows mirror | Tauri development runtime |
+| `%LOCALAPPDATA%\DEVIN AI IDE` | installed release | stable packaged executable |
 
 The unit says so:
 
@@ -21,10 +25,15 @@ devin-backend.service
   ExecStart=/opt/devin-ai-ide-frontend/.venv-rig/bin/python devin/ui/fast_app.py
 ```
 
-On 2026-09-18 these four were all different: the development checkout was **50
+On 2026-09-18 the copies were all different: the development checkout was **50
 commits behind**, production was three behind, and the Windows checkout matched
 neither. Half a day was spent diagnosing defects that only existed on a dormant
 copy.
+
+Since 2026-09-29 normal source work starts in `F:\devin_ai_ide`. SSHFS mappings
+to the rig are visibility/transfer surfaces, not alternative editing roots.
+Build output in `src-tauri/frontend` and `desktop-host` is regenerable and must
+never become the source of a fix.
 
 **Before diagnosing anything, compare the fingerprints:**
 
@@ -40,7 +49,7 @@ done
 If the columns disagree, **realign first, investigate second**. A defect found
 on a stale copy is not a defect of the system.
 
-Deploy is a `git pull` in `/opt` run as `tillo`; the backend picks up new code
+Deploy is a `git pull --ff-only` in `/opt` run as `tillo`; the backend picks up new code
 on its next activation (it is `PartOf` the model slot), so no manual restart.
 
 The Tauri copy under `%LOCALAPPDATA%\DEVIN\desktop-host` is generated runtime
@@ -49,9 +58,11 @@ output, not a source repository.
 ## 2. Environment
 
 - **There is no WSL on the Windows machine.** It was reformatted; WSL and git are
-  absent. Historical continuity notes that describe a WSL workflow, and any
-  `/mnt/c/...` path, describe a setup that no longer exists. Do not follow them.
-- Linux work happens on the rig, over the file bridge described in §6.
+  not part of the runtime. Historical continuity notes that describe a WSL
+  workflow, and any `/mnt/c/...` path, describe a setup that no longer exists.
+  Do not follow them.
+- Windows frontend work happens in `F:\devin_ai_ide`. Linux-only checks and
+  service operations happen on the rig in an SSH-hosted Codex chat.
 - Verify a repository root with `git rev-parse --show-toplevel`; never infer it
   from a path in an old document.
 - Keep DEVIN and `ai-rig-ops` in separate checkouts and separate PRs.
@@ -114,27 +125,28 @@ confirmation — assert that the substitution applied.
   blocks must be compiled separately — `bash -n` does not look inside heredocs,
   and nested heredocs need distinct terminators
 
-## 6. The bridge to the rig
+## 6. Local project, SSH host and SSHFS surfaces
 
-There is no direct SSH from the assistant's environment. The path is:
+The active Codex project is local on Windows at `F:\devin_ai_ide`. A chat bound
+to an SSH host sees that host's filesystem and cannot add `F:` retroactively;
+start a local-host chat for Windows/frontend work.
 
-```
-script .sh -> F:\devin_ai_ide\_bridge\in\
-              bridge_rig-relay_v2.ps1 (PowerShell on Windows)
-           -> ssh tillo@192.168.1.100 bash -s
-           -> F:\devin_ai_ide\_bridge\out\<name>.out
-```
+Current Windows mappings:
 
-Two traps, both encountered for real:
+| mapping | target | contract |
+|---|---|---|
+| `Z:\` | `/home/tillo` on `192.168.1.100` | read/transfer/diagnostics; do not develop in `Z:\devin_ai_ide` |
+| `ai-rig-shared` network location | `/mnt/ai-rig-shared` | artifacts/evidence/recovery under their ownership rules |
+| `R:\` | home on Raspberry `192.168.1.86` | watcher diagnostics only |
 
-1. **Windows console selection mode freezes the relay.** A click inside the
-   window sets the title to "Select…" and the process blocks on output. Press
-   `Esc`. Permanent fix: disable **QuickEdit** in the window properties.
-2. **Overwriting an already-delivered file** makes the relay run the previous
-   version. Every delivery needs a **new, numbered name**.
+Validate mappings at session start. SSHFS provides file access, not a shell or
+service ownership. Use the SSH-hosted Codex project for `systemctl`, journal,
+Linux tests and deploy. Do not edit `/opt`, live memory, locks, journals or
+runtime outputs through SSHFS.
 
-Deliver payloads base64-encoded with a sha256 check, and make any patcher refuse
-to run when the target file's fingerprint is not the one it was tested against.
+The historical `_bridge` relay can remain as local recovery material but is no
+longer the primary workflow. Never commit `_bridge/`, `_backup/` or
+`Claude outputs/`; never remove them with `git clean`.
 
 ## 7. Product direction
 

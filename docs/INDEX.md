@@ -1,13 +1,16 @@
 # DEVIN AI IDE — Indice della documentazione
 
 Mappa di tutti i doc del progetto. Punto d'ingresso corrente:
+**[../CURRENT.md](../CURRENT.md)**, seguito da
 **[CURRENT_ARCHITECTURE.md](CURRENT_ARCHITECTURE.md)**. I file `CONTINUITY_*`
 sono log storici datati, non binding runtime.
 
 ## Panoramica e stato
+- **[../CURRENT.md](../CURRENT.md)** — handoff attivo, workspace locale e prossimo incremento frontend.
+- **[LOCAL_WINDOWS_WORKSPACE_20260929.md](LOCAL_WINDOWS_WORKSPACE_20260929.md)** — mappa `F:`/SSHFS/runtime Tauri e ciclo di lavoro locale.
 - **[CURRENT_ARCHITECTURE.md](CURRENT_ARCHITECTURE.md)** — fonte canonica corrente: Desktop↔rig, lifecycle Clippy/DEVIN, web fallback e federazione memoria.
 - **[P2_P8_ACCEPTANCE_2026-08-22.md](P2_P8_ACCEPTANCE_2026-08-22.md)** — checkpoint verificabile della roadmap canonica P2–P8, con confini e ledger dei gate.
-- **[../README_DEVIN_AI_IDE.md](../README_DEVIN_AI_IDE.md)** — cos'è, hardware, struttura, avvio, stato.
+- **[../README_DEVIN_AI_IDE.md](../README_DEVIN_AI_IDE.md)** — inventario storico esteso; non è un runbook corrente.
 - **[CONTINUITY_2026-07-18.md](CONTINUITY_2026-07-18.md)** — reliability hardening: resume esplicito, no-progress guard, cache JSON, filtri memoria, evidence tier (più recente).
 - **[CONTINUITY_2026-07-15.md](CONTINUITY_2026-07-15.md)** — log operativo datato (storico, non modificare a ritroso).
 - **[../AGENTS.md](../AGENTS.md)** — istruzioni per gli agenti che lavorano nel repo.
@@ -31,5 +34,6 @@ sono log storici datati, non binding runtime.
 - **[DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md](DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md)** — cockpit Windows thin-client, layout Goal/agenti, lifecycle sicuro e roadmap C1-C6.
 
 ## Storico / archiviati
-- `TRAINING_MINI_BENCH_2026-07-15.md` — superato da [TRAINING.md](TRAINING.md) (le lezioni sono state incorporate; il gate descritto è ormai implementato). Da spostare in `archive/old_docs/`.
+- `devin_rig-deploy-runbook_v1.md` — runbook storico superato; non usarlo per percorsi, porte o restart correnti.
+- `archive/old_docs/TRAINING_MINI_BENCH_2026-07-15.md` — superato da [TRAINING.md](TRAINING.md); le lezioni sono state incorporate e il gate descritto è ormai implementato.
 - `archive/old_docs/` — doc di fasi precedenti (BASELINE, HARDENING_STATUS, AUDIT-TODO, README_DEVIN_FASE2, APPLY_PATCHES).

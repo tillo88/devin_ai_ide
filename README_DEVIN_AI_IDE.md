@@ -2,11 +2,13 @@
 
 > **Stato di questo documento.** Alcune parti descrivono un allestimento
 > superato (WSL sulla macchina Windows, modello sulla porta 8080). La
-> topologia autorevole — quale delle quattro copie del codice gira, e su
-> quali porte — sta in `AGENTS.md` §1-3. In caso di disaccordo, vince
-> `AGENTS.md`.
+> topologia autorevole — workspace locale, copie del codice e porte — sta in
+> `CURRENT.md`, `AGENTS.md` §1-3 e `docs/CURRENT_ARCHITECTURE.md`. Questo file
+> resta un inventario storico esteso; non usarlo come runbook.
 
-**Ultimo aggiornamento:** 2026-08-22
+**Ultimo aggiornamento sostanziale:** 2026-08-22
+
+**Classificato come storico:** 2026-09-29
 
 📚 **Indice completo della documentazione: [`docs/INDEX.md`](docs/INDEX.md)**
 
@@ -21,7 +23,9 @@ Punti chiave attuali:
 - training: **quality gate multi-livello implementato** (pytest reale + gold test + tree-sitter + bandit + validator semantici), review Teacher/umana, niente promozione automatica di materiale non verificato — dettaglio in [`docs/TRAINING.md`](docs/TRAINING.md);
 - test suite: il gate corrente è zero failure nel checkout, non un conteggio storico hardcoded;
 - UI Tkinter e web_app Flask **archiviati** in `archive/legacy/` (2026-07-17): l'unico entry vivo è `devin/ui/fast_app.py`;
-- repo DEVIN corretto: **quello in esercizio e' `/opt/devin-ai-ide-frontend` sul rig** (vedi `AGENTS.md` §1); WSL sulla macchina Windows non c'e' piu'; la copia Tauri e' generata;
+- sorgente di sviluppo: `F:\devin_ai_ide`; runtime in esercizio:
+  `/opt/devin-ai-ide-frontend` sul rig (vedi `CURRENT.md` e `AGENTS.md` §1);
+  WSL sulla macchina Windows non c'e' piu'; la copia Tauri e' generata;
 - log operativo datato: `docs/CONTINUITY_*.md`.
 
 ---

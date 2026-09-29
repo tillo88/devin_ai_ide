@@ -1,5 +1,9 @@
 # DEVIN Tauri Desktop
 
+For the current source checkout and Windows workflow, start from
+`../CURRENT.md` and `LOCAL_WINDOWS_WORKSPACE_20260929.md`. Development source
+lives in `F:\devin_ai_ide`; the generated host below is never the editing root.
+
 ## Current architecture
 
 DEVIN Desktop is a Windows-native thin client for the authenticated front door
