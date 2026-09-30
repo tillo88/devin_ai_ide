@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "Default permissions for DEVIN AI IDE desktop shell.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-connect-frontdoor",
+    "allow-desktop-config-status",
+    "allow-test-frontdoor-connection",
+    "allow-save-frontdoor-config"
+  ]
 }

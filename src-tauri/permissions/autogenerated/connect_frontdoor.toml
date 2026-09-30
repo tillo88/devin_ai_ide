@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connect-frontdoor"
+description = "Enables the connect_frontdoor command without any pre-configured scope."
+commands.allow = ["connect_frontdoor"]
+
+[[permission]]
+identifier = "deny-connect-frontdoor"
+description = "Denies the connect_frontdoor command without any pre-configured scope."
+commands.deny = ["connect_frontdoor"]
