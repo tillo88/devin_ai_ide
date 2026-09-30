@@ -18,7 +18,7 @@ La barra usa gli stati Goal e l'ultimo run del progetto; apre Goal, Runs, il
 change manifest verificato e il log bounded. Non inventa percentuali e non
 trasforma `success` in `verified_success`.
 
-Il redesign visivo del cockpit e' in corso sul branch
+Il redesign visivo del cockpit e' completo sul branch
 `codex/frontend-visual-redesign`. Il commit `ccd2609` introduce la gerarchia
 graphite/blu desaturato senza cambiare il contratto Goal/Run/review. Il secondo
 pass C6.3 rialza la leggibilita' delle informazioni operative, alleggerisce i
@@ -45,6 +45,14 @@ Playwright e Chromium sono installati fuori dal repository sotto
 `scripts/test-workspace-browser.mjs` impostando `PLAYWRIGHT_MODULE` e
 `PLAYWRIGHT_BROWSERS_PATH`. Nessuna dipendenza Playwright e' stata aggiunta al
 progetto.
+
+Il 2026-09-30 lo smoke CDP sul WebView2 reale ha verificato che la pagina remota
+riceve `window.__TAURI__` e che `sync_local_workspace` attraversa capability e
+ACL fino alla validazione Rust. Lo screenshot con il prompt generico per la
+cartella backend proveniva invece dal JavaScript ancora servito da
+`origin/main`/produzione: l'EXE locale aggiorna la shell Tauri, ma il cockpit
+diventa quello del redesign solo dopo merge e source deploy sul rig. Il frontend
+ora fallisce chiuso se rileva Tauri senza bridge, senza proporre un path backend.
 
 ## Workspace da usare
 

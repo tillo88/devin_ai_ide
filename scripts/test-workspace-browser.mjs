@@ -249,6 +249,21 @@ try {
       if (output) await page.screenshot({path:path.join(output,`${name}-${width}.png`)});
     }
   }
+  // A desktop runtime without its IPC global must fail closed. It must never
+  // turn a request for a Windows folder into a backend-path prompt.
+  const backendPickerWritesBefore = writes.filter(write => write.path === '/api/workspace/pick_folder').length;
+  await page.evaluate(() => {
+    delete window.__TAURI__;
+    Object.defineProperty(window, 'isTauri', {value:true, configurable:true});
+    document.querySelector('#link-folder-button').click();
+  });
+  const failClosedOutcome = await Promise.race([
+    page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('nessun percorso backend')).then(() => 'error-message'),
+    page.locator('.app-modal-overlay').waitFor({state:'attached'}).then(() => 'backend-modal'),
+  ]);
+  assert.equal(failClosedOutcome,'error-message','desktop bridge failure did not fail closed');
+  assert.equal(await page.locator('.app-modal-overlay').count(),0,'desktop bridge failure opened a backend-path modal');
+  assert.equal(writes.filter(write => write.path === '/api/workspace/pick_folder').length,backendPickerWritesBefore,'desktop bridge failure called the backend picker');
   assert.deepEqual(errors,[]);
-  console.log('PASS: Chat/Goal/Runs/Editor/Diff/Log/Governance, submission/race/error guards, local bridge opacity, responsive 1440/1000/390; no live APIs');
+  console.log('PASS: Chat/Goal/Runs/Editor/Diff/Log/Governance, submission/race/error guards, local bridge opacity/fail-closed, responsive 1440/1000/390; no live APIs');
 } finally { await browser.close(); }

@@ -93,10 +93,9 @@ function renderKeyValues(container, rows) {
     .join("");
 }
 
-// App nativa (2026-07-22): il frontend e' disaccoppiato dal backend. In modalita'
-// web/rig la UI e' servita dallo stesso origin (API_BASE = ""). Nell'app desktop
-// la UI e' bundlata come file locali e la shell Rust inietta window.__DEVIN_API_BASE__
-// con l'URL del backend scoperto (rig se up, altrimenti backup locale).
+// Il cockpit e' servito dal frontdoor sia nel browser sia nel WebView Tauri.
+// L'app desktop mantiene il bridge IPC nello stesso WebView dopo la navigazione
+// remota; le capability Rust limitano i comandi all'origin configurato.
 const API_BASE = (typeof window !== "undefined" && window.__DEVIN_API_BASE__) || "";
 
 function apiUrl(path) {
@@ -108,6 +107,19 @@ function apiUrl(path) {
 function desktopBridgeAvailable() {
   return typeof window !== "undefined"
     && typeof window.__TAURI__?.core?.invoke === "function";
+}
+
+function desktopRuntimeDetected() {
+  return typeof window !== "undefined"
+    && (window.isTauri === true || typeof window.__TAURI_INTERNALS__?.postMessage === "function");
+}
+
+function requireDesktopBridgeOrBrowser() {
+  if (desktopRuntimeDetected() && !desktopBridgeAvailable()) {
+    throw new Error(
+      "Bridge cartelle locali non disponibile in questa pagina desktop. Aggiorna DEVIN e riprova; nessun percorso backend e' stato richiesto.",
+    );
+  }
 }
 
 async function desktopInvoke(command, args = {}) {
@@ -1926,6 +1938,10 @@ async function linkWorkspaceFolder() {
     return;
   }
 
+  // In un WebView Tauri un bridge assente e' un errore di versione/configurazione:
+  // non degradare silenziosamente al picker di path Linux del backend.
+  requireDesktopBridgeOrBrowser();
+
   // Browser normale: resta disponibile il contratto storico per cartelle che
   // esistono DAVVERO sulla macchina del backend.
   let result = await postJson("/api/workspace/pick_folder", {}).catch(() => ({ error: "picker non disponibile" }));
@@ -2852,6 +2868,7 @@ async function setProjectWorkDir() {
     await renderActivityRail(state.selectedProjectPath);
     return;
   }
+  requireDesktopBridgeOrBrowser();
   const current = project?.work_dir || "";
   const value = window.prompt(
     "Cartella di lavoro SUL BACKEND (path assoluto consentito; vuoto = scollega). Per una cartella Windows usa l'app desktop:", current);

@@ -1,6 +1,6 @@
 # DEVIN Desktop — checkpoint di validazione operativa
 
-Aggiornato: 2026-09-29
+Aggiornato: 2026-09-30
 
 Questo e' il percorso pratico corrente per collaudare la thin client Windows
 contro il rig. Sostituisce il vecchio flusso WSL/backend locale: l'app Windows
@@ -107,6 +107,37 @@ Esito finale atteso:
 - Clippy unico residente e healthy;
 - frontdoor e model-slot broker ancora attivi;
 - nessun arresto manuale, `SIGKILL` o riavvio del rig.
+
+## 4.1 Smoke del bridge cartelle locali
+
+Questo smoke serve solo quando cambia Tauri, l'ACL remota o il flusso delle
+cartelle Windows. Avviare temporaneamente il launcher di sviluppo con una porta
+CDP WebView2 locale, senza riportare nei log l'URL della pagina:
+
+```powershell
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9231'
+& "$env:LOCALAPPDATA\DEVIN\DEVIN Desktop.cmd"
+```
+
+In un secondo PowerShell, con Playwright installato fuori dal repository:
+
+```powershell
+$env:DEVIN_WEBVIEW_DEBUG_PORT = '9231'
+$env:PLAYWRIGHT_MODULE = "$env:LOCALAPPDATA\DEVIN\test-tools\playwright\node_modules\playwright\index.mjs"
+node .\scripts\test-desktop-bridge.mjs
+```
+
+Il PASS prova quattro confini: runtime Tauri rilevato, IPC interno presente,
+API globale presente e comando autorizzato arrivato alla validazione Rust. La
+chiamata usa intenzionalmente un `bridge_id` non valido, quindi non apre il
+picker e non scrive snapshot o registry. Chiudere poi la finestra e riavviarla
+normalmente, senza la variabile di debug.
+
+Il cockpit resta codice del backend: un nuovo EXE aggiorna Tauri ma non rende
+visibile il redesign finche' la stessa branch non e' stata unita e distribuita
+in `/opt/devin-ai-ide-frontend`. Se compare il vecchio testo "sulla macchina del
+backend", confrontare prima la stringa servita in produzione con il commit della
+branch; non diagnosticare il picker su una copia frontend precedente.
 
 ## 5. Diagnostica mirata
 
