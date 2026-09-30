@@ -27,7 +27,10 @@ o routing. Il replay Playwright ora cattura anche la vista Chat e verifica i
 breakpoint 1440/1000/390 insieme al bridge locale. Il pass C6.4 porta la stessa
 scala e gerarchia su Editor, manifest Diff, Log bounded e Governance; su mobile
 il diff verificato diventa una sequenza Prima/Dopo leggibile senza uscire dal
-viewport. La cache della shell e' `v19`.
+viewport. Il pass finale C6.5 rende immediata e non ambigua la selezione delle
+viste, verifica semanticamente il tab attivo e aggiunge le catture Chat ai
+breakpoint 1000/390. Il redesign e' completo sul branch e la cache della shell
+e' `v20`.
 
 Sul medesimo branch, come incremento separato, e' stato integrato il bridge per
 le cartelle Windows locali: Tauri apre il picker nativo e conserva il path solo

@@ -580,7 +580,13 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert config["version"] == "0.2.0"
     assert "url" not in config["app"]["windows"][0]
     assert "resources" not in config["bundle"]
-    assert capability["permissions"] == ["core:default"]
+    assert capability["permissions"] == [
+        "core:default",
+        "allow-connect-frontdoor",
+        "allow-desktop-config-status",
+        "allow-test-frontdoor-connection",
+        "allow-save-frontdoor-config",
+    ]
     assert "thin client" in docs
     assert "front door" in docs
     assert "%APPDATA%\\DEVIN\\desktop.json" in docs

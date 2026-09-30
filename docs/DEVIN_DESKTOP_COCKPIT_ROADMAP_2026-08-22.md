@@ -232,8 +232,9 @@ tempi e finding senza ripetere probe modello/hardware:
 
 ## C6 — interaction polish dopo il primo collaudo live
 
-Stato: **in corso**. I contratti di interazione sono entrati in `main`; il
-prossimo incremento è il redesign visuale dal progetto locale Windows.
+Stato: **redesign completo sul branch `codex/frontend-visual-redesign`**. I
+contratti di interazione sono entrati in `main`; la fondazione visuale e il
+collaudo finale restano sul branch fino alla prova della versione candidata.
 
 - sostituire “web sempre attiva” con `web auto`: il backend attiva la ricerca
   solo per intento esplicito e sceglie la catena SearXNG/TinyFish secondo il
@@ -255,7 +256,7 @@ prossimo incremento è il redesign visuale dal progetto locale Windows.
   collegata a stati reali, manifest verificato e log bounded;
 - `web auto`, snapshot health fail-soft, identità modello e tempi stream sono
   già presenti nella shell corrente;
-- cache PWA corrente: `v19`.
+- cache PWA corrente: `v20`.
 
 ### C6.2 — fondazione visuale consegnata
 
@@ -278,6 +279,17 @@ release separata finche' non viene ricostruito.
 - il diff mobile impila Prima/Dopo per riga e resta entro il viewport;
 - il replay offline usa fixture strutturate e cattura tutte le viste operative,
   verificandone visibilita' e assenza di overflow a 1000 e 390 px.
+
+### C6.5 — chiusura visuale e replay finale consegnati
+
+- il tab centrale attivo cambia nel primo frame, senza lasciare per un istante
+  due indicatori concorrenti durante la transizione tra superfici;
+- il replay richiede esattamente un tab `.active` e un solo
+  `aria-pressed=true` per Chat, Goal, Runs, Editor, Diff, Log e Governance;
+- `PLAYWRIGHT_MODULE` accetta direttamente anche un path assoluto Windows e il
+  replay fotografa Chat, oltre alle viste operative, a 1440/1000/390 px;
+- l'oracolo dei tab e' stato mutation-tested: una selezione bloccata su Chat
+  produce `active tab mismatch` e rende il replay rosso.
 
 Acceptance C6:
 

@@ -3,8 +3,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const configuredPlaywright = process.env.PLAYWRIGHT_MODULE || 'playwright';
+const playwrightModule = /^[A-Za-z]:[\\/]/.test(configuredPlaywright)
+  ? pathToFileURL(configuredPlaywright).href
+  : configuredPlaywright;
+const { chromium } = await import(playwrightModule);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = process.env.WORKSPACE_SCREENSHOTS;
 const browser = await chromium.launch({ headless: true, args: ['--disable-gpu'] });
@@ -15,6 +19,12 @@ let delayAlpha = false;
 let alphaFinished;
 let runsUnavailable = false;
 page.on('pageerror', error => errors.push(error.message));
+async function assertActiveView(expected) {
+  const active = await page.locator('.workspace-mode-button.active').evaluateAll(buttons => buttons.map(button => button.dataset.centerView));
+  const pressed = await page.locator('.workspace-mode-button[aria-pressed="true"]').evaluateAll(buttons => buttons.map(button => button.dataset.centerView));
+  assert.deepEqual(active, [expected], `active tab mismatch for ${expected}`);
+  assert.deepEqual(pressed, [expected], `aria-pressed mismatch for ${expected}`);
+}
 await page.addInitScript(() => {
   window.EventSource = undefined;
   window.__bridgeCalls = [];
@@ -118,11 +128,13 @@ await page.route('**/*', async route => {
 try {
   await page.goto('http://workspace.test/app');
   await page.locator('[data-project-path="/projects/alpha"]').waitFor();
+  await assertActiveView('chat');
   assert.equal(await page.locator('#goal-start-button').isDisabled(), true);
   await page.locator('[data-project-path="/projects/alpha"]').click();
   await page.waitForFunction(() => document.querySelector('#active-scope-label').textContent === 'alpha');
   if (output) { await fs.mkdir(output,{recursive:true}); await page.screenshot({path:path.join(output,'chat-desktop.png')}); }
   await page.locator('#show-goal-view').click();
+  await assertActiveView('goal');
   assert.equal(await page.locator('#goal-start-button').isEnabled(), true);
   await page.waitForFunction(() => document.querySelector('#goal-objective').textContent === 'Obiettivo alpha');
   assert.equal(await page.locator('#chat-thread').isVisible(), false);
@@ -150,6 +162,7 @@ try {
   assert.equal(writes[0].data.approval_policy,'manual');
   assert.equal(writes[0].data.acceptance[0].type,'tests_pass');
   await page.locator('#show-runs-view').click();
+  await assertActiveView('runs');
   await page.locator('[data-run-id="run_fixture"]').waitFor();
   await page.locator('#runs-search').fill('absent');
   assert.equal(await page.locator('#run-list button').count(),0);
@@ -157,19 +170,24 @@ try {
   await page.locator('[data-run-id="run_fixture"]').click();
   await page.waitForFunction(() => document.querySelector('#run-log-output').textContent.includes('Fixture failure'));
   assert.equal(await page.locator('#run-log-workspace').isVisible(),true);
+  await assertActiveView('log');
   assert.equal(await page.locator('#manifest-diff-apply').isDisabled(),true);
   if (output) await page.screenshot({path:path.join(output,'log-desktop.png')});
   await page.locator('#show-runs-view').click();
+  await assertActiveView('runs');
   if (output) await page.screenshot({path:path.join(output,'runs-desktop.png')});
   await page.locator('#activity-run [data-review-change-run]').click();
   await page.waitForFunction(() => document.querySelector('#manifest-diff-workspace').hidden === false);
   assert.equal(await page.locator('#manifest-diff-apply').isEnabled(),true);
+  await assertActiveView('diff');
   if (output) await page.screenshot({path:path.join(output,'diff-desktop.png')});
   await page.locator('#show-governance-view').click();
   await page.locator('#governance-agent-grid .governance-role-card').first().waitFor();
+  await assertActiveView('governance');
   if (output) await page.screenshot({path:path.join(output,'governance-desktop.png')});
   await page.locator('[data-project-file="src/main.py"]').click();
   await page.waitForFunction(() => document.querySelector('#editor-content').textContent.includes('workspace_name'));
+  await assertActiveView('editor');
   if (output) await page.screenshot({path:path.join(output,'editor-desktop.png')});
   runsUnavailable = true;
   await page.locator('#show-runs-view').click();
@@ -193,7 +211,13 @@ try {
   await page.waitForFunction(() => document.querySelector('#manifest-diff-workspace').hidden === false);
   for (const width of [1000, 390]) {
     await page.setViewportSize({width,height:900});
+    await page.locator('#show-chat-view').click();
+    await assertActiveView('chat');
+    assert.equal(await page.locator('#chat-thread').isVisible(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `chat overflow at ${width}`);
+    if (output) await page.screenshot({path:path.join(output,`chat-${width}.png`)});
     await page.locator('#show-goal-view').click();
+    await assertActiveView('goal');
     await page.locator('#goal-launcher').evaluate(el => { el.open = true; });
     assert.equal(await page.locator('#goal-panel').isVisible(),true);
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) {
@@ -213,6 +237,7 @@ try {
     ]) {
       await page.locator(`#${buttonId}`).click();
       assert.equal(await page.locator(`#${panelId}`).isVisible(),true,`${name} hidden at ${width}`);
+      await assertActiveView(name);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true,`${name} overflow at ${width}`);
       if (name === 'diff' && width === 390) {
         assert.equal(await page.evaluate(() => {

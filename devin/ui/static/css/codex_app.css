@@ -5343,6 +5343,7 @@ body.codex-shell {
   border-radius: 0;
   color: #747b85;
   font-size: 10px;
+  transition: none;
 }
 .workspace-mode-button:hover:not(:disabled) {
   color: #d8dbdf;
@@ -5352,6 +5353,10 @@ body.codex-shell {
   color: #eef1f3;
   border-color: var(--accent);
   background: transparent;
+}
+.workspace-mode-button:focus-visible {
+  border-radius: 6px 6px 0 0;
+  box-shadow: inset 0 0 0 1px rgba(143, 180, 216, .42);
 }
 .workspace-mode-context { color: #626973; font-size: 9px; }
 
