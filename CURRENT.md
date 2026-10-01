@@ -96,8 +96,8 @@ Checkpoint live del 30 settembre sera:
   spostata in `workspace/_trash`;
 - release corrente:
   `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target\release\devin-ai-ide-desktop.exe`,
-  bundle `20261001110347`, EXE SHA256
-  `67544372B097902E7ECB0F13EEF9EE310A6EE76CAA9FF287B094CC88E67E07E9`;
+  bundle `20261001111233`, EXE SHA256
+  `0739E23458D4F7EDF4BCE807F6C80A093421BDF100825B7F80F6BED7C64184CD`;
 - suite canonica Windows con `settings.json` assente durante il run: 699 pass,
   7 skip, 1 deselected (symlink senza privilegio); il file originale
   `DBC02AF75FDF` e' stato ripristinato. Inoltre: 15 test Rust, replay
@@ -167,8 +167,10 @@ Checkpoint finale del 1 ottobre:
   backend e wiring sono stati mutation-tested e diventano rossi se si
   reintroducono retry o vecchio endpoint. Nessuno smoke modello e' autorizzato
   prima di un contratto broker verificato per istanza fresca.
-- release one-shot Windows costruita nel target esterno previsto, 12,64 MiB,
-  bundle `20261001110347`, SHA256 `67544372B097`. La build Cargo diretta aveva
+- release one-shot Windows costruita nel target esterno previsto, 12,67 MiB,
+  bundle `20261001111233`, SHA256 `0739E23458D4`. Installer puliti dal commit
+  `3689913`: NSIS 3,11 MiB SHA256 `7e6262c2b352`, MSI 4,45 MiB SHA256
+  `2c2480895a89`, manifest `source_dirty=false`. La build Cargo diretta aveva
   creato per errore 2,953 GiB rigenerabili in `src-tauri/target`: la release e'
   stata ricostruita in `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target` e il
   target interno e' stato rimosso con `manage-desktop-build-cache.ps1
