@@ -26,13 +26,12 @@ hardware interessato. Non avviare una nuova istanza server per ogni controllo.
   `%LOCALAPPDATA%\DEVIN AI IDE\devin-ai-ide-desktop.exe`;
 - configurazione protetta:
   `%APPDATA%\DEVIN\desktop.json`;
-- frontdoor configurato sull'indirizzo del rig, senza stampare o copiare il
-  token nei log;
+- frontdoor configurato sull'indirizzo del rig nella LAN fidata;
 - stato iniziale atteso sul rig:
   `READY | resident=clippy | devin=idle`.
 
-Il probe **Test senza attivare** della schermata nativa e' soltanto TCP: non
-invia credenziali e non deve cambiare il ruolo residente. La connessione normale
+Il probe **Test senza attivare** della schermata nativa e' soltanto TCP e non
+deve cambiare il ruolo residente. La connessione normale
 e' invece un'azione intenzionale che puo' richiedere il model-slot DEVIN.
 
 La release installata e il launcher di sviluppo sono due verifiche diverse.
@@ -45,10 +44,13 @@ dopo una nuova build/reinstallazione.
 ## 2. Apertura dell'app e fase di preparazione
 
 Aprire **DEVIN AI IDE** dal collegamento Desktop o dal menu Start. Il bootstrap
-Rust usa il token senza restituirlo a JavaScript; il frontdoor lo converte in un
-cookie `HttpOnly` e rimuove il token dall'URL visibile.
+Rust mantiene il cockpit sul bundle locale. Le richieste HTTP e SSE
+attraversano il comando Tauri `desktop_http_stream`, che valida origine,
+metodo, percorso e header. Il frontdoor accetta direttamente la LAN fidata e
+il WebView non naviga sul rig.
 
-Durante l'attivazione la finestra deve mostrare **DEVIN si sta preparando** con:
+Durante l'attivazione la finestra deve mostrare **Preparo il workspace DEVIN**
+con:
 
 - fase reale del lifecycle, per esempio `loading_devin_model`;
 - unita' systemd attesa, per esempio `ai-rig-model-slot@devin.service`;
@@ -127,17 +129,18 @@ $env:PLAYWRIGHT_MODULE = "$env:LOCALAPPDATA\DEVIN\test-tools\playwright\node_mod
 node .\scripts\test-desktop-bridge.mjs
 ```
 
-Il PASS prova quattro confini: runtime Tauri rilevato, IPC interno presente,
-API globale presente e comando autorizzato arrivato alla validazione Rust. La
-chiamata usa intenzionalmente un `bridge_id` non valido, quindi non apre il
-picker e non scrive snapshot o registry. Chiudere poi la finestra e riavviarla
-normalmente, senza la variabile di debug.
+Il PASS prova cinque confini: cockpit ancora locale, runtime Tauri rilevato,
+IPC interno presente, trasporto API nativo installato e comando autorizzato
+arrivato alla validazione Rust. La chiamata usa intenzionalmente un `bridge_id`
+non valido, quindi non apre il picker e non scrive registry o file locali. Lo
+stato stampato e' sanificato e non espone endpoint sensibili. Chiudere poi la
+finestra e riavviarla normalmente, senza la variabile di debug.
 
-Il cockpit resta codice del backend: un nuovo EXE aggiorna Tauri ma non rende
-visibile il redesign finche' la stessa branch non e' stata unita e distribuita
-in `/opt/devin-ai-ide-frontend`. Se compare il vecchio testo "sulla macchina del
-backend", confrontare prima la stringa servita in produzione con il commit della
-branch; non diagnosticare il picker su una copia frontend precedente.
+Il cockpit e' incorporato nell'EXE: una nuova build rende visibile il redesign
+senza distribuire asset frontend in `/opt`. Un deploy sul rig serve soltanto se
+cambia un contratto backend. Se compare una UI precedente, verificare quale EXE
+o `desktop-host` e' stato avviato; non diagnosticare il frontend sulla copia
+Linux.
 
 ## 5. Diagnostica mirata
 

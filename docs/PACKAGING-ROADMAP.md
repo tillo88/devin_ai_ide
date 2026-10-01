@@ -7,9 +7,10 @@ model work remains on the rig.
 
 The supported profile is rig-first and thin-client-only:
 
-- Tauri/WebView2 runs on Windows;
-- the authenticated front door and FastAPI run on the rig;
-- project workspaces are linked on the rig and synchronized through GitHub;
+- Tauri/WebView2 runs the full local frontend on Windows;
+- the trusted-LAN front door and FastAPI run on the rig;
+- selected Windows workspaces use bounded, filtered snapshots and
+  conflict-checked apply through the native bridge;
 - the front door activates DEVIN lazily and returns to Clippy only when idle;
 - no Python, llama-server, GGUF model or backend sidecar is bundled on Windows.
 
@@ -19,9 +20,9 @@ fallback. The desktop must fail visibly if its configured rig is unavailable.
 ## Phase 1 — thin client foundation (complete)
 
 - [x] Bundled connection/retry screen.
-- [x] Rust-side URL/token validation and front-door reachability check.
-- [x] Stored token never returned to JavaScript and converted by the front door
-      to an `HttpOnly` cookie.
+- [x] Rust-side URL validation and front-door reachability check.
+- [x] Bounded native HTTP transport to the trusted rig LAN; the local UI
+      receives response chunks and never loads remote frontend code.
 - [x] Protected `%APPDATA%\DEVIN\desktop.json` configurator.
 - [x] Windows-native cached development host.
 - [x] Removal of automatic WSL/local-backend startup and sidecar resources.
@@ -52,12 +53,11 @@ The live installed-client lifecycle and chat evidence is recorded separately in
 
 ## Phase 3 — onboarding
 
-- [x] Native first-run form for front-door URL and secret.
+- [x] Native first-run form for the front-door URL.
 - [x] Save through a Rust command with the same validation/ACL contract as the
       PowerShell configurator.
 - [x] Add a TCP-only connection test that cannot activate the DEVIN model.
-- [x] Allow editing connection settings from the failure screen without
-      returning the stored token to the UI.
+- [x] Allow editing connection settings from the failure screen.
 
 Release and validation evidence:
 [`WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md`](WINDOWS_ONBOARDING_RECEIPT_2026-08-22.md).
@@ -66,8 +66,8 @@ Release and validation evidence:
 
 - [ ] Code-sign executable and installer to reduce SmartScreen warnings.
 - [ ] Define a signed auto-update channel.
-- [ ] Add release-build tests for token redaction, cookie bootstrap and remote
-      navigation policy.
+- [x] Add a mutation-tested local-bundle smoke for native API/SSE transport
+      and the no-remote-navigation policy.
 - [ ] Verify the installer on a clean Windows VM with WebView2.
 
 ## Rule

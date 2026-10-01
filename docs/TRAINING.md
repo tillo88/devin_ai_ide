@@ -31,6 +31,25 @@ benchmark case
 
 Recall-safe: `verified_success`, `verified_failure`, `human_confirmed`.
 
+## Episodi dell'agente desktop locale
+
+Le sessioni sulle cartelle Windows dirette alimentano la stessa review queue,
+ma non vengono promosse automaticamente. Ogni conclusione registra un caso
+`agent_episode` e un attempt `pending_review`. La traccia contiene soltanto
+etichette tool, metadati di esecuzione e digest; contenuti dei file e output
+grezzi dei comandi restano sul PC.
+
+Il cockpit offre review immediata: **Utile** produce `human_confirmed`, mentre
+**Da correggere** produce `verified_failure` e permette di salvare una
+correzione. L'export SFT deriva dalle correzioni validate, non dalle risposte
+semplicemente accettate dal modello. Dettagli e threat model:
+`LOCAL_AGENT_EXECUTION_AND_TRAINING.md`.
+
+Questa struttura rende il dataset addestrabile e auditabile, ma non avvia da
+sola un fine-tuning. Il runner LoRA/QLoRA deve restare una fase distinta con
+modello base/versione dataset fissati, split held-out, metriche pre/post e
+approvazione esplicita dell'operatore.
+
 ---
 
 ## Quality gate (implementato)

@@ -69,7 +69,7 @@
         <button class="workspace-nav-item" type="button" data-open-view="runs"><span aria-hidden="true">&#9776;</span><strong>Runs</strong></button>
         <button class="workspace-nav-item" type="button" data-governance-focus="knowledge"><span>◇</span><strong>Knowledge</strong><small>isolata</small></button>
         <button class="workspace-nav-item" type="button" data-governance-focus="tools"><span>⌘</span><strong>MCP Tools</strong><small>deny by default</small></button>
-        <button class="workspace-nav-item" type="button" data-governance-focus="agents"><span>◎</span><strong>Agent Swarm</strong><small>ruoli reali</small></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="agents"><span>◎</span><strong>Ruoli del rig</strong><small>routing e lifecycle</small></button>
         <a class="workspace-nav-item" href="/app/diagnostics#training" data-diag-link="training"><span>△</span><strong>Training</strong></a>
       </nav>
       <section class="panel-section" id="projects-section">
@@ -223,6 +223,7 @@
               <option value="reasoning">reasoning</option>
             </select>
             <input type="file" id="chat-file" multiple hidden>
+            <button type="button" id="chat-stop" class="chat-stop-button" hidden>Stop</button>
             <button type="submit" id="chat-send">Invia</button>
           </div>
         </div>
@@ -424,8 +425,8 @@
         <div class="governance-dashboard">
           <article class="governance-surface" id="governance-agents-panel" data-governance-panel="agents">
             <header>
-              <div><span>Agent Swarm</span><strong>Ruoli del rig</strong></div>
-              <small>abilitato non significa residente</small>
+              <div><span>Routing dei ruoli</span><strong>Clippy, DEVIN e profili futuri</strong></div>
+              <small>catalogo del rig, non agent swarm</small>
             </header>
             <div class="governance-role-grid" id="governance-agent-grid">
               <div class="governance-empty">Caricamento profilo ruoli…</div>

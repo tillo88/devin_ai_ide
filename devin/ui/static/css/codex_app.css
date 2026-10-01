@@ -648,9 +648,28 @@ body.codex-shell {
 }
 
 #chat-send:disabled,
-#chat-input:disabled {
+#chat-input:disabled,
+.chat-stop-button:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+
+.chat-stop-button {
+  border: 1px solid rgba(211, 112, 112, 0.45);
+  border-radius: 8px;
+  background: rgba(128, 48, 48, 0.14);
+  color: #e2b2b2;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.local-training-review {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-muted, #8e97a4);
+  font-size: 11px;
 }
 
 .project-list {
@@ -4650,7 +4669,7 @@ body.right-collapsed .mind-panel {
 }
 
 /* Native Tauri bootstrap / first-run onboarding. These elements exist only in
-   desktop_bootstrap.js; the rig-served workspace never renders this layer. */
+   desktop_bootstrap.js and cover the local cockpit until the rig is ready. */
 .devin-boot-overlay {
   position: fixed;
   inset: 0;
@@ -4808,6 +4827,18 @@ body.right-collapsed .mind-panel {
   border-radius: inherit;
   background: linear-gradient(90deg, #587ca5, #a2bdd8);
   animation: devin-boot-progress 1.4s ease-in-out infinite alternate;
+}
+
+.devin-boot-phase,
+.devin-boot-eta {
+  margin: 0 0 10px;
+  color: #b7bac0;
+  font: 500 12px/1.5 "Cascadia Code", Consolas, monospace;
+}
+
+.devin-boot-eta {
+  margin: 10px 0 0;
+  color: #8eabc9;
 }
 
 @keyframes devin-boot-progress {

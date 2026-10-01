@@ -1,8 +1,8 @@
-// Read-only smoke for the real Tauri -> remote-page IPC bridge.
+// Read-only smoke for the real local Tauri cockpit -> IPC bridge.
 // Start DEVIN with a temporary WebView2 remote-debugging port, then run with:
 //   DEVIN_WEBVIEW_DEBUG_PORT=<port>
 //   PLAYWRIGHT_MODULE=<absolute path to playwright/index.mjs>
-// The script never prints the page URL (which can briefly contain a token).
+// The script never prints the configured rig origin.
 
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
@@ -23,17 +23,30 @@ try {
   const pages = browser.contexts().flatMap(context => context.pages());
   const appPage = pages.find(page => {
     try {
-      return new URL(page.url()).pathname === '/app';
+      const url = new URL(page.url());
+      const isPackagedOrigin = url.hostname === 'tauri.localhost' || url.protocol === 'tauri:';
+      const isDevelopmentOrigin = url.protocol === 'http:'
+        && ['127.0.0.1', 'localhost'].includes(url.hostname)
+        && url.port === '1430';
+      return isPackagedOrigin || isDevelopmentOrigin;
     } catch {
       return false;
     }
   });
-  assert.ok(appPage, 'Pagina DEVIN /app non trovata nel WebView2');
+  assert.ok(appPage, 'Cockpit DEVIN locale non trovato nel WebView2');
 
   const result = await appPage.evaluate(async () => {
     const hasIsTauri = window.isTauri === true;
     const hasInternals = typeof window.__TAURI_INTERNALS__?.postMessage === 'function';
     const hasGlobalInvoke = typeof window.__TAURI__?.core?.invoke === 'function';
+    const hasLocalTransport = window.__DEVIN_TRANSPORT__?.schema === 'devin_desktop_transport_v1';
+    const failureDetail = document.querySelector('.devin-boot-detail')?.textContent?.trim() || null;
+    const uiState = {
+      overlayTitle: document.getElementById('devin-boot-title')?.textContent?.trim() || null,
+      phase: document.getElementById('devin-boot-phase')?.textContent?.trim() || null,
+      cockpitVisible: !document.getElementById('devin-boot-overlay'),
+      failureDetail: failureDetail?.replace(/https?:\/\/\S+/g, '<frontdoor>') || null,
+    };
     let commandReachedRust = false;
 
     if (hasGlobalInvoke) {
@@ -46,16 +59,24 @@ try {
       }
     }
 
-    return { hasIsTauri, hasInternals, hasGlobalInvoke, commandReachedRust };
+    return { hasIsTauri, hasInternals, hasGlobalInvoke, hasLocalTransport, commandReachedRust, uiState };
   });
 
-  assert.deepEqual(result, {
+  assert.deepEqual({
+    hasIsTauri: result.hasIsTauri,
+    hasInternals: result.hasInternals,
+    hasGlobalInvoke: result.hasGlobalInvoke,
+    hasLocalTransport: result.hasLocalTransport,
+    commandReachedRust: result.commandReachedRust,
+  }, {
     hasIsTauri: true,
     hasInternals: true,
     hasGlobalInvoke: true,
+    hasLocalTransport: true,
     commandReachedRust: true,
   });
-  console.log('PASS: remote page -> Tauri IPC -> Rust ACL/validation; no URL or token emitted');
+  console.log(`STATE: ${JSON.stringify(result.uiState)}`);
+  console.log('PASS: local cockpit -> trusted-LAN API transport + Tauri IPC -> Rust validation; no endpoint emitted');
 } finally {
   await browser.close();
 }

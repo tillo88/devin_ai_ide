@@ -8,6 +8,17 @@
     "allow-connect-frontdoor",
     "allow-desktop-config-status",
     "allow-test-frontdoor-connection",
-    "allow-save-frontdoor-config"
+    "allow-save-frontdoor-config",
+    "allow-desktop-http-stream",
+    "allow-desktop-http-cancel",
+    "allow-select-and-sync-local-workspace",
+    "allow-sync-local-workspace",
+    "allow-local-workspace-tree",
+    "allow-local-workspace-read",
+    "allow-local-workspace-context",
+    "allow-run-local-workspace-command",
+    "allow-cancel-local-workspace-command",
+    "allow-apply-local-workspace-plan",
+    "allow-apply-local-workspace-changes"
   ]
 }

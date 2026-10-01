@@ -6,7 +6,7 @@ lives in `F:\devin_ai_ide`; the generated host below is never the editing root.
 
 ## Current architecture
 
-DEVIN Desktop is a Windows-native thin client for the authenticated front door
+DEVIN Desktop is a Windows-native thin client for the trusted-LAN front door
 on the rig. The PC owns the Tauri window; the rig owns FastAPI, workspaces,
 training jobs, runs and the DEVIN model slot.
 
@@ -14,20 +14,28 @@ Normal desktop startup does not require WSL, a local Python process, a backend
 sidecar or local models. Closing the window also does not stop remote work: the
 front door releases the DEVIN session only after its idle/busy checks pass.
 
-The local `frontendDist` bundle is intentionally small. It provides first-run
-onboarding, connection/retry/settings views and invokes protected Rust
-commands. After authentication it is replaced by the same-origin `/app` served
-through the front door.
+For a direct Windows workspace, the optional local executor can use an already
+installed development runtime (for example Python through `py.exe`, Node,
+Cargo or read-only Git). It does not start a second backend and does not expose
+PowerShell/cmd. Every command is shown to the user before execution, is scoped
+to the registered folder, has bounded output and timeout, and runs inside a
+Windows Job so Stop terminates the full child tree. See
+`LOCAL_AGENT_EXECUTION_AND_TRAINING.md` for the exact policy and training data
+boundary.
+
+The local `frontendDist` bundle is intentionally small. It provides the full
+cockpit plus first-run onboarding, connection/retry/settings views and the
+protected Rust commands. It remains loaded for the whole session; the rig is
+an API/backend on `192.168.1.0/24`, not the source of the desktop UI.
 
 The cockpit roadmap and its no-NVML status contract are recorded in
 `DEVIN_DESKTOP_COCKPIT_ROADMAP_2026-08-22.md`.
 
 ## Configuration
 
-On first launch the app asks for the front-door root URL and token. The native
-form can test TCP reachability without sending the token or activating DEVIN,
-then saves through Rust. From an error screen, **Impostazioni** reopens the same
-form; an empty token field preserves the existing protected token.
+On first launch the app asks only for the front-door root URL. The native form
+can test TCP reachability without activating DEVIN, then saves through Rust.
+From an error screen, **Impostazioni** reopens the same form.
 
 The PowerShell configurator remains an administrative fallback:
 
@@ -35,7 +43,7 @@ The PowerShell configurator remains an administrative fallback:
 npm run desktop:configure
 ```
 
-It prompts for the URL and a hidden token, then writes:
+It prompts for the URL, then writes:
 
 ```text
 %APPDATA%\DEVIN\desktop.json
@@ -48,18 +56,17 @@ the configuration. The file schema is:
 ```json
 {
   "schema": "devin_desktop_frontdoor_v1",
-  "frontdoor_url": "http://rig-address:5000",
-  "access_token": "frontdoor-secret"
+  "frontdoor_url": "http://rig-address:5000"
 }
 ```
 
-Rust validates scheme, host, path and token length. Stored credentials are
-never returned to JavaScript. Rust builds `/app?token=...` with URL encoding
-and navigates the webview; the front door converts the query token into an
-`HttpOnly` cookie and redirects to a clean `/app` URL.
+Rust validates scheme, host and path. The native `desktop_http_stream` command
+restricts paths, methods and headers, and returns response metadata/chunks through a Tauri
+Channel. The same transport covers JSON, uploads, chat streaming and SSE;
+`desktop_http_cancel` propagates AbortController cancellation.
 
 For development, `DEVIN_DESKTOP_CONFIG` can select another JSON file;
-`DEVIN_FRONTDOOR_URL` and `DEVIN_FRONTDOOR_TOKEN` override individual fields.
+`DEVIN_FRONTDOOR_URL` overrides the saved endpoint.
 
 ## Windows-native host
 

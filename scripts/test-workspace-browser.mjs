@@ -11,14 +11,21 @@ const playwrightModule = /^[A-Za-z]:[\\/]/.test(configuredPlaywright)
 const { chromium } = await import(playwrightModule);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = process.env.WORKSPACE_SCREENSHOTS;
-const browser = await chromium.launch({ headless: true, args: ['--disable-gpu'] });
+const browserExecutable = process.env.PLAYWRIGHT_EXECUTABLE_PATH || '';
+const browser = await chromium.launch({
+  headless: true,
+  args: ['--disable-gpu'],
+  ...(browserExecutable ? { executablePath: browserExecutable } : {}),
+});
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' });
 const errors = [];
 const writes = [];
 let delayAlpha = false;
 let alphaFinished;
 let runsUnavailable = false;
+let localAgentScenario = 'plan';
 page.on('pageerror', error => errors.push(error.message));
+page.on('dialog', dialog => dialog.accept());
 async function assertActiveView(expected) {
   const active = await page.locator('.workspace-mode-button.active').evaluateAll(buttons => buttons.map(button => button.dataset.centerView));
   const pressed = await page.locator('.workspace-mode-button[aria-pressed="true"]').evaluateAll(buttons => buttons.map(button => button.dataset.centerView));
@@ -31,9 +38,34 @@ await page.addInitScript(() => {
   window.__TAURI__ = {core: {invoke: async (command, args) => {
     window.__bridgeCalls.push({command, args});
     const bridgeId = '12345678-1234-4234-9234-123456789abc';
+    if (command === 'local_workspace_tree') return {
+      scope:'local_direct',count:3,truncated:false,files:[
+        {name:'main.py',path:'src/main.py',is_text:true,size:108},
+        {name:'theme.css',path:'src/theme.css',is_text:true,size:240},
+        {name:'README.md',path:'README.md',is_text:true,size:96},
+      ],
+    };
+    if (command === 'local_workspace_read') return {
+      scope:'local_direct',path:args.path,language:'python',size:108,truncated:false,read_only:true,
+      sha256:'ab'.repeat(32),
+      content:'from pathlib import Path\n\n\ndef workspace_name(root: Path) -> str:\n    return root.resolve().name\n',
+    };
+    if (command === 'local_workspace_context') return {
+      schema:'devin_local_context_v1',bridge_id:bridgeId,content:'--- FILE LOCALE: src/main.py ---\nfixture',files:['src/main.py'],truncated:false,
+    };
+    if (command === 'apply_local_workspace_plan') return {
+      schema:'devin_local_workspace_apply_v1',status:'applied_local',run_id:'local_fixture',decision_status:'approved',files:1,recovery_path:'C:/recovery/local_fixture',
+    };
+    if (command === 'run_local_workspace_command') return {
+      schema:'devin_local_command_receipt_v1',command_id:args.commandId,command_digest:'ef'.repeat(32),
+      program:args.program,args:args.args,cwd:args.cwd,policy:'approval_gated_no_shell_v1',exit_code:0,success:true,
+      timed_out:false,cancelled:false,duration_ms:42,stdout:'1 passed',stderr:'',stdout_bytes:8,stderr_bytes:0,
+      stdout_sha256:'ab'.repeat(32),stderr_sha256:'cd'.repeat(32),output_truncated:false,
+    };
+    if (command === 'cancel_local_workspace_command') return {status:'cancelling',command_id:args.commandId};
     return {
-      status: 'synced', project_path: args?.projectPath || '/projects/beta',
-      local_workspace: {schema:'devin_local_workspace_snapshot_v1',bridge_id:bridgeId,display_name:'Local fixture',snapshot_digest:'ab'.repeat(32),files:3,bytes:24,updated_at:'2026-09-29T10:00:00Z'},
+      status: 'registered', project_path: args?.projectPath || '/projects/beta',
+      local_workspace: {schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:bridgeId,display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0,updated_at:'2026-09-30T10:00:00Z'},
     };
   }}};
 });
@@ -54,12 +86,27 @@ await page.route('**/*', async route => {
   }
   let data = {};
   if (route.request().method() !== 'GET') {
-    writes.push({path: u.pathname, data: route.request().postDataJSON()});
-    data = {goal_run_id:'goal_fixture'};
+    const posted = route.request().postDataJSON();
+    writes.push({path: u.pathname, data: posted});
+    if (u.pathname === '/api/chat') {
+      data = {status:'local_agent_required',message:'fixture local agent'};
+    } else if (u.pathname === '/api/local-workspace/agent-once') {
+      data = {status:'plan',summary:'Aggiorna fixture',operations:[{
+        path:'src/main.py',operation:'write',content:'print("updated")\n',expected_sha256:'ab'.repeat(32),
+      }],verification:localAgentScenario === 'run' ? {
+        program:'python',args:['-m','pytest','-q'],cwd:'.',timeout_seconds:180,reason:'verifica fixture',
+      } : null};
+    } else if (u.pathname === '/api/local-workspace/agent-complete') {
+      data = {status:'persisted',chars:posted.response?.length || 0};
+    } else if (u.pathname === '/api/training/local-agent/attempt') {
+      data = {schema:'devin_local_agent_training_attempt_v1',attempt:{attempt_id:'attempt_local_fixture'},review_required:true,auto_promoted:false};
+    } else {
+      data = {goal_run_id:'goal_fixture'};
+    }
   } else if (u.pathname === '/api/workspace/projects') {
     data = {projects: [
       {name: 'Alpha', path: '/projects/alpha'},
-      {name: 'Beta', path: '/projects/beta', work_dir:'/backend/opaque-digest', local_workspace:{schema:'devin_local_workspace_snapshot_v1',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'ab'.repeat(32),files:3,bytes:24}},
+      {name: 'Beta', path: '/projects/beta', work_dir:'', local_workspace:{schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0}},
     ]};
   } else if (u.pathname === '/api/goal') {
     const project = u.searchParams.get('project_path');
@@ -81,7 +128,7 @@ await page.route('**/*', async route => {
     data = {events:[{seq:1,run_id:'run_fixture',type:'test_failure',level:'error',message:'La suite fixture non passa',timestamp:'2026-09-19T10:00:00Z',data:{status:'failed'}}]};
   } else if (u.pathname === '/api/project/overview') {
     const local = u.searchParams.get('project_path') === '/projects/beta';
-    data = {chats:[],pins:[],knowledge:[],work_dir:local?'/backend/opaque-digest':'',description:'Progetto di prova',local_workspace:local?{schema:'devin_local_workspace_snapshot_v1',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'ab'.repeat(32),files:3,bytes:24}:null};
+    data = {chats:[],pins:[],knowledge:[],work_dir:'',description:'Progetto di prova',local_workspace:local?{schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0}:null};
   } else if (u.pathname === '/api/project/tree') {
     const local = u.searchParams.get('project_path') === '/projects/beta';
     data = local
@@ -194,17 +241,52 @@ try {
   await page.locator('#refresh-runs').click();
   await page.waitForFunction(() => document.querySelector('#runs-feedback').textContent.includes('non disponibile'));
   assert.equal(await page.locator('#run-list button').count(),0);
-  // The remote page can invoke only the narrow Tauri bridge: JS passes an
-  // opaque id/project, never an arbitrary Windows path.
+  // The cockpit can invoke only the narrow Tauri bridge: JS passes an opaque
+  // id/project, never an arbitrary Windows path.
   await page.locator('[data-project-path="/projects/beta"]').click();
-  await page.waitForFunction(() => document.querySelector('#workdir-set-button').textContent === 'Sincronizza');
+  await page.waitForFunction(() => document.querySelector('#workdir-set-button').textContent === 'Verifica');
   await page.locator('#workdir-set-button').click();
-  await page.waitForFunction(() => window.__bridgeCalls.length === 1);
-  const bridgeCall = await page.evaluate(() => window.__bridgeCalls[0]);
+  await page.waitForFunction(() => window.__bridgeCalls.some(call => call.command === 'sync_local_workspace'));
+  const bridgeCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'sync_local_workspace'));
   assert.equal(bridgeCall.command,'sync_local_workspace');
   assert.equal(bridgeCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
   assert.equal(Object.hasOwn(bridgeCall.args,'path'),false);
   assert.equal(await page.locator('#workdir-box').textContent().then(text => text.includes('/backend/')),false);
+  await page.locator('#show-chat-view').click();
+  await page.locator('#chat-input').fill('Modifica il file principale');
+  await page.locator('#chat-send').click();
+  const planPrompt = await Promise.race([
+    page.locator('.app-modal-overlay').waitFor({state:'visible'}).then(() => 'modal'),
+    page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('[error]')).then(() => 'error'),
+  ]);
+  assert.equal(planPrompt, 'modal', await page.locator('#chat-thread').textContent());
+  await page.locator('.app-modal-ok').click();
+  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('1 file applicati atomicamente'));
+  const applyCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'apply_local_workspace_plan'));
+  assert.equal(applyCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
+  assert.equal(applyCall.args.operations[0].path,'src/main.py');
+  assert.equal(Object.hasOwn(applyCall.args,'localPath'),false);
+  localAgentScenario = 'run';
+  const oneShotCallsBefore = writes.filter(write => write.path === '/api/local-workspace/agent-once').length;
+  await page.locator('#chat-input').fill('Esegui i test reali del progetto');
+  await page.locator('#chat-send').click();
+  await page.locator('.app-modal-overlay').waitFor({state:'visible'});
+  assert.ok((await page.locator('.app-modal-msg').textContent()).includes('Applicare queste modifiche'));
+  await page.locator('.app-modal-ok').click();
+  await page.locator('.app-modal-overlay').waitFor({state:'visible'});
+  assert.ok((await page.locator('.app-modal-msg').textContent()).includes('python -m pytest -q'));
+  await page.locator('.app-modal-ok').click();
+  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Verifica: python -m pytest -q'));
+  assert.equal(writes.filter(write => write.path === '/api/local-workspace/agent-once').length,oneShotCallsBefore + 1);
+  const runCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'run_local_workspace_command'));
+  assert.equal(runCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
+  assert.equal(runCall.args.program,'python');
+  assert.deepEqual(runCall.args.args,['-m','pytest','-q']);
+  assert.equal(Object.hasOwn(runCall.args,'localPath'),false);
+  assert.equal(await page.locator('.local-training-review').last().textContent().then(text => text.includes('Training: in review')),true);
+  await page.locator('#chat-send').waitFor({state:'visible'});
+  await page.waitForFunction(() => !document.querySelector('#chat-send').disabled);
+  assert.equal(await page.locator('#chat-stop').isHidden(),true);
   await page.locator('[data-project-file="src/main.py"]').click();
   await page.waitForFunction(() => document.querySelector('#editor-content').textContent.includes('workspace_name'));
   await page.locator('#activity-run [data-review-change-run]').click();

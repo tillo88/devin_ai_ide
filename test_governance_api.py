@@ -21,6 +21,15 @@ def test_governance_status_routes_and_desktop_panel(monkeypatch, tmp_path):
     assert routing.json()["automatic_switch"] is False
     assert routing.json()["roles"]["hermes"]["enabled"] is False
 
+    tools = client.get("/api/tools/status")
+    assert tools.status_code == 200
+    local_process = next(
+        item for item in tools.json()["tools"]
+        if item["tool_id"] == "local_workspace_process"
+    )
+    assert local_process["access"] == "approval_gated_execution"
+    assert "sanitized_environment_without_secrets" in local_process["guards"]
+
     page = client.get("/app")
     assert page.status_code == 200
     assert "Governance agente" in page.text

@@ -787,7 +787,7 @@ class AIClient:
                 return k
         return 0
 
-    def stream_eventi(self, messages, mode="reasoning", sforzo=""):
+    def stream_eventi(self, messages, mode="reasoning", sforzo="", max_attempts=None):
         """Streaming che DISTINGUE il ragionamento dalla risposta.
 
         Produce dizionari {"tipo": ..., "testo": ...} con tipo fra
@@ -804,8 +804,18 @@ class AIClient:
         """
         sforzo = self._sforzo(sforzo)
         timeout = self._timeout_ragionato(sforzo)
-
-        for attempt in range(self.MAX_RETRIES):
+        if max_attempts is None:
+            attempt_limit = self.MAX_RETRIES
+        else:
+            try:
+                attempt_limit = int(max_attempts)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("max_attempts deve essere un intero") from exc
+            if not 1 <= attempt_limit <= self.MAX_RETRIES:
+                raise ValueError(
+                    f"max_attempts deve essere compreso tra 1 e {self.MAX_RETRIES}"
+                )
+        for attempt in range(attempt_limit):
             url = ""
             # Lo stato del riconoscimento di <think> vive DENTRO il tentativo:
             # un retry riparte da capo, e un pensiero rimasto aperto nel
@@ -916,22 +926,22 @@ class AIClient:
                 yield {"tipo": "avviso", "testo": f"\n[Slot DEVIN non disponibile: {e}]"}
                 return
             except Exception as e:
-                print(f"[AIClient] Stream error {mode} (attempt {attempt+1}/{self.MAX_RETRIES}): {e}")
+                print(f"[AIClient] Stream error {mode} (attempt {attempt+1}/{attempt_limit}): {e}")
 
                 if url:
                     self._record_rig_failure(url)
 
-                if attempt < self.MAX_RETRIES - 1:
+                if attempt < attempt_limit - 1:
                     backoff = self.BASE_BACKOFF * (2 ** attempt)
                     print(f"[AIClient] Backoff {backoff}s prima di retry stream...")
                     time.sleep(backoff)
-                    self.refresh(try_wake=(attempt == self.MAX_RETRIES - 2), wait_after_wake=True)
+                    self.refresh(try_wake=(attempt == attempt_limit - 2), wait_after_wake=True)
                 else:
                     yield {"tipo": "avviso",
-                           "testo": f"\n[Stream error after {self.MAX_RETRIES} attempts: {e}]"}
+                           "testo": f"\n[Stream error after {attempt_limit} attempts: {e}]"}
                     return
 
-    def stream(self, messages, mode="reasoning", sforzo=""):
+    def stream(self, messages, mode="reasoning", sforzo="", max_attempts=None):
         """Streaming di solo TESTO DELLA RISPOSTA, per chi non vuole il pensiero.
 
         Resta la firma di prima (produce stringhe) perche' autocomplete e
@@ -939,6 +949,11 @@ class AIClient:
         finisce dentro il testo: chi chiamava questo metodo prima riceveva
         <think> grezzo in mezzo alla risposta.
         """
-        for evento in self.stream_eventi(messages, mode=mode, sforzo=sforzo):
+        for evento in self.stream_eventi(
+            messages,
+            mode=mode,
+            sforzo=sforzo,
+            max_attempts=max_attempts,
+        ):
             if evento["tipo"] in ("risposta", "avviso"):
                 yield evento["testo"]

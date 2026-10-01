@@ -39,6 +39,7 @@ const state = {
   hideKnownWarnings: true,
   runLogRefreshTimer: null,
   chatAbort: null,
+  localCommandId: null,
   reviewedChangeRunId: null,
   reviewedChangeProjectPath: null,
   reviewedManifestDigest: null,
@@ -82,6 +83,26 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function errorMessage(error, fallback = "Operazione non riuscita") {
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error === "object") {
+    for (const candidate of [error.message, error.error, error.detail]) {
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    }
+  }
+  return fallback;
+}
+
+function localUuid() {
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
 function renderKeyValues(container, rows) {
   container.innerHTML = rows
     .map(([key, value]) => `
@@ -93,15 +114,37 @@ function renderKeyValues(container, rows) {
     .join("");
 }
 
-// Il cockpit e' servito dal frontdoor sia nel browser sia nel WebView Tauri.
-// L'app desktop mantiene il bridge IPC nello stesso WebView dopo la navigazione
-// remota; le capability Rust limitano i comandi all'origin configurato.
+// Nel browser la API resta same-origin. Il bundle Tauri installa invece un
+// trasporto locale autenticato: la UI resta sul PC e solo le chiamate API
+// raggiungono il frontdoor configurato sul rig.
 const API_BASE = (typeof window !== "undefined" && window.__DEVIN_API_BASE__) || "";
 
 function apiUrl(path) {
   if (typeof path !== "string") return path;
   if (/^https?:\/\//i.test(path)) return path;  // gia' assoluto
   return API_BASE + path;
+}
+
+function apiFetch(path, options = {}) {
+  const transport = typeof window !== "undefined" ? window.__DEVIN_TRANSPORT__ : null;
+  if (transport && typeof transport.fetch === "function") {
+    return transport.fetch(path, options);
+  }
+  return fetch(apiUrl(path), options);
+}
+
+function apiEventSource(path) {
+  const transport = typeof window !== "undefined" ? window.__DEVIN_TRANSPORT__ : null;
+  if (transport && typeof transport.createEventSource === "function") {
+    return transport.createEventSource(path);
+  }
+  return new EventSource(apiUrl(path));
+}
+
+function apiEventStreamAvailable() {
+  return typeof window !== "undefined"
+    && (typeof window.__DEVIN_TRANSPORT__?.createEventSource === "function"
+      || typeof window.EventSource === "function");
 }
 
 function desktopBridgeAvailable() {
@@ -133,9 +176,14 @@ function selectedProjectRecord(projectPath = state.selectedProjectPath) {
   return (state.projects || []).find((project) => project.path === projectPath) || null;
 }
 
+function selectedDirectWorkspace(projectPath = state.selectedProjectPath) {
+  const workspace = selectedProjectRecord(projectPath)?.local_workspace || null;
+  return workspace?.mode === "direct" ? workspace : null;
+}
+
 async function fetchJson(url, options = {}) {
   const headers = { Accept: "application/json", ...(options.headers ?? {}) };
-  const res = await fetch(apiUrl(url), { ...options, headers });
+  const res = await apiFetch(url, { ...options, headers });
   if (!res.ok) {
     let detail = "";
     try {
@@ -537,7 +585,9 @@ function renderProjectTree(payload) {
       button.addEventListener("click", () => openProjectFile(button.dataset.projectFile));
     });
   }
-  const scopeLabel = payload?.scope === "work_dir" ? "work_dir" : "progetto";
+  const scopeLabel = payload?.scope === "local_direct"
+    ? "PC locale"
+    : payload?.scope === "work_dir" ? "work_dir" : "progetto";
   status.textContent = `${scopeLabel} · ${payload?.count ?? 0} file${payload?.truncated ? " · vista limitata" : ""}`;
   renderWorkdirFileSummary();
 }
@@ -554,8 +604,10 @@ async function loadProjectTree() {
   }
   const projectAtRequest = state.selectedProjectPath;
   setText("project-tree-status", "Lettura file…");
-  const params = new URLSearchParams({ project_path: projectAtRequest });
-  const payload = await fetchJson(`/api/project/tree?${params.toString()}`);
+  const directWorkspace = selectedDirectWorkspace(projectAtRequest);
+  const payload = directWorkspace
+    ? await desktopInvoke("local_workspace_tree", { bridgeId: directWorkspace.bridge_id })
+    : await fetchJson(`/api/project/tree?${new URLSearchParams({ project_path: projectAtRequest }).toString()}`);
   if (state.selectedProjectPath !== projectAtRequest) return;
   renderProjectTree(payload);
 }
@@ -571,9 +623,17 @@ async function openProjectFile(relativePath) {
   $("project-file-tree")?.querySelectorAll("[data-project-file]").forEach((button) => {
     button.classList.toggle("active", button.dataset.projectFile === relativePath);
   });
-  const params = new URLSearchParams({ project_path: projectAtRequest, path: relativePath });
   try {
-    const payload = await fetchJson(`/api/project/file?${params.toString()}`);
+    const directWorkspace = selectedDirectWorkspace(projectAtRequest);
+    const payload = directWorkspace
+      ? await desktopInvoke("local_workspace_read", {
+        bridgeId: directWorkspace.bridge_id,
+        path: relativePath,
+      })
+      : await fetchJson(`/api/project/file?${new URLSearchParams({
+        project_path: projectAtRequest,
+        path: relativePath,
+      }).toString()}`);
     if (state.selectedProjectPath !== projectAtRequest || state.selectedFilePath !== relativePath) return;
     setText("editor-content", payload.content || "");
     const truncation = payload.truncated ? " · anteprima troncata a 256 KiB" : "";
@@ -991,12 +1051,12 @@ function appendGoalEvent(event) {
 }
 
 function startGoalEventStream(goalRunId) {
-  if (!window.EventSource || !goalRunId || state.goalEventSource) {
+  if (!apiEventStreamAvailable() || !goalRunId || state.goalEventSource) {
     updateGoalPolling(Boolean(currentLiveGoal()));
     return;
   }
   const url = `/api/goal/${encodeURIComponent(goalRunId)}/events/stream?after_seq=${state.lastGoalEventSeq}`;
-  const source = new EventSource(apiUrl(url));
+  const source = apiEventSource(url);
   state.goalEventSource = source;
   if (state.goalPoll) {
     window.clearInterval(state.goalPoll);
@@ -1528,7 +1588,7 @@ function renderProjects(payload) {
           <strong>${escapeHtml(project.name)}</strong>
           <span>${project.linked ? "linked · " : ""}${escapeHtml(project.chats ?? 0)} chat - ${escapeHtml(project.knowledge ?? 0)} knowledge</span>
           ${project.local_workspace
-            ? `<span class="project-workdir" title="Snapshot locale verificato">PC · ${escapeHtml(project.local_workspace.display_name || project.name)}</span>`
+            ? `<span class="project-workdir" title="Cartella Windows autorizzata">PC · ${escapeHtml(project.local_workspace.display_name || project.name)}</span>`
             : project.work_dir
               ? `<span class="project-workdir" title="${escapeHtml(project.work_dir)}">📁 ${escapeHtml(project.work_dir.split(/[\\/]/).pop())}</span>`
               : ""}
@@ -1557,10 +1617,10 @@ function renderProjects(payload) {
     button.addEventListener("click", () => selectProject(button.dataset.projectPath ?? ""));
   });
   list.querySelector("[data-empty-new]")?.addEventListener("click", () => {
-    createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+    createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
   });
   list.querySelector("[data-empty-link]")?.addEventListener("click", () => {
-    linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+    linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
   });
   list.querySelectorAll("[data-remove-project-path]").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -1624,7 +1684,7 @@ function renderChatList(chats = []) {
       event.stopPropagation();
       deleteChat(button.dataset.deleteChatId || null).catch((err) => {
         console.error(err);
-        appendChatMessage("assistant", `[error] ${err.message}`);
+        appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
       });
     });
   });
@@ -1694,12 +1754,15 @@ async function renderActivityRail(projectPath) {
   const wd = full.work_dir || "";
   const localWorkspace = full.local_workspace || null;
   if (localWorkspace) {
-    workBox.innerHTML = `<i class="folder-ico">PC</i> <span title="Mirror gestito sul rig">${escapeHtml(localWorkspace.display_name || "workspace locale")} · snapshot verificato</span>`;
+    const direct = localWorkspace.mode === "direct";
+    workBox.innerHTML = `<i class="folder-ico">PC</i> <span title="${direct ? "Accesso diretto autorizzato sul PC" : "Mirror gestito sul rig"}">${escapeHtml(localWorkspace.display_name || "workspace locale")} · ${direct ? "accesso diretto" : "snapshot verificato"}</span>`;
     workBox.classList.add("linked");
     const button = $("workdir-set-button");
     if (button) {
-      button.textContent = "Sincronizza";
-      button.title = "Invia un nuovo snapshot filtrato dalla cartella locale";
+      button.textContent = direct ? "Verifica" : "Sincronizza";
+      button.title = direct
+        ? "Verifica che la cartella locale sia ancora autorizzata"
+        : "Invia un nuovo snapshot filtrato dalla cartella locale";
     }
   } else if (wd) {
     workBox.innerHTML = `<i class="folder-ico">📁</i> <span title="${escapeHtml(wd)}">${escapeHtml(wd.split(/[\\/]/).pop())}</span>`;
@@ -1925,7 +1988,8 @@ async function createProjectChat(continueCurrent = false) {
 
 async function linkWorkspaceFolder() {
   // Nell'app desktop il path Windows resta esclusivamente nel processo Tauri:
-  // il backend riceve uno snapshot bounded e un bridge_id opaco.
+  // il backend riceve soltanto un bridge_id opaco; letture e ricerche restano
+  // confinate al processo desktop e alla cartella scelta dall'utente.
   if (desktopBridgeAvailable()) {
     const receipt = await desktopInvoke("select_and_sync_local_workspace", { projectPath: null });
     if (!receipt) return;
@@ -1933,7 +1997,7 @@ async function linkWorkspaceFolder() {
     await selectProject(receipt.project_path);
     appendChatMessage(
       "assistant",
-      `Workspace locale collegato: ${receipt.local_workspace.display_name}. ${receipt.local_workspace.files} file nel mirror verificato${receipt.local_workspace.excluded_entries ? `, ${receipt.local_workspace.excluded_entries} elementi esclusi per sicurezza` : ""}; il percorso Windows resta su questo PC.`,
+      `Workspace locale collegato direttamente: ${receipt.local_workspace.display_name}. Nessuna copia completa viene caricata sul rig; il percorso Windows resta su questo PC.`,
     );
     return;
   }
@@ -2179,10 +2243,10 @@ function startEventStream(runId) {
     state.eventSource = null;
   }
 
-  if (!window.EventSource || !runId) return;
+  if (!apiEventStreamAvailable() || !runId) return;
 
   const url = `/api/run/${encodeURIComponent(runId)}/events/stream?after_seq=${state.lastEventSeq}`;
-  const source = new EventSource(apiUrl(url));
+  const source = apiEventSource(url);
   state.eventSource = source;
 
   source.onmessage = (message) => {
@@ -2424,7 +2488,7 @@ function appendChatMessage(role, content = "", options = {}) {
       event.stopPropagation();
       deleteChatMessage(Number(btn.dataset.messageIndex)).catch((err) => {
         console.error(err);
-        appendChatMessage("assistant", `[error] ${err.message}`);
+        appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
       });
     });
   }
@@ -2468,7 +2532,7 @@ function renderChatHistory(history = []) {
     });
     // Azioni dirette (non prompt): creano/collegano senza modello attivo.
     thread.querySelector('[data-hero-action="new-project"]')?.addEventListener("click", () => {
-      createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+      createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
     });
     return;
   }
@@ -2516,6 +2580,11 @@ function setChatBusy(isBusy) {
   $("chat-send").disabled = isBusy;
   $("chat-input").disabled = isBusy;
   setText("chat-send", isBusy ? "..." : "Invia");
+  const stop = $("chat-stop");
+  if (stop) {
+    stop.hidden = !isBusy;
+    stop.disabled = !isBusy;
+  }
 }
 
 function parseSseBlock(block) {
@@ -2734,6 +2803,297 @@ function applyChatEvent(event, assistantNode) {
   }
 }
 
+function localAgentBoundedText(value, maxChars = 6000) {
+  const text = String(value || "");
+  if (text.length <= maxChars) return text;
+  const tailChars = Math.min(700, Math.floor(maxChars / 4));
+  const markerReserve = 120;
+  const headChars = Math.max(0, maxChars - tailChars - markerReserve);
+  const omitted = text.length - headChars - tailChars;
+  return `${text.slice(0, headChars)}\n[CLIENT: omessi ${omitted} caratteri centrali]\n${text.slice(-tailChars)}`;
+}
+
+function localAgentFileObservation(file, maxChars = 5000) {
+  const header = `LETTURA ${file.path} · SHA256 ${file.sha256} · ${file.size} byte`
+    + `${file.truncated ? " · TRONCATA, non modificare senza ulteriori prove" : ""}\n`;
+  return header + localAgentBoundedText(file.content, Math.max(500, maxChars - header.length));
+}
+
+function localCommandLabel(step) {
+  const quote = (value) => /\s/.test(value) ? JSON.stringify(value) : value;
+  return [step.program, ...(step.args || [])].map((value) => quote(String(value))).join(" ");
+}
+
+function localExecutionTrainingEvidence(receipt) {
+  const allowed = [
+    "command_digest", "program", "args", "cwd", "exit_code", "success", "timed_out",
+    "cancelled", "duration_ms", "stdout_bytes", "stderr_bytes", "stdout_sha256",
+    "stderr_sha256", "output_truncated", "policy",
+  ];
+  return Object.fromEntries(allowed.filter((key) => key in receipt).map((key) => [key, receipt[key]]));
+}
+
+async function persistLocalAgentResponse(projectPath, response) {
+  const result = await postJson("/api/local-workspace/agent-complete", {
+    project_path: projectPath,
+    chat_id: state.selectedChatId || null,
+    response,
+  });
+  if (result.error) throw new Error(result.error);
+}
+
+function attachLocalTrainingReview(assistantNode, attemptId, projectPath) {
+  if (!attemptId || !assistantNode?.parentElement) return;
+  const row = document.createElement("div");
+  row.className = "local-training-review";
+  row.innerHTML = `
+    <span>Training: in review</span>
+    <button type="button" class="tiny-button" data-local-review="good">✓ Utile</button>
+    <button type="button" class="tiny-button ghost-button" data-local-review="bad">Da correggere</button>`;
+  const finish = (text) => {
+    row.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+    row.querySelector("span").textContent = text;
+  };
+  row.querySelector('[data-local-review="good"]')?.addEventListener("click", async () => {
+    try {
+      const result = await postJson("/api/training/reviews", {
+        project_path: projectPath,
+        attempt_id: attemptId,
+        status: "human_confirmed",
+        rationale: "Risposta confermata utile dall'utente nel cockpit locale.",
+        reviewer: "human",
+        confidence: 1,
+        tags: ["local-agent", "desktop-feedback"],
+        evidence: { source: "local_cockpit_feedback" },
+      });
+      if (result.error) throw new Error(result.error);
+      finish("Training: confermato dall'utente");
+    } catch (error) {
+      row.querySelector("span").textContent = `Training error: ${errorMessage(error)}`;
+    }
+  });
+  row.querySelector('[data-local-review="bad"]')?.addEventListener("click", async () => {
+    const rationale = await promptModal("Che cosa non va nella risposta?", {
+      placeholder: "Errore, omissione o comportamento da correggere",
+      okLabel: "Registra failure",
+    });
+    if (rationale === null) return;
+    try {
+      const result = await postJson("/api/training/reviews", {
+        project_path: projectPath,
+        attempt_id: attemptId,
+        status: "verified_failure",
+        rationale: rationale || "Risposta rifiutata dall'utente.",
+        reviewer: "human",
+        confidence: 1,
+        tags: ["local-agent", "desktop-feedback"],
+        evidence: { source: "local_cockpit_feedback" },
+        failure_mode: "human_reported",
+        next_action: "Correggere e rieseguire il task con nuove evidenze.",
+      });
+      if (result.error) throw new Error(result.error);
+      const correction = await promptModal("Opzionale: scrivi la risposta/correzione desiderata per il dataset SFT.", {
+        placeholder: "Lascia vuoto per registrare solo il fallimento",
+        okLabel: "Salva",
+      });
+      if (correction) {
+        const corrected = await postJson("/api/training/corrections", {
+          project_path: projectPath,
+          attempt_id: attemptId,
+          correction: rationale || "Correzione umana",
+          corrected_solution: correction,
+          reviewer: "human",
+          tags: ["local-agent", "desktop-feedback"],
+        });
+        if (corrected.error) throw new Error(corrected.error);
+      }
+      finish(correction ? "Training: failure + correzione verificata" : "Training: failure verificato");
+    } catch (error) {
+      row.querySelector("span").textContent = `Training error: ${errorMessage(error)}`;
+    }
+  });
+  assistantNode.parentElement.appendChild(row);
+}
+
+async function recordLocalAgentTrainingAttempt({
+  projectPath, episodeId, task, response, outcome, toolHistory, executions, assistantNode,
+}) {
+  try {
+    const result = await postJson("/api/training/local-agent/attempt", {
+      project_path: projectPath,
+      episode_id: episodeId,
+      task,
+      response,
+      outcome,
+      tool_history: toolHistory,
+      executions,
+    });
+    if (result.error) throw new Error(result.error);
+    attachLocalTrainingReview(assistantNode, result.attempt?.attempt_id, projectPath);
+  } catch (error) {
+    console.warn("local agent training trace not recorded", error);
+  }
+}
+
+async function runLocalWorkspaceAgent(task, workspace, initialContext, assistantNode) {
+  const projectPath = state.selectedProjectPath;
+  const episodeId = localUuid();
+  const toolHistory = [];
+  const executions = [];
+  assistantNode.textContent = "Agente locale · preparo evidenze bounded sul PC…";
+  const tree = await desktopInvoke("local_workspace_tree", { bridgeId: workspace.bridge_id });
+  toolHistory.push("tree");
+  const files = Array.isArray(tree?.files) ? tree.files : [];
+  const noisyPath = /(^|\/)(?:backups?|cache|data|debug|generated|reports?)(?:\/|$)/i;
+  const ordered = [
+    ...files.filter((entry) => !noisyPath.test(entry.path || "")),
+    ...files.filter((entry) => noisyPath.test(entry.path || "")),
+  ];
+  const treeLines = [];
+  let treeChars = 0;
+  for (const entry of ordered) {
+    const line = `${entry.is_text ? "[text]" : "[binary]"} ${entry.path} (${entry.size} byte)`;
+    if (treeLines.length >= 120 || treeChars + line.length + 1 > 5000) break;
+    treeLines.push(line);
+    treeChars += line.length + 1;
+  }
+  const omitted = Math.max(0, files.length - treeLines.length);
+  const evidenceSections = [
+    "SCHEMA devin_local_one_shot_evidence_v1",
+    `ALBERO WORKSPACE · ${files.length} file${tree?.truncated ? " · scansione troncata" : ""}`
+      + `${omitted ? ` · ${omitted} omessi dal riepilogo` : ""}\n${treeLines.join("\n")}`,
+  ];
+
+  const selectedPaths = [...new Set(
+    (Array.isArray(initialContext?.files) ? initialContext.files : [])
+      .filter((path) => typeof path === "string" && path),
+  )].slice(0, 4);
+  const fileEvidence = [];
+  for (let index = 0; index < selectedPaths.length; index += 1) {
+    const path = selectedPaths[index];
+    assistantNode.textContent = `Agente locale · raccolgo evidenze ${index + 1}/${selectedPaths.length}…`;
+    try {
+      const file = await desktopInvoke("local_workspace_read", {
+        bridgeId: workspace.bridge_id,
+        path,
+      });
+      toolHistory.push(`read ${path}`);
+      fileEvidence.push(localAgentFileObservation(file, 6000));
+    } catch (error) {
+      toolHistory.push(`read_failed ${path}`);
+      fileEvidence.push(`LETTURA NON DISPONIBILE ${path}: ${errorMessage(error)}`);
+    }
+  }
+  if (fileEvidence.length) evidenceSections.push(`LETTURE SELEZIONATE\n${fileEvidence.join("\n\n")}`);
+  if (initialContext?.content) {
+    evidenceSections.push(
+      `RETRIEVAL AGGIUNTIVO BOUNDED\n${localAgentBoundedText(initialContext.content, 8000)}`,
+    );
+    toolHistory.push("retrieval");
+  }
+  if (state.webForced) {
+    assistantNode.textContent = "Agente locale · raccolgo fonti web abilitate…";
+    const web = await postJson("/api/local-workspace/web-search", {
+      project_path: projectPath,
+      query: task,
+    });
+    if (web.error) throw new Error(web.error);
+    evidenceSections.push(
+      `EVIDENZA WEB VERIFICABILE\n${localAgentBoundedText(web.content || "Nessun risultato.", 5000)}`,
+    );
+    toolHistory.push("web_search");
+  }
+
+  const evidencePack = evidenceSections.join("\n\n");
+  if (evidencePack.length > 48000) {
+    throw new Error("Evidence pack locale oltre il limite one-shot di 48.000 caratteri.");
+  }
+  assistantNode.textContent = "Agente locale · singola inferenza, nessun retry…";
+  const step = await postJson("/api/local-workspace/agent-once", {
+    task,
+    project_path: projectPath,
+    evidence_pack: evidencePack,
+    reasoning_effort: state.reasoningEffort || "medium",
+  });
+  if (step.error) throw new Error(step.error);
+  if (step.status === "done") {
+    const response = step.message || "Agente locale concluso senza modifiche.";
+    assistantNode.textContent = response;
+    await persistLocalAgentResponse(projectPath, response);
+    await recordLocalAgentTrainingAttempt({
+      projectPath, episodeId, task, response, outcome: "analysis_completed",
+      toolHistory, executions, assistantNode,
+    });
+    return;
+  }
+  if (step.status !== "plan" || !Array.isArray(step.operations)) {
+    throw new Error("DEVIN non ha prodotto una conclusione one-shot valida.");
+  }
+  const operationSummary = step.operations
+    .map((operation) => `${operation.operation === "delete" ? "Elimina" : "Scrivi"} ${operation.path}`)
+    .join("\n");
+  const approved = await confirmModal(
+    `${step.summary || "DEVIN propone modifiche locali"}\n\n${operationSummary}\n\nApplicare queste modifiche alla cartella Windows?`,
+    { okLabel: "Applica modifiche", danger: true },
+  );
+  if (!approved) {
+    const response = `Piano locale non applicato.\n\n${step.summary || ""}`.trim();
+    assistantNode.textContent = response;
+    await persistLocalAgentResponse(projectPath, response);
+    await recordLocalAgentTrainingAttempt({
+      projectPath, episodeId, task, response, outcome: "plan_rejected",
+      toolHistory, executions, assistantNode,
+    });
+    return;
+  }
+  const applyReceipt = await desktopInvoke("apply_local_workspace_plan", {
+    bridgeId: workspace.bridge_id,
+    operations: step.operations,
+  });
+  let persistedResponse = `${step.summary || "Modifiche applicate."}\n\n${applyReceipt.files} file applicati atomicamente con recovery locale disponibile sul PC.`;
+  if (step.verification?.program) {
+    const commandLabel = localCommandLabel(step.verification);
+    const verifyApproved = await confirmModal(
+      `Modifiche applicate. Eseguire ora la verifica locale proposta?\n\n${commandLabel}\n\ncwd: ${step.verification.cwd || "."}\ntimeout: ${step.verification.timeout_seconds}s\n\nMotivo: ${step.verification.reason || "verifica delle modifiche"}`,
+      { okLabel: "Esegui verifica", danger: true },
+    );
+    toolHistory.push(`run ${step.verification.cwd || "."} :: ${commandLabel}`);
+    if (verifyApproved) {
+      const commandId = localUuid();
+      state.localCommandId = commandId;
+      assistantNode.textContent = `Esecuzione locale · ${commandLabel}\nUsa Stop per interrompere il processo.`;
+      let commandReceipt;
+      try {
+        commandReceipt = await desktopInvoke("run_local_workspace_command", {
+          bridgeId: workspace.bridge_id,
+          commandId,
+          program: step.verification.program,
+          args: step.verification.args || [],
+          cwd: step.verification.cwd || ".",
+          timeoutSeconds: step.verification.timeout_seconds || 180,
+        });
+      } finally {
+        if (state.localCommandId === commandId) state.localCommandId = null;
+      }
+      executions.push(localExecutionTrainingEvidence(commandReceipt));
+      persistedResponse += `\n\nVerifica: ${commandLabel}\nexit ${commandReceipt.exit_code} · ${commandReceipt.duration_ms} ms`
+        + `${commandReceipt.timed_out ? " · TIMEOUT" : ""}${commandReceipt.cancelled ? " · CANCELLATA" : ""}`
+        + `\nstdout sha256 ${commandReceipt.stdout_sha256} (${commandReceipt.stdout_bytes} byte)`
+        + `\nstderr sha256 ${commandReceipt.stderr_sha256} (${commandReceipt.stderr_bytes} byte)`;
+    } else {
+      persistedResponse += `\n\nVerifica non eseguita: ${commandLabel}.`;
+    }
+  }
+  assistantNode.textContent = `${persistedResponse}\nRecovery locale: ${applyReceipt.recovery_path}`;
+  await persistLocalAgentResponse(projectPath, persistedResponse);
+  await recordLocalAgentTrainingAttempt({
+    projectPath, episodeId, task, response: persistedResponse, outcome: "plan_applied",
+    toolHistory, executions, assistantNode,
+  });
+  await loadProjectTree();
+  await renderActivityRail(projectPath);
+}
+
 async function sendChatMessage(message) {
   appendChatMessage("user", message);
   const assistantNode = appendChatMessage("assistant", "");
@@ -2742,6 +3102,13 @@ async function sendChatMessage(message) {
   state.chatAbort = new AbortController();
 
   try {
+    const directWorkspace = selectedDirectWorkspace();
+    const localContext = directWorkspace
+      ? await desktopInvoke("local_workspace_context", {
+        bridgeId: directWorkspace.bridge_id,
+        query: message,
+      })
+      : null;
     const selectedFiles = selectedChatFiles();
     let response;
     if (selectedFiles.length) {
@@ -2752,14 +3119,15 @@ async function sendChatMessage(message) {
       formData.append("reasoning_effort", state.reasoningEffort || "");
       formData.append("project_path", state.selectedProjectPath || "");
       formData.append("chat_id", state.selectedChatId || "");
+      formData.append("local_context", localContext?.content || "");
       selectedFiles.forEach((file) => formData.append("files", file));
-      response = await fetch(apiUrl("/api/chat/document"), {
+      response = await apiFetch("/api/chat/document", {
         method: "POST",
         body: formData,
         signal: state.chatAbort.signal,
       });
     } else {
-      response = await fetch(apiUrl("/api/chat"), {
+      response = await apiFetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2769,6 +3137,7 @@ async function sendChatMessage(message) {
           reasoning_effort: state.reasoningEffort || null,
           project_path: state.selectedProjectPath || null,
           chat_id: state.selectedChatId || null,
+          local_context: localContext?.content || null,
         }),
         signal: state.chatAbort.signal,
       });
@@ -2778,6 +3147,10 @@ async function sendChatMessage(message) {
     if (contentType.includes("application/json")) {
       const payload = await response.json();
       if (payload.error) throw new Error(payload.error);
+      if (payload.status === "local_agent_required" && directWorkspace) {
+        await runLocalWorkspaceAgent(message, directWorkspace, localContext, assistantNode);
+        return;
+      }
       if (payload.run_id && ["started", "queued", "running"].includes(payload.status)) {
         const mode = payload.mode === "scaffold" ? "scaffold" : "manutenzione";
         assistantNode.textContent = `Run ${payload.run_id} avviato in modalità ${mode}. Seguo la timeline.`;
@@ -2811,7 +3184,7 @@ async function sendChatMessage(message) {
 
     if (buffer.trim()) applyChatEvent(parseSseBlock(buffer), assistantNode);
   } catch (err) {
-    if (err.name !== "AbortError") assistantNode.textContent += `\n[error] ${err.message}`;
+    if (err?.name !== "AbortError") assistantNode.textContent += `\n[error] ${errorMessage(err, "Stream interrotto")}`;
   } finally {
     state.chatAbort = null;
     if ($("chat-file")) $("chat-file").value = "";
@@ -2862,7 +3235,7 @@ async function setProjectWorkDir() {
     if (!receipt) return;
     appendChatMessage(
       "assistant",
-      `${localWorkspace ? "Snapshot locale aggiornato" : "Cartella locale collegata"}: ${receipt.local_workspace.files} file${receipt.local_workspace.excluded_entries ? `, ${receipt.local_workspace.excluded_entries} elementi esclusi per sicurezza` : ""}; percorso Windows custodito solo da Tauri.`,
+      `${localWorkspace ? "Accesso locale verificato" : "Cartella locale collegata direttamente"}: ${receipt.local_workspace.display_name}; nessuna copia completa sul rig e percorso Windows custodito solo da Tauri.`,
     );
     await refresh();
     await renderActivityRail(state.selectedProjectPath);
@@ -2903,17 +3276,17 @@ function commandActions() {
       description: state.selectedProjectPath ? "Crea una chat nel progetto selezionato" : "Seleziona un progetto per creare chat multiple",
       icon: "+",
       group: "Workspace",
-      run: () => createProjectChat().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`)),
+      run: () => createProjectChat().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`)),
     },
     {
       id: "link-folder",
       title: "Collega cartella progetto",
       description: desktopBridgeAvailable()
-        ? "Scegli una cartella del PC e crea un mirror verificato sul rig"
+        ? "Autorizza DEVIN ad accedere direttamente a una cartella del PC"
         : "Autorizza una cartella esistente sulla macchina del backend",
       icon: "↧",
       group: "Workspace",
-      run: () => linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`)),
+      run: () => linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`)),
     },
     {
       id: "set-workdir",
@@ -2923,7 +3296,7 @@ function commandActions() {
         : "Seleziona prima un progetto",
       icon: "📁",
       group: "Workspace",
-      run: () => setProjectWorkDir().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`)),
+      run: () => setProjectWorkDir().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`)),
     },
     {
       id: "new-project",
@@ -2931,7 +3304,7 @@ function commandActions() {
       description: "Crea una cartella progetto gestita da DEVIN",
       icon: "□",
       group: "Workspace",
-      run: () => createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`)),
+      run: () => createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`)),
     },
     {
       id: "refresh",
@@ -3094,6 +3467,18 @@ function setupChatComposer() {
     }
   });
 
+  $("chat-stop")?.addEventListener("click", async () => {
+    const commandId = state.localCommandId;
+    if (commandId) {
+      try {
+        await desktopInvoke("cancel_local_workspace_command", { commandId });
+      } catch (error) {
+        console.warn("local command cancellation failed", error);
+      }
+    }
+    state.chatAbort?.abort();
+  });
+
   $("chat-file")?.addEventListener("change", () => {
     const files = selectedChatFiles();
     const label = formatFileLabel(files);
@@ -3105,28 +3490,28 @@ function setupChatComposer() {
   $("link-folder-button")?.addEventListener("click", () => {
     linkWorkspaceFolder().catch((err) => {
       console.error(err);
-      appendChatMessage("assistant", `[error] ${err.message}`);
+      appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
     });
   });
 
   $("new-project-button")?.addEventListener("click", () => {
     createWorkspaceProject().catch((err) => {
       console.error(err);
-      appendChatMessage("assistant", `[error] ${err.message}`);
+      appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
     });
   });
 
   $("workdir-set-button")?.addEventListener("click", () => {
     setProjectWorkDir().catch((err) => {
       console.error(err);
-      appendChatMessage("assistant", `[error] ${err.message}`);
+      appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
     });
   });
 
   $("new-chat-button")?.addEventListener("click", () => {
     createProjectChat().catch((err) => {
       console.error(err);
-      appendChatMessage("assistant", `[error] ${err.message}`);
+      appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
     });
   });
 
@@ -3218,9 +3603,9 @@ function setupChatComposer() {
       } else if (action === "attach") {
         $("chat-file")?.click();
       } else if (action === "link-folder") {
-        linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+        linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
       } else if (action === "new-project") {
-        createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${err.message}`));
+        createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
       }
       closeAllTools();
     });

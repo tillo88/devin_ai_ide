@@ -1,9 +1,9 @@
-"""Authenticated bridge between the Windows desktop and a managed rig mirror.
+"""Bridge between the Windows desktop and DEVIN project metadata.
 
-The browser never receives a Windows path.  Tauri selects and reads the local
-folder, uploads a bounded ZIP snapshot, and remembers the local path in its own
-protected registry.  The backend only sees an opaque bridge id and immutable
-snapshots below ``workspace/_local_mirrors``.
+The direct mode keeps the Windows path solely in Tauri's protected registry:
+the backend receives only an opaque bridge id while tree, reads and retrieval
+run in the desktop process.  The older bounded snapshot endpoint remains for
+compatibility with already-linked workspaces and verified change export.
 """
 
 from __future__ import annotations
@@ -220,6 +220,7 @@ def _public_metadata(project: Path) -> dict[str, Any] | None:
         return None
     return {
         "schema": SNAPSHOT_SCHEMA,
+        "mode": payload.get("mode", "snapshot"),
         "bridge_id": payload.get("bridge_id"),
         "display_name": payload.get("display_name"),
         "snapshot_digest": payload.get("snapshot_digest"),
@@ -232,6 +233,42 @@ def _public_metadata(project: Path) -> dict[str, Any] | None:
 
 def local_workspace_for_project(project_path: str | Path) -> dict[str, Any] | None:
     return _public_metadata(Path(project_path).expanduser().resolve())
+
+
+@router.post("/api/local-workspace/register")
+async def api_local_workspace_register(request: Request):
+    """Register an opaque desktop-owned workspace without copying its files."""
+    from devin.ui.fast_app import WORKSPACE_DIR
+
+    try:
+        data = await request.json()
+        bridge = _bridge_id(data.get("bridge_id", ""))
+        display_name = _safe_project_name(data.get("display_name", "workspace-locale"))
+        project = _project_for_snapshot(
+            WORKSPACE_DIR,
+            display_name,
+            bridge,
+            str(data.get("project_path", "") or ""),
+        )
+        metadata = {
+            "schema": SNAPSHOT_SCHEMA,
+            "mode": "direct",
+            "bridge_id": bridge,
+            "display_name": display_name,
+            "snapshot_digest": "",
+            "files": 0,
+            "bytes": 0,
+            "excluded_entries": 0,
+            "updated_at": _utc_now(),
+        }
+        _write_json_atomic(project / ".devin" / "local_workspace.json", metadata)
+        return {
+            "status": "registered",
+            "project_path": str(project),
+            "local_workspace": metadata,
+        }
+    except (LocalWorkspaceError, OSError, ValueError) as exc:
+        return {"error": str(exc)}
 
 
 @router.post("/api/local-workspace/snapshot")
@@ -278,6 +315,7 @@ async def api_local_workspace_snapshot(
         ProjectSpace(str(project)).set_work_dir(str(destination))
         metadata = {
             "schema": SNAPSHOT_SCHEMA,
+            "mode": "snapshot",
             "bridge_id": bridge,
             "display_name": _safe_project_name(display_name),
             "snapshot_digest": digest,

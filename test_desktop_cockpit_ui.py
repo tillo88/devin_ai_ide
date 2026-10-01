@@ -28,7 +28,8 @@ def test_cockpit_exposes_lifecycle_model_context_and_goal_surfaces():
         "goal-stream-status",
     ):
         assert f'id="{element_id}"' in html
-    assert "Agent Swarm" in html
+    assert "Ruoli del rig" in html
+    assert "Agent Swarm" not in html
     assert "MCP Tools" in html
 
 

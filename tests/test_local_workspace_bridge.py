@@ -1,4 +1,6 @@
+import asyncio
 import io
+import json
 import stat
 import zipfile
 
@@ -66,3 +68,40 @@ def test_bridge_and_digest_identifiers_are_strict():
         bridge._bridge_id("not-a-uuid")
     with pytest.raises(bridge.LocalWorkspaceError):
         bridge._digest("abc")
+
+
+def test_direct_registration_keeps_only_opaque_metadata(tmp_path, monkeypatch):
+    from devin.ui import fast_app
+
+    class Request:
+        async def json(self):
+            return {
+                "bridge_id": "12345678-1234-4234-9234-123456789abc",
+                "display_name": "Windows project",
+                "project_path": "",
+            }
+
+    monkeypatch.setattr(fast_app, "WORKSPACE_DIR", tmp_path)
+    result = asyncio.run(bridge.api_local_workspace_register(Request()))
+
+    assert result["status"] == "registered"
+    assert result["local_workspace"]["mode"] == "direct"
+    assert result["local_workspace"]["snapshot_digest"] == ""
+    assert result["local_workspace"]["files"] == 0
+    metadata_path = tmp_path / "Windows project" / ".devin" / "local_workspace.json"
+    persisted = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert persisted["bridge_id"] == "12345678-1234-4234-9234-123456789abc"
+    assert "local_path" not in persisted
+    assert not (tmp_path / "_local_mirrors").exists()
+
+
+def test_public_metadata_defaults_legacy_records_to_snapshot(tmp_path):
+    metadata = tmp_path / ".devin" / "local_workspace.json"
+    metadata.parent.mkdir()
+    metadata.write_text(json.dumps({
+        "schema": bridge.SNAPSHOT_SCHEMA,
+        "bridge_id": "12345678-1234-4234-9234-123456789abc",
+        "display_name": "legacy",
+    }), encoding="utf-8")
+
+    assert bridge._public_metadata(tmp_path)["mode"] == "snapshot"
