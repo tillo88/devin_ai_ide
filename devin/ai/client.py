@@ -582,7 +582,7 @@ class AIClient:
         return _TIMEOUT_PER_SFORZO.get(sforzo, _TIMEOUT_PER_SFORZO[""])
 
     def _corpo(self, model, messages, sforzo="", stream=False, max_tokens=None,
-               temperature=None):
+               temperature=None, response_format=None):
         """Costruisce UNA volta il corpo della richiesta.
 
         Tre copie dello stesso dizionario in tre metodi erano il motivo per cui
@@ -598,6 +598,10 @@ class AIClient:
             corpo["stream"] = True
         if sforzo:
             corpo["chat_template_kwargs"] = {"reasoning_effort": sforzo}
+        if response_format is not None:
+            if not isinstance(response_format, dict):
+                raise ValueError("response_format deve essere un oggetto JSON")
+            corpo["response_format"] = response_format
         return corpo
 
     @staticmethod
@@ -787,7 +791,8 @@ class AIClient:
                 return k
         return 0
 
-    def stream_eventi(self, messages, mode="reasoning", sforzo="", max_attempts=None):
+    def stream_eventi(self, messages, mode="reasoning", sforzo="", max_attempts=None,
+                      response_format=None):
         """Streaming che DISTINGUE il ragionamento dalla risposta.
 
         Produce dizionari {"tipo": ..., "testo": ...} con tipo fra
@@ -827,7 +832,13 @@ class AIClient:
                 url, model = self._get_endpoints(mode)
                 with requests.post(
                     url,
-                    json=self._corpo(model, messages, sforzo=sforzo, stream=True),
+                    json=self._corpo(
+                        model,
+                        messages,
+                        sforzo=sforzo,
+                        stream=True,
+                        response_format=response_format,
+                    ),
                     timeout=timeout,
                     stream=True,
                     headers=self._auth_headers(url)
@@ -941,7 +952,8 @@ class AIClient:
                            "testo": f"\n[Stream error after {attempt_limit} attempts: {e}]"}
                     return
 
-    def stream(self, messages, mode="reasoning", sforzo="", max_attempts=None):
+    def stream(self, messages, mode="reasoning", sforzo="", max_attempts=None,
+               response_format=None):
         """Streaming di solo TESTO DELLA RISPOSTA, per chi non vuole il pensiero.
 
         Resta la firma di prima (produce stringhe) perche' autocomplete e
@@ -954,6 +966,7 @@ class AIClient:
             mode=mode,
             sforzo=sforzo,
             max_attempts=max_attempts,
+            response_format=response_format,
         ):
             if evento["tipo"] in ("risposta", "avviso"):
                 yield evento["testo"]

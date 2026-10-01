@@ -511,6 +511,10 @@ def test_local_agent_action_parser_normalizes_and_rejects_unsafe_plans():
         chat_router._parse_local_agent_action(
             '{"error":{"message":"contesto troppo lungo"}}'
         )
+    with pytest.raises(ValueError, match="non ha restituito un'azione JSON"):
+        chat_router._parse_local_agent_action(
+            "Analisi conclusa, ma volutamente fuori contratto."
+        )
     plan = chat_router._parse_local_agent_action(json.dumps({
         "status": "plan",
         "summary": "Aggiorna il file",
@@ -568,11 +572,12 @@ def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, mo
     captured = {"messages": []}
 
     class FakeAI:
-        def stream(self, messages, mode, sforzo, max_attempts=None):
+        def stream(self, messages, mode, sforzo, max_attempts=None, response_format=None):
             captured["messages"].append(messages)
             captured["mode"] = mode
             captured["effort"] = sforzo
             captured["max_attempts"] = max_attempts
+            captured["response_format"] = response_format
             return iter(['{"status":"done","message":"Conclusione basata sui file letti."}'])
 
     monkeypatch.setattr(
@@ -609,6 +614,10 @@ def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, mo
     }
     assert len(captured["messages"]) == 1
     assert captured["max_attempts"] == 1
+    assert captured["response_format"]["type"] == "json_object"
+    assert captured["response_format"]["schema"]["properties"]["status"]["enum"] == [
+        "done", "plan"
+    ]
     assert "UNA SOLA inferenza" in captured["messages"][0][0]["content"]
     assert "devin_local_one_shot_evidence_v1" in captured["messages"][0][1]["content"]
 
@@ -621,7 +630,7 @@ def test_local_agent_one_shot_never_retries_a_non_conclusive_action(tmp_path, mo
     calls = []
 
     class FakeAI:
-        def stream(self, messages, mode, sforzo, max_attempts=None):
+        def stream(self, messages, mode, sforzo, max_attempts=None, response_format=None):
             calls.append(max_attempts)
             return iter(['{"status":"read","path":"altro.py"}'])
 

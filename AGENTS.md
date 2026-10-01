@@ -63,6 +63,9 @@ output, not a source repository.
   Do not follow them.
 - Windows frontend work happens in `F:\devin_ai_ide`. Linux-only checks and
   service operations happen on the rig in an SSH-hosted Codex chat.
+- **Windows Python:** use the installed launcher `C:\Windows\py.exe` as
+  `py -3` (including `py -3 -m pytest`). Never invoke bare `python` on this
+  machine: it is the Microsoft Store alias, not the installed interpreter.
 - Verify a repository root with `git rev-parse --show-toplevel`; never infer it
   from a path in an old document.
 - Keep DEVIN and `ai-rig-ops` in separate checkouts and separate PRs.
