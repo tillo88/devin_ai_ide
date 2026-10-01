@@ -69,6 +69,10 @@ from devin.ui.routers.local_workspace import local_workspace_for_project
 
 router = APIRouter()
 
+_LOCAL_AGENT_EVIDENCE_MAX_CHARS = 20_000
+_LOCAL_AGENT_OUTPUT_MAX_TOKENS = 1_536
+_LOCAL_AGENT_TRUNCATION_MARKER = "[Output troncato dal modello:"
+
 
 def _detect_mode(message: str) -> str:
     """Rileva se la domanda richiede reasoning o coding."""
@@ -572,8 +576,13 @@ async def api_local_workspace_agent_once(req: LocalAgentOnceRequest):
     evidence_pack = req.evidence_pack.strip()
     if not evidence_pack:
         return {"error": "evidenze locali mancanti"}
-    if len(evidence_pack) > 48_000:
-        return {"error": "evidence pack locale oltre 48.000 caratteri"}
+    if len(evidence_pack) > _LOCAL_AGENT_EVIDENCE_MAX_CHARS:
+        return {
+            "error": (
+                "evidence pack locale oltre 20.000 caratteri; "
+                "la richiesta non e' stata inviata al modello"
+            )
+        }
     launcher = _get_launcher()
     if launcher:
         await asyncio.to_thread(launcher.ensure_models)
@@ -616,8 +625,16 @@ async def api_local_workspace_agent_once(req: LocalAgentOnceRequest):
                 sforzo=req.reasoning_effort or "medium",
                 max_attempts=1,
                 response_format=_LOCAL_AGENT_RESPONSE_FORMAT,
+                max_tokens=_LOCAL_AGENT_OUTPUT_MAX_TOKENS,
             ))
         )
+        if _LOCAL_AGENT_TRUNCATION_MARKER in answer:
+            return {
+                "error": (
+                    "La risposta one-shot ha raggiunto il limite token ed e' stata rifiutata; "
+                    "nessun retry automatico eseguito."
+                )
+            }
         if answer.lstrip().startswith("[") and (
             "Stream error" in answer or "Slot DEVIN non disponibile" in answer
         ):

@@ -792,7 +792,7 @@ class AIClient:
         return 0
 
     def stream_eventi(self, messages, mode="reasoning", sforzo="", max_attempts=None,
-                      response_format=None):
+                      response_format=None, max_tokens=None):
         """Streaming che DISTINGUE il ragionamento dalla risposta.
 
         Produce dizionari {"tipo": ..., "testo": ...} con tipo fra
@@ -827,6 +827,7 @@ class AIClient:
             # tentativo fallito non deve sporcare quello nuovo.
             dentro_il_pensiero = False
             coda = ""
+            finish_reason = None
 
             try:
                 url, model = self._get_endpoints(mode)
@@ -837,6 +838,7 @@ class AIClient:
                         messages,
                         sforzo=sforzo,
                         stream=True,
+                        max_tokens=max_tokens,
                         response_format=response_format,
                     ),
                     timeout=timeout,
@@ -882,7 +884,9 @@ class AIClient:
                         except json.JSONDecodeError:
                             continue
 
-                        delta = (pezzo.get('choices') or [{}])[0].get('delta') or {}
+                        choice = (pezzo.get('choices') or [{}])[0]
+                        finish_reason = choice.get('finish_reason') or finish_reason
+                        delta = choice.get('delta') or {}
 
                         # 1) La via pulita: il server ha separato lui il pensiero.
                         pensiero = delta.get('reasoning_content')
@@ -931,6 +935,11 @@ class AIClient:
                     if coda:
                         yield {"tipo": "ragionamento" if dentro_il_pensiero else "risposta",
                                "testo": coda}
+                    if finish_reason in {"length", "max_tokens"}:
+                        yield {
+                            "tipo": "avviso",
+                            "testo": "\n[Output troncato dal modello: limite token raggiunto]",
+                        }
                     return
 
             except RigUnavailableError as e:
@@ -953,7 +962,7 @@ class AIClient:
                     return
 
     def stream(self, messages, mode="reasoning", sforzo="", max_attempts=None,
-               response_format=None):
+               response_format=None, max_tokens=None):
         """Streaming di solo TESTO DELLA RISPOSTA, per chi non vuole il pensiero.
 
         Resta la firma di prima (produce stringhe) perche' autocomplete e
@@ -967,6 +976,7 @@ class AIClient:
             sforzo=sforzo,
             max_attempts=max_attempts,
             response_format=response_format,
+            max_tokens=max_tokens,
         ):
             if evento["tipo"] in ("risposta", "avviso"):
                 yield evento["testo"]

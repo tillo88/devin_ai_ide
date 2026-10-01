@@ -307,10 +307,24 @@ class TestStreamRetry:
                 MESSAGES,
                 max_attempts=1,
                 response_format=response_format,
+                max_tokens=1536,
             ))
         assert out == ['{"status":"done"}']
         assert mock_post.call_count == 1
         assert mock_post.call_args.kwargs["json"]["response_format"] == response_format
+        assert mock_post.call_args.kwargs["json"]["max_tokens"] == 1536
+
+    def test_stream_reports_length_finish_reason(self):
+        client = _make_client()
+        lines = [
+            b'data: {"choices": [{"delta": {"content": "{\\"status\\":\\"done\\",\\"message\\":\\"cut"}}]}',
+            b'data: {"choices": [{"delta": {}, "finish_reason": "length"}]}',
+            b'data: [DONE]',
+        ]
+        with patch("devin.ai.client.requests.post", return_value=_stream_response(lines=lines)):
+            out = list(client.stream(MESSAGES, max_attempts=1))
+        assert out[0] == '{"status":"done","message":"cut'
+        assert "Output troncato dal modello" in out[1]
 
     def test_stream_exhausted_retries_yield_error_notice(self):
         client = _make_client()

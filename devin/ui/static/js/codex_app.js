@@ -8,6 +8,7 @@ import {
 import { projectFlowSnapshot } from "./project_flow.js";
 
 const $ = (id) => document.getElementById(id);
+const LOCAL_AGENT_EVIDENCE_MAX_CHARS = 20000;
 
 const state = {
   selectedRunId: null,
@@ -2813,6 +2814,14 @@ function localAgentBoundedText(value, maxChars = 6000) {
   return `${text.slice(0, headChars)}\n[CLIENT: omessi ${omitted} caratteri centrali]\n${text.slice(-tailChars)}`;
 }
 
+function localAgentEvidencePack(sections, maxChars = LOCAL_AGENT_EVIDENCE_MAX_CHARS) {
+  const joined = sections.filter(Boolean).join("\n\n");
+  if (joined.length <= maxChars) return joined;
+  const marker = "\n\n[CLIENT: evidence pack troncato per riservare contesto alla risposta]";
+  const keep = Math.max(0, maxChars - marker.length);
+  return `${joined.slice(0, keep).trimEnd()}${marker}`;
+}
+
 function localAgentFileObservation(file, maxChars = 5000) {
   const header = `LETTURA ${file.path} · SHA256 ${file.sha256} · ${file.size} byte`
     + `${file.truncated ? " · TRONCATA, non modificare senza ulteriori prove" : ""}\n`;
@@ -2953,7 +2962,7 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
   let treeChars = 0;
   for (const entry of ordered) {
     const line = `${entry.is_text ? "[text]" : "[binary]"} ${entry.path} (${entry.size} byte)`;
-    if (treeLines.length >= 120 || treeChars + line.length + 1 > 5000) break;
+    if (treeLines.length >= 120 || treeChars + line.length + 1 > 3500) break;
     treeLines.push(line);
     treeChars += line.length + 1;
   }
@@ -2967,7 +2976,7 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
   const selectedPaths = [...new Set(
     (Array.isArray(initialContext?.files) ? initialContext.files : [])
       .filter((path) => typeof path === "string" && path),
-  )].slice(0, 4);
+  )].slice(0, 3);
   const fileEvidence = [];
   for (let index = 0; index < selectedPaths.length; index += 1) {
     const path = selectedPaths[index];
@@ -2978,7 +2987,7 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
         path,
       });
       toolHistory.push(`read ${path}`);
-      fileEvidence.push(localAgentFileObservation(file, 6000));
+      fileEvidence.push(localAgentFileObservation(file, 4000));
     } catch (error) {
       toolHistory.push(`read_failed ${path}`);
       fileEvidence.push(`LETTURA NON DISPONIBILE ${path}: ${errorMessage(error)}`);
@@ -2987,7 +2996,7 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
   if (fileEvidence.length) evidenceSections.push(`LETTURE SELEZIONATE\n${fileEvidence.join("\n\n")}`);
   if (initialContext?.content) {
     evidenceSections.push(
-      `RETRIEVAL AGGIUNTIVO BOUNDED\n${localAgentBoundedText(initialContext.content, 8000)}`,
+      `RETRIEVAL AGGIUNTIVO BOUNDED\n${localAgentBoundedText(initialContext.content, 3000)}`,
     );
     toolHistory.push("retrieval");
   }
@@ -2999,15 +3008,12 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
     });
     if (web.error) throw new Error(web.error);
     evidenceSections.push(
-      `EVIDENZA WEB VERIFICABILE\n${localAgentBoundedText(web.content || "Nessun risultato.", 5000)}`,
+      `EVIDENZA WEB VERIFICABILE\n${localAgentBoundedText(web.content || "Nessun risultato.", 2000)}`,
     );
     toolHistory.push("web_search");
   }
 
-  const evidencePack = evidenceSections.join("\n\n");
-  if (evidencePack.length > 48000) {
-    throw new Error("Evidence pack locale oltre il limite one-shot di 48.000 caratteri.");
-  }
+  const evidencePack = localAgentEvidencePack(evidenceSections);
   assistantNode.textContent = "Agente locale · singola inferenza, nessun retry…";
   const step = await postJson("/api/local-workspace/agent-once", {
     task,

@@ -572,12 +572,14 @@ def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, mo
     captured = {"messages": []}
 
     class FakeAI:
-        def stream(self, messages, mode, sforzo, max_attempts=None, response_format=None):
+        def stream(self, messages, mode, sforzo, max_attempts=None, response_format=None,
+                   max_tokens=None):
             captured["messages"].append(messages)
             captured["mode"] = mode
             captured["effort"] = sforzo
             captured["max_attempts"] = max_attempts
             captured["response_format"] = response_format
+            captured["max_tokens"] = max_tokens
             return iter(['{"status":"done","message":"Conclusione basata sui file letti."}'])
 
     monkeypatch.setattr(
@@ -614,6 +616,7 @@ def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, mo
     }
     assert len(captured["messages"]) == 1
     assert captured["max_attempts"] == 1
+    assert captured["max_tokens"] == 1536
     assert captured["response_format"]["type"] == "json_object"
     assert captured["response_format"]["schema"]["properties"]["status"]["enum"] == [
         "done", "plan"
@@ -630,7 +633,8 @@ def test_local_agent_one_shot_never_retries_a_non_conclusive_action(tmp_path, mo
     calls = []
 
     class FakeAI:
-        def stream(self, messages, mode, sforzo, max_attempts=None, response_format=None):
+        def stream(self, messages, mode, sforzo, max_attempts=None, response_format=None,
+                   max_tokens=None):
             calls.append(max_attempts)
             return iter(['{"status":"read","path":"altro.py"}'])
 
@@ -655,6 +659,38 @@ def test_local_agent_one_shot_never_retries_a_non_conclusive_action(tmp_path, mo
 
     assert calls == [1]
     assert "nessuna seconda inferenza" in result["error"]
+
+
+def test_local_agent_one_shot_rejects_evidence_that_consumes_output_budget(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    class UnexpectedAI:
+        def stream(self, *args, **kwargs):
+            raise AssertionError("il modello non deve essere chiamato")
+
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(fast_app, "_get_launcher", lambda: None)
+    monkeypatch.setattr(fast_app, "_get_ai_client", lambda: UnexpectedAI())
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: {"mode": "direct", "bridge_id": "fixture"},
+    )
+
+    result = asyncio.run(chat_router.api_local_workspace_agent_once(
+        chat_router.LocalAgentOnceRequest(
+            task="Analizza il progetto",
+            project_path=str(tmp_path),
+            evidence_pack="x" * 20_001,
+        )
+    ))
+
+    assert "oltre 20.000 caratteri" in result["error"]
+    assert "non e' stata inviata" in result["error"]
 
 
 def test_direct_local_agent_turn_persists_user_and_assistant(tmp_path, monkeypatch):
@@ -720,9 +756,11 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert '/api/chat/document' in js
     assert 'desktopInvoke("local_workspace_tree"' in js
     assert 'ALBERO WORKSPACE' in js
-    assert 'treeChars + line.length + 1 > 5000' in js
+    assert 'treeChars + line.length + 1 > 3500' in js
     assert 'localAgentFileObservation' in js
     assert 'SCHEMA devin_local_one_shot_evidence_v1' in js
+    assert 'LOCAL_AGENT_EVIDENCE_MAX_CHARS = 20000' in js
+    assert 'localAgentEvidencePack(evidenceSections)' in js
     assert '/api/local-workspace/agent-once' in js
     assert '/api/local-workspace/agent-step' not in js
     assert 'singola inferenza, nessun retry' in js
