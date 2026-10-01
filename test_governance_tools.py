@@ -37,6 +37,7 @@ def test_tool_registry_reports_real_guards_budgets_and_disabled_terminal_input()
         "run_log",
         "knowledge_ingestion",
         "routing_plan",
+        "local_workspace_process",
         "terminal_input",
     }
     assert tools["project_files"]["access"] == "read_only"
@@ -49,6 +50,9 @@ def test_tool_registry_reports_real_guards_budgets_and_disabled_terminal_input()
     }
     assert tools["knowledge_ingestion"]["budgets"]["max_upload_bytes"] == 20 * 1024 * 1024
     assert tools["routing_plan"]["access"] == "plan_only"
+    assert tools["local_workspace_process"]["access"] == "approval_gated_execution"
+    assert "explicit_human_confirmation" in tools["local_workspace_process"]["guards"]
+    assert tools["local_workspace_process"]["budgets"]["max_timeout_seconds"] == 900
     assert tools["terminal_input"]["status"] == "disabled_placeholder"
     assert tools["terminal_input"]["access"] == "none"
 

@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from devin.ai.hybrid_memory_client import HybridMemoryClient
 from devin.ai.understory_client import UnderstoryClient
 
@@ -342,6 +344,344 @@ def test_existing_project_operational_chat_starts_maintenance_run(tmp_path, monk
     assert "UI/UX" in captured["task"]
 
 
+def test_direct_windows_project_never_routes_run_to_backend_metadata(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    project = tmp_path / "windows-project-metadata"
+    project.mkdir()
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: {"mode": "direct", "bridge_id": "opaque"},
+    )
+
+    async def forbidden_run(_):
+        raise AssertionError("a direct Windows task must not run in backend metadata")
+
+    monkeypatch.setattr(chat_router, "api_run", forbidden_run)
+    result = asyncio.run(chat_router.api_chat(chat_router.ChatRequest(
+        message="Modifica la GUI e poi esegui i test",
+        project_path=str(project),
+        local_context="--- FILE LOCALE: src/app.js ---\nconsole.log('fixture')",
+    )))
+
+    assert result["status"] == "local_agent_required"
+    assert "agente desktop" in result["message"]
+
+
+def test_direct_windows_project_analysis_uses_read_search_agent(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    project = tmp_path / "windows-project-metadata"
+    project.mkdir()
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: {"mode": "direct", "bridge_id": "opaque"},
+    )
+
+    result = asyncio.run(chat_router.api_chat(chat_router.ChatRequest(
+        message="Capisci cosa fa il progetto e cosa c'e da debuggare",
+        project_path=str(project),
+        local_context="--- FILE LOCALE: main.py ---\nprint('fixture')",
+    )))
+
+    assert result["status"] == "local_agent_required"
+    assert "leggere e cercare" in result["message"]
+
+
+def test_local_context_accepts_legacy_text_debug_summary(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    project = tmp_path / "windows-project-metadata"
+    project.mkdir()
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(
+        fast_app,
+        "_build_project_context",
+        lambda *args, **kwargs: ([], "legacy debug summary"),
+    )
+    monkeypatch.setattr(fast_app, "_get_launcher", lambda: None)
+
+    class FakeAI:
+        config = {"chat": {"continuity": {"enabled": False}}, "models": {}}
+
+        @staticmethod
+        def _get_endpoints(mode):
+            return "http://fixture.invalid", "fixture-model"
+
+    monkeypatch.setattr(fast_app, "_get_ai_client", lambda: FakeAI())
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: None,
+    )
+
+    result = asyncio.run(chat_router.api_chat(chat_router.ChatRequest(
+        message="Ciao, che cosa contiene questa cartella?",
+        project_path=str(project),
+        local_context="--- FILE LOCALE: src/app.js ---\nconsole.log('fixture')",
+    )))
+
+    assert result.media_type == "text/event-stream"
+
+
+def test_local_agent_action_parser_normalizes_and_rejects_unsafe_plans():
+    from devin.ui.routers import chat as chat_router
+
+    read = chat_router._parse_local_agent_action(
+        '```json\n{"status":"read","path":"src/app.js","reason":"serve il file"}\n```'
+    )
+    assert read == {
+        "status": "read",
+        "path": "src/app.js",
+        "reason": "serve il file",
+    }
+    tree = chat_router._parse_local_agent_action(
+        '{"status":"search","query":"*","reason":"serve la struttura"}'
+    )
+    assert tree == {"status": "tree", "reason": "serve la struttura"}
+    read_many = chat_router._parse_local_agent_action(
+        '{"status":"read_many","paths":["main.py","src/app.js"],"reason":"entrypoint"}'
+    )
+    assert read_many == {
+        "status": "read_many",
+        "paths": ["main.py", "src/app.js"],
+        "reason": "entrypoint",
+    }
+    read_many_alias = chat_router._parse_local_agent_action(
+        '{"status":"read_many","files":"README.md","reason":"alias tollerato"}'
+    )
+    assert read_many_alias["paths"] == ["README.md"]
+    capped_read_many = chat_router._parse_local_agent_action(json.dumps({
+        "status": "read_many",
+        "paths": ["a.py", "b.py", "c.py", "d.py"],
+    }))
+    assert capped_read_many["paths"] == ["a.py", "b.py", "c.py"]
+    with pytest.raises(ValueError, match="path locale non sicuro"):
+        chat_router._parse_local_agent_action(
+            '{"status":"read_many","paths":["../outside.py"]}'
+        )
+    run = chat_router._parse_local_agent_action(json.dumps({
+        "status": "run",
+        "program": "python",
+        "args": ["main.py", "--mock", "--dry-run"],
+        "cwd": ".",
+        "timeout_seconds": 240,
+        "reason": "smoke end-to-end",
+    }))
+    assert run == {
+        "status": "run",
+        "program": "python",
+        "args": ["main.py", "--mock", "--dry-run"],
+        "cwd": ".",
+        "timeout_seconds": 240,
+        "reason": "smoke end-to-end",
+    }
+    web = chat_router._parse_local_agent_action(
+        '{"status":"web_search","query":"documentazione ufficiale pytest"}'
+    )
+    assert web["status"] == "web_search"
+    with pytest.raises(ValueError, match="path locale non sicuro"):
+        chat_router._parse_local_agent_action(
+            '{"status":"run","program":"python","args":["main.py"],"cwd":"../outside"}'
+        )
+    inferred_done = chat_router._parse_local_agent_action(
+        '{"answer":"Analisi conclusa con prove dai file."}'
+    )
+    assert inferred_done == {
+        "status": "done",
+        "message": "Analisi conclusa con prove dai file.",
+    }
+    with pytest.raises(ValueError, match="contesto troppo lungo"):
+        chat_router._parse_local_agent_action(
+            '{"error":{"message":"contesto troppo lungo"}}'
+        )
+    plan = chat_router._parse_local_agent_action(json.dumps({
+        "status": "plan",
+        "summary": "Aggiorna il file",
+        "operations": [{
+            "path": "src/app.js",
+            "operation": "write",
+            "content": "console.log('ok');\n",
+            "expected_sha256": "ab" * 32,
+        }],
+        "verification": {
+            "program": "python",
+            "args": ["-m", "pytest", "-q"],
+            "cwd": ".",
+            "timeout_seconds": 240,
+            "reason": "suite mirata",
+        },
+    }))
+    assert plan["operations"][0]["expected_sha256"] == "ab" * 32
+    assert plan["verification"] == {
+        "program": "python",
+        "args": ["-m", "pytest", "-q"],
+        "cwd": ".",
+        "timeout_seconds": 240,
+        "reason": "suite mirata",
+    }
+    inferred = chat_router._parse_local_agent_action(json.dumps({
+        "status": "plan",
+        "operations": [{"path": "hello.txt", "content": "hello\n"}],
+    }))
+    assert inferred["operations"] == [{
+        "path": "hello.txt",
+        "operation": "write",
+        "content": "hello\n",
+        "expected_sha256": None,
+    }]
+    assert inferred["verification"] is None
+
+    with pytest.raises(ValueError, match="path locale non sicuro"):
+        chat_router._parse_local_agent_action(json.dumps({
+            "status": "plan",
+            "operations": [{
+                "path": "../outside.txt",
+                "operation": "write",
+                "content": "bad",
+                "expected_sha256": None,
+            }],
+        }))
+
+
+def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    captured = {"messages": []}
+
+    class FakeAI:
+        def stream(self, messages, mode, sforzo, max_attempts=None):
+            captured["messages"].append(messages)
+            captured["mode"] = mode
+            captured["effort"] = sforzo
+            captured["max_attempts"] = max_attempts
+            return iter(['{"status":"done","message":"Conclusione basata sui file letti."}'])
+
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(fast_app, "_get_launcher", lambda: None)
+    monkeypatch.setattr(fast_app, "_get_ai_client", lambda: FakeAI())
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: {"mode": "direct", "bridge_id": "fixture"},
+    )
+
+    disabled = asyncio.run(chat_router.api_local_workspace_agent_step(
+        chat_router.LocalAgentStepRequest(
+            task="Spiega il progetto e indica cosa va debuggato",
+            project_path=str(tmp_path),
+        )
+    ))
+    assert "multi-step disabilitata" in disabled["error"]
+    assert captured["messages"] == []
+
+    result = asyncio.run(chat_router.api_local_workspace_agent_once(
+        chat_router.LocalAgentOnceRequest(
+            task="Spiega il progetto e indica cosa va debuggato",
+            project_path=str(tmp_path),
+            evidence_pack="SCHEMA devin_local_one_shot_evidence_v1\nLETTURA main.py\nprint('fixture')",
+        )
+    ))
+
+    assert result == {
+        "status": "done",
+        "message": "Conclusione basata sui file letti.",
+    }
+    assert len(captured["messages"]) == 1
+    assert captured["max_attempts"] == 1
+    assert "UNA SOLA inferenza" in captured["messages"][0][0]["content"]
+    assert "devin_local_one_shot_evidence_v1" in captured["messages"][0][1]["content"]
+
+
+def test_local_agent_one_shot_never_retries_a_non_conclusive_action(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    calls = []
+
+    class FakeAI:
+        def stream(self, messages, mode, sforzo, max_attempts=None):
+            calls.append(max_attempts)
+            return iter(['{"status":"read","path":"altro.py"}'])
+
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(fast_app, "_get_launcher", lambda: None)
+    monkeypatch.setattr(fast_app, "_get_ai_client", lambda: FakeAI())
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: {"mode": "direct", "bridge_id": "fixture"},
+    )
+
+    result = asyncio.run(chat_router.api_local_workspace_agent_once(
+        chat_router.LocalAgentOnceRequest(
+            task="Analizza il progetto",
+            project_path=str(tmp_path),
+            evidence_pack="SCHEMA devin_local_one_shot_evidence_v1\nALBERO WORKSPACE",
+        )
+    ))
+
+    assert calls == [1]
+    assert "nessuna seconda inferenza" in result["error"]
+
+
+def test_direct_local_agent_turn_persists_user_and_assistant(tmp_path, monkeypatch):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: str(tmp_path)
+    )
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: {"mode": "direct", "bridge_id": "fixture"},
+    )
+    routed = asyncio.run(chat_router.api_chat(chat_router.ChatRequest(
+        message="Analizza il progetto e verifica i test",
+        project_path=str(tmp_path),
+        chat_id="chat_fixture",
+    )))
+    assert routed["status"] == "local_agent_required"
+    completed = asyncio.run(chat_router.api_local_workspace_agent_complete(
+        chat_router.LocalAgentCompleteRequest(
+            project_path=str(tmp_path),
+            chat_id="chat_fixture",
+            response="Analisi conclusa con evidenze reali.",
+        )
+    ))
+    assert completed["status"] == "persisted"
+    history = chat_router.ChatPersistence(str(tmp_path), chat_id="chat_fixture").load()
+    assert [(item["role"], item["content"]) for item in history] == [
+        ("user", "Analizza il progetto e verifica i test"),
+        ("assistant", "Analisi conclusa con evidenze reali."),
+    ]
+
+
 
 def test_codex_app_shell_is_local_first_and_wired():
     from pathlib import Path
@@ -369,6 +709,19 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert '/events/stream' in js
     assert '/api/chat' in js
     assert '/api/chat/document' in js
+    assert 'desktopInvoke("local_workspace_tree"' in js
+    assert 'ALBERO WORKSPACE' in js
+    assert 'treeChars + line.length + 1 > 5000' in js
+    assert 'localAgentFileObservation' in js
+    assert 'SCHEMA devin_local_one_shot_evidence_v1' in js
+    assert '/api/local-workspace/agent-once' in js
+    assert '/api/local-workspace/agent-step' not in js
+    assert 'singola inferenza, nessun retry' in js
+    assert 'desktopInvoke("run_local_workspace_command"' in js
+    assert 'desktopInvoke("cancel_local_workspace_command"' in js
+    assert '/api/training/local-agent/attempt' in js
+    assert '/api/local-workspace/agent-complete' in js
+    assert 'id="chat-stop"' in html
     assert 'payload.run_id && ["started", "queued", "running"]' in js
     assert 'await selectRun(payload.run_id)' in js
     assert 'chat returned JSON' in js
@@ -552,7 +905,7 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert "start-fastapi-headless.sh" not in host_prepare
     assert "configure-windows-desktop.ps1" in host_prepare
     assert "nativeLauncher" in host_prepare
-    assert "[Security.SecureString]$AccessToken" in desktop_configure
+    assert "AccessToken" not in desktop_configure
     assert '"/inheritance:r"' in desktop_configure
     assert "prepare-windows-desktop-host.ps1" in desktop_cmd
     assert r"%LOCALAPPDATA%\DEVIN\DEVIN Desktop.cmd" in desktop_cmd
@@ -563,7 +916,7 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert 'tauriInvoke("save_frontdoor_config"' in bootstrap
     assert "connect_frontdoor" in main_rs
     assert "save_frontdoor_config" in main_rs
-    assert "DEVIN_FRONTDOOR_TOKEN" in main_rs
+    assert "DEVIN_FRONTDOOR_TOKEN" not in main_rs
     assert "start_local_backend" not in main_rs
     assert "CloseRequested" not in main_rs
 
@@ -572,15 +925,34 @@ def test_tauri_desktop_shell_targets_workspace_app():
     assert "topbar-command" in html
     assert "active-scope-label" in html
     assert "Modern desktop polish layer" in css
-    # The local bundle is only a protected connection screen. Rust then
-    # navigates the webview to the authenticated front door on the rig.
+    # The Windows app owns the local cockpit bundle. The rig provides API and
+    # model services only; Tauri must not replace the UI with a remote page.
     assert config["build"]["frontendDist"] == "frontend"
     assert "devUrl" not in config["build"]
     assert config["bundle"]["targets"] == ["nsis", "msi"]
     assert config["version"] == "0.2.0"
     assert "url" not in config["app"]["windows"][0]
+    assert ".navigate(" not in main_rs
+    assert "installDesktopTransport(connection)" in bootstrap
     assert "resources" not in config["bundle"]
-    assert capability["permissions"] == ["core:default"]
+    assert capability["permissions"] == [
+        "core:default",
+        "allow-connect-frontdoor",
+        "allow-desktop-config-status",
+        "allow-test-frontdoor-connection",
+        "allow-save-frontdoor-config",
+        "allow-desktop-http-stream",
+        "allow-desktop-http-cancel",
+        "allow-select-and-sync-local-workspace",
+        "allow-sync-local-workspace",
+        "allow-local-workspace-tree",
+        "allow-local-workspace-read",
+        "allow-local-workspace-context",
+        "allow-run-local-workspace-command",
+        "allow-cancel-local-workspace-command",
+        "allow-apply-local-workspace-plan",
+        "allow-apply-local-workspace-changes",
+    ]
     assert "thin client" in docs
     assert "front door" in docs
     assert "%APPDATA%\\DEVIN\\desktop.json" in docs

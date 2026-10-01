@@ -248,6 +248,19 @@ def _stream_response(status=200, lines=(), text=""):
 
 
 class TestStreamRetry:
+    def test_stream_max_attempts_one_disables_retry_and_refresh(self):
+        client = _make_client()
+        with patch("devin.ai.client.requests.post",
+                   side_effect=requests.exceptions.ConnectionError("down")) as mock_post, \
+             patch("devin.ai.client.time.sleep") as mock_sleep, \
+             patch.object(client, "refresh") as mock_refresh:
+            out = list(client.stream(MESSAGES, max_attempts=1))
+        assert mock_post.call_count == 1
+        mock_sleep.assert_not_called()
+        mock_refresh.assert_not_called()
+        assert len(out) == 1
+        assert "Stream error after 1 attempts" in out[0]
+
     def test_4xx_yields_notice_without_retry(self):
         client = _make_client()
         ctx = _stream_response(status=400, text="exceed context window")

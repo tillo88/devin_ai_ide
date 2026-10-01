@@ -121,6 +121,7 @@ async def api_workspace_projects():
             if not d.is_dir() or d.name.startswith(("_", ".")) or d.name == "sandbox":
                 continue
             ps = ProjectSpace(str(d))
+            from devin.ui.routers.local_workspace import local_workspace_for_project
             projects.append({
                 "name": d.name,
                 "path": str(d),
@@ -129,6 +130,7 @@ async def api_workspace_projects():
                 "has_instructions": bool(ps.get_instructions()),
                 "work_dir": ps.get_work_dir(),
                 "linked": False,
+                "local_workspace": local_workspace_for_project(d),
             })
     for d in sorted(_LINKED_PROJECT_ROOTS, key=lambda item: item.name.lower()):
         if not d.exists() or not d.is_dir():

@@ -68,6 +68,40 @@ def _training_safe_slug(value: str, fallback: str = "case") -> str:
     return (text[:48] or fallback).strip("_") or fallback
 
 
+def _bounded_local_agent_trace(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep local-agent provenance useful without copying workspace contents.
+
+    File observations and command output stay on the Windows PC.  The training
+    store receives only action labels, exit metadata and content hashes; every
+    episode remains pending_review until Teacher or a human supplies a verdict.
+    """
+    tools = data.get("tool_history") if isinstance(data.get("tool_history"), list) else []
+    clean_tools = [str(item)[:300] for item in tools[:40] if str(item).strip()]
+    executions = data.get("executions") if isinstance(data.get("executions"), list) else []
+    clean_executions = []
+    allowed = {
+        "command_digest", "program", "args", "cwd", "exit_code", "success",
+        "timed_out", "cancelled", "duration_ms", "stdout_bytes", "stderr_bytes",
+        "stdout_sha256", "stderr_sha256", "output_truncated", "policy",
+    }
+    for raw in executions[:20]:
+        if not isinstance(raw, dict):
+            continue
+        item = {key: raw.get(key) for key in allowed if key in raw}
+        if isinstance(item.get("args"), list):
+            item["args"] = [str(arg)[:500] for arg in item["args"][:64]]
+        clean_executions.append(item)
+    return {
+        "schema": "devin_local_agent_training_trace_v1",
+        "outcome": str(data.get("outcome") or "completed")[:100],
+        "tool_history": clean_tools,
+        "executions": clean_executions,
+        "raw_file_content_stored": False,
+        "raw_command_output_stored": False,
+        "promotion_policy": "pending_human_or_teacher_review",
+    }
+
+
 def _training_case_prompt(case: Dict[str, Any]) -> str:
     expected = case.get("expected_signals") or []
     expected_text = ", ".join(expected) if expected else "crea output verificabile"
@@ -293,6 +327,55 @@ async def api_training_attempts_add(request: Request):
     except ValueError as exc:
         return {"error": str(exc)}
     return {"attempt": attempt}
+
+
+@router.post("/api/training/local-agent/attempt")
+async def api_training_local_agent_attempt(request: Request):
+    """Queue one desktop-agent episode for review, never auto-promote it."""
+    data = await request.json()
+    store = _training_store_for(data.get("project_path", ""))
+    task = str(data.get("task") or "").strip()[:8000]
+    response = str(data.get("response") or "").strip()[:12_000]
+    if not task or not response:
+        return {"error": "task e response sono obbligatori per la traccia locale"}
+    episode_id = _training_safe_slug(
+        str(data.get("episode_id") or datetime.now().strftime("episode_%Y%m%d_%H%M%S")),
+        "episode",
+    )
+    trace = _bounded_local_agent_trace(data)
+    try:
+        case = store.add_case(
+            task=task,
+            title=f"Local agent · {task[:70]}",
+            kind="agent_episode",
+            tags=["local-agent", "desktop", "pending-review"],
+            source="local-agent",
+            expected_signals=["human_or_teacher_verdict", "evidence_backed_answer"],
+            metadata={
+                "schema": trace["schema"],
+                "episode_id": episode_id,
+                "outcome": trace["outcome"],
+                "raw_workspace_content_stored": False,
+            },
+        )
+        attempt = store.add_attempt(
+            case_id=case["case_id"],
+            prompt=task,
+            response=response,
+            status="pending_review",
+            tests=trace,
+            run_id=episode_id,
+            artifacts=[],
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    return {
+        "schema": "devin_local_agent_training_attempt_v1",
+        "case": case,
+        "attempt": attempt,
+        "review_required": True,
+        "auto_promoted": False,
+    }
 
 
 @router.post("/api/training/reviews")

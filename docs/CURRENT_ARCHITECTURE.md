@@ -20,15 +20,17 @@ handoff sono in `../CURRENT.md` e `LOCAL_WINDOWS_WORKSPACE_20260929.md`.
 
 ## 1. Un solo backend logico, due superfici
 
-Il frontend Tauri/Codex-like sul PC è il client. Il backend FastAPI e il modello
-DEVIN vivono sul rig. La copia Tauri in `%LOCALAPPDATA%\DEVIN\desktop-host` è un
-artefatto generato dal repository, non va modificata come fonte primaria.
+Il frontend Tauri/Codex-like sul PC è il client e resta caricato dal bundle
+locale per tutta la sessione. Il backend FastAPI e il modello DEVIN vivono sul
+rig e ricevono traffico API dalla LAN fidata. La copia Tauri in
+`%LOCALAPPDATA%\DEVIN\desktop-host` è un artefatto generato dal repository, non
+va modificata come fonte primaria.
 Gli intermedi Rust sono anch'essi generati, ma vivono nella sola cache
 `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`: non devono ricomparire nel
 checkout né essere confusi con il peso dell'app installata.
-Il bootstrap locale `0.2` gestisce prima configurazione e retry: Rust conserva
-il token sotto ACL utente/SYSTEM, mentre il probe “Test senza attivare” verifica
-soltanto la raggiungibilità TCP del frontdoor e non può cambiare ruolo GPU.
+Il bootstrap locale `0.2` gestisce prima configurazione e retry: sul PC salva
+soltanto l'endpoint del rig, mentre il probe “Test senza attivare” verifica la
+raggiungibilità TCP del frontdoor e non può cambiare ruolo GPU.
 
 Sul rig il frontdoor è sempre attivo e leggero. Quando nessun frontend è
 collegato, Clippy può restare residente. Alla prima richiesta DEVIN il frontdoor
@@ -38,8 +40,8 @@ il periodo idle configurato, la sessione viene rilasciata e Clippy torna
 residente.
 
 ```text
-Tauri / browser
-      │ HTTP, token
+Tauri (UI locale) / browser nella LAN fidata
+      │ HTTP
       ▼
 frontdoor :5000 (sempre attivo)
       │ sessione on-demand
@@ -80,6 +82,30 @@ walk e profondità; non segue symlink e omette runtime, cache e segreti comuni.
 nuovo containment e sensibilità del path. Il cockpit C3.1 non espone save: il
 writer storico `/api/file/save` resta escluso dalla nuova shell e le mutazioni
 continuano a passare dal manifest diff con review esplicita.
+
+Per una cartella Windows `mode=direct` questo confine si sposta nel processo
+Tauri: il backend conserva solo un UUID opaco. Il cockpit invoca comandi nativi
+per tree, lettura e retrieval; filtri, containment e rifiuto dei symlink sono
+rieseguiti in Rust a ogni operazione. Il modello riceve soltanto estratti
+pertinenti con path relativi e SHA-256, non il path Windows. Un intento
+operativo prepara deterministicamente sul PC un evidence pack bounded (albero,
+retrieval e fino a quattro letture con fingerprint) prima di interrogare il
+modello. `/api/local-workspace/agent-once` esegue una sola inferenza con
+`max_attempts=1` e accetta soltanto `done|plan`; il vecchio endpoint multi-step
+fallisce esplicitamente. Il piano finale richiede conferma visibile e Tauri
+applica le scritture solo se i fingerprint coincidono ancora. Il recovery vive
+sul PC fuori dal progetto. La dimensione totale del repository non e' un
+limite: i cap valgono per vista, evidence pack e singolo piano, non per il
+collegamento della cartella.
+
+`verification` e' un executor Windows separato dal writer: un `plan` puo'
+proporre un solo comando dopo l'apply, richiede conferma, non usa shell, accetta
+solo tool di sviluppo allowlisted e lavora con cwd contenuta, ambiente
+ripulito, output bounded+hashed, timeout e Windows Job per la cancellazione
+dell'intero albero. Il risultato non provoca una seconda inferenza. La ricevuta
+completa resta nel client; la pipeline training riceve solo metadati/digest e
+mette ogni episodio in `pending_review`. Il contratto completo e' in
+`LOCAL_AGENT_EXECUTION_AND_TRAINING.md`.
 
 La review C3.2 usa soltanto `change_manifest_v1`: la preview bounded viene
 separata per file e mostrata Prima/Dopo nel workspace centrale. Il client

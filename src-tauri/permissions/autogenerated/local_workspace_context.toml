@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-workspace-context"
+description = "Enables the local_workspace_context command without any pre-configured scope."
+commands.allow = ["local_workspace_context"]
+
+[[permission]]
+identifier = "deny-local-workspace-context"
+description = "Denies the local_workspace_context command without any pre-configured scope."
+commands.deny = ["local_workspace_context"]

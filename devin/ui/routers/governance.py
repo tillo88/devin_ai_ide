@@ -118,6 +118,31 @@ async def api_tools_status():
                 "budgets": {},
             },
             {
+                "tool_id": "local_workspace_process",
+                "kind": "tauri_ipc",
+                "status": "desktop_only",
+                "access": "approval_gated_execution",
+                "endpoints": [
+                    "IPC run_local_workspace_command",
+                    "IPC cancel_local_workspace_command",
+                ],
+                "guards": [
+                    "local_tauri_origin_only",
+                    "registered_workspace_root",
+                    "explicit_human_confirmation",
+                    "no_shell_program_allowlist",
+                    "sanitized_environment_without_secrets",
+                    "windows_job_tree_cancellation",
+                    "bounded_hashed_output",
+                ],
+                "budgets": {
+                    "max_args": 64,
+                    "max_timeout_seconds": 900,
+                    "max_stdout_bytes_retained": 98304,
+                    "max_stderr_bytes_retained": 98304,
+                },
+            },
+            {
                 "tool_id": "terminal_input",
                 "kind": "builtin_http",
                 "status": "disabled_placeholder",

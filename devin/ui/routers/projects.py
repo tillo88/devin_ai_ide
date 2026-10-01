@@ -74,6 +74,8 @@ async def api_project_overview(
         "work_dir": ps.get_work_dir(),
         "chats": ps.list_chats(),
     }
+    from devin.ui.routers.local_workspace import local_workspace_for_project
+    payload["local_workspace"] = local_workspace_for_project(ps.project_path)
     if lite:
         return payload
     payload.update({

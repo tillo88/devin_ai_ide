@@ -232,8 +232,9 @@ tempi e finding senza ripetere probe modello/hardware:
 
 ## C6 — interaction polish dopo il primo collaudo live
 
-Stato: **in corso**. I contratti di interazione sono entrati in `main`; il
-prossimo incremento è il redesign visuale dal progetto locale Windows.
+Stato: **redesign completo sul branch `codex/frontend-visual-redesign`**. I
+contratti di interazione sono entrati in `main`; la fondazione visuale e il
+collaudo finale restano sul branch fino alla prova della versione candidata.
 
 - sostituire “web sempre attiva” con `web auto`: il backend attiva la ricerca
   solo per intento esplicito e sceglie la catena SearXNG/TinyFish secondo il
@@ -255,15 +256,40 @@ prossimo incremento è il redesign visuale dal progetto locale Windows.
   collegata a stati reali, manifest verificato e log bounded;
 - `web auto`, snapshot health fail-soft, identità modello e tempi stream sono
   già presenti nella shell corrente;
-- cache PWA corrente: `v16`.
+- cache PWA corrente: `v20`.
 
-### C6.2 — prossimo incremento visuale
+### C6.2 — fondazione visuale consegnata
 
-La verifica su Windows mostra il nuovo flusso dentro la texture storica. Il
-prossimo lavoro deve aggiornare palette, gerarchia, spaziatura, densità e
-componenti del cockpit senza riscrivere i contratti già consegnati. Il lavoro
-parte da `F:\devin_ai_ide` e viene provato con il launcher Tauri di sviluppo;
-l'EXE installato `0.2.0` resta una release separata finché non viene ricostruito.
+Il cockpit usa ora superfici graphite, accenti blu desaturati e una gerarchia
+centre-first. Palette, spaziatura, densita' e componenti sono state aggiornate
+senza riscrivere i contratti gia' consegnati. L'EXE installato `0.2.0` resta una
+release separata finche' non viene ricostruito.
+
+### C6.3 — leggibilita' e superfici primarie consegnate
+
+- scala tipografica rialzata per stato, progetto e contesto;
+- rail Workspace/Mind alleggeriti e composer reso azione primaria;
+- Goal e Runs adottano una larghezza editoriale e restano responsive;
+- replay Playwright con screenshot Chat e breakpoint 1440/1000/390.
+
+### C6.4 — workspace operativi consegnati
+
+- Editor read-only, manifest Diff, Log bounded e Governance condividono la
+  gerarchia visuale C6 senza perdere digest, filtri o confini di autorizzazione;
+- il diff mobile impila Prima/Dopo per riga e resta entro il viewport;
+- il replay offline usa fixture strutturate e cattura tutte le viste operative,
+  verificandone visibilita' e assenza di overflow a 1000 e 390 px.
+
+### C6.5 — chiusura visuale e replay finale consegnati
+
+- il tab centrale attivo cambia nel primo frame, senza lasciare per un istante
+  due indicatori concorrenti durante la transizione tra superfici;
+- il replay richiede esattamente un tab `.active` e un solo
+  `aria-pressed=true` per Chat, Goal, Runs, Editor, Diff, Log e Governance;
+- `PLAYWRIGHT_MODULE` accetta direttamente anche un path assoluto Windows e il
+  replay fotografa Chat, oltre alle viste operative, a 1440/1000/390 px;
+- l'oracolo dei tab e' stato mutation-tested: una selezione bloccata su Chat
+  produce `active tab mismatch` e rende il replay rosso.
 
 Acceptance C6:
 

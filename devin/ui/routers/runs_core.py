@@ -283,6 +283,7 @@ async def api_run_changes_apply(req: ChangeDecisionRequest):
             "run_id": req.run_id,
             "status": final_status,
             "applied": True,
+            "entry_digest": manifest["entry_digest"],
             "commit": commit_result,
             "counts": manifest["counts"],
             "recovered": recovered,
@@ -341,6 +342,7 @@ async def api_run_changes_reject(req: ChangeDecisionRequest):
         persistence.save(state)
         _record_decision(req, "rejected", "verified changes rejected by user")
         return {"run_id": req.run_id, "status": "rejected", "applied": False,
+                "entry_digest": manifest["entry_digest"],
                 "recovered": recovered}
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc), "run_id": req.run_id}
@@ -380,6 +382,7 @@ async def api_run_changes_rollback(req: ChangeDecisionRequest):
         persistence.save(state)
         _record_decision(req, "rolled_back", "approved changes rolled back")
         return {"run_id": req.run_id, "status": "rolled_back", "applied": False,
+                "entry_digest": manifest["entry_digest"],
                 "recovered": recovered}
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc), "run_id": req.run_id}

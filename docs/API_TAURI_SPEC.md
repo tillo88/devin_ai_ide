@@ -16,7 +16,7 @@
 ## Desktop Wrapper
 
 ### Tauri 2 rig-frontdoor client
-**Purpose**: Windows-native thin client for the workspace shell served by the authenticated DEVIN front door on the rig.
+**Purpose**: Windows-native thin client with a local workspace shell and a trusted-LAN DEVIN API/backend on the rig.
 
 **Files**:
 - `package.json`
@@ -28,19 +28,75 @@
 - `scripts/configure-windows-desktop.ps1`
 - `scripts/launch-windows-desktop-host.ps1`
 
-**Current backend model**: FastAPI, workspaces, training jobs and model lifecycle stay on the rig. Rust reads and atomically writes `%APPDATA%\DEVIN\desktop.json`, validates the front-door URL/token and navigates the webview without returning stored credentials to JavaScript. No local backend or sidecar is started by the normal desktop launcher.
+**Current backend model**: FastAPI, workspaces, training jobs and model lifecycle stay on the rig. The full frontend stays in the local Tauri bundle. Rust reads and atomically writes `%APPDATA%\DEVIN\desktop.json`, validates the front-door URL and owns HTTP transport to the trusted LAN. Response metadata/chunks cross IPC through Tauri Channels. No local backend or sidecar is started by the normal desktop launcher.
 
 **Native command surface (`v0.2`)**:
 
-- `desktop_config_status`: returns only configuration state, endpoint and
-  environment-override state; never the token;
+- `desktop_config_status`: returns configuration state, endpoint and
+  environment-override state;
 - `test_frontdoor_connection(frontdoorUrl)`: bounded TCP reachability probe,
   no credential and no HTTP activation request;
-- `save_frontdoor_config(frontdoorUrl, accessToken?)`: validates, applies the
-  user/SYSTEM ACL and atomically replaces the JSON file; an omitted token may
-  preserve an already valid stored token;
-- `connect_frontdoor`: probes reachability, obtains the credential inside Rust
-  and navigates to the token bootstrap URL.
+- `save_frontdoor_config(frontdoorUrl)`: validates, applies the user/SYSTEM ACL
+  and atomically replaces the JSON file;
+- `connect_frontdoor`: probes reachability and returns only the configured
+  origin to the trusted local bootstrap;
+- `desktop_http_stream(request, onEvent)`: validates a relative API path,
+  method and bounded body, and streams response
+  head/chunks/done through a Tauri Channel;
+- `desktop_http_cancel(requestId)`: propagates frontend cancellation to the
+  active native request.
+
+**Local workspace agent (`v0.5`)**:
+
+- `select_and_sync_local_workspace(projectPath?)`: opens the native folder
+  picker, registers only an opaque id on the backend and stores the Windows
+  path only in `%APPDATA%\DEVIN\local-workspaces.json`;
+- `sync_local_workspace(bridgeId)`: revalidates that local registration without
+  scanning or copying the folder;
+- `local_workspace_tree(bridgeId)`, `local_workspace_read(bridgeId, path)` and
+  `local_workspace_context(bridgeId, query)`: list, read and retrieve filtered
+  text directly from the authorized Windows root. JavaScript cannot supply a
+  new root path;
+- `apply_local_workspace_plan(bridgeId, operations)`: applies a user-approved
+  plan (max 20 operations / 2 MiB). Existing files require the SHA-256 observed
+  during the read; paths, symlinks and race conflicts fail closed. Writes are
+  atomic and overwritten/deleted files go to local recovery;
+- `apply_local_workspace_changes(bridgeId, projectPath, runId, entryDigest)`:
+  compatibility path for already-created snapshot runs.
+- `run_local_workspace_command(bridgeId, commandId, program, args, cwd,
+  timeoutSeconds)`: after an explicit UI confirmation, runs one allowlisted
+  non-interactive development command inside the registered workspace. It
+  returns `devin_local_command_receipt_v1` with bounded head/tail output,
+  full-stream hashes, exit status, timing and timeout/cancellation flags;
+- `cancel_local_workspace_command(commandId)`: closes the Windows Job assigned
+  to the command and therefore cancels its child process tree.
+
+These commands are exposed only to the local Tauri origin through the
+static capability for the main window. They also verify the caller origin
+inside Rust. The cockpit receives display metadata and the opaque bridge id,
+never the local filesystem path.
+
+Backend endpoints:
+
+- `POST /api/local-workspace/register`: creates/updates only direct-mode project
+  metadata (`files=0`, `bytes=0`);
+- `POST /api/local-workspace/agent-once`: accepts the bounded evidence pack
+  collected by Tauri and performs exactly one model attempt. It accepts only a
+  conclusive `done` or an approval-gated `plan`; a plan may include one
+  approval-gated verification command that runs after apply without another
+  model call;
+- `POST /api/local-workspace/agent-step`: compatibility fail-closed route for
+  stale desktop bundles; it never invokes the model because the multi-step
+  loop is disabled;
+- `POST /api/local-workspace/web-search`: bounded web evidence for direct-mode
+  agent sessions when the user enabled the web toggle;
+- `POST /api/local-workspace/agent-complete`: persists the final assistant
+  message in the selected project chat;
+- `POST /api/training/local-agent/attempt`: queues a sanitized agent episode as
+  `pending_review`; raw file content and raw command output are excluded;
+- `POST /api/local-workspace/snapshot`: legacy bounded mirror endpoint;
+- `GET /api/local-workspace/export/{run_id}`: digest-bound ZIP containing only
+  files declared by a legacy applied or rolled-back change manifest.
 
 ## Web/Tauri Shell Routes
 

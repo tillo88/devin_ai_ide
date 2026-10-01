@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// DEVIN Desktop is a thin client for the authenticated, always-on front door
-// on the rig. The backend, workspaces and model lifecycle all remain on the
-// rig; this process only validates local connection settings and navigates the
-// native webview. No local backend or model is spawned, and closing the window
-// does not stop a remote session (the front door owns its idle policy).
+// DEVIN Desktop is a thin client for the trusted-LAN, always-on front door
+// on the rig. The UI remains the local bundle shipped with the Windows app;
+// only API traffic crosses the network. This process validates connection
+// settings and owns the narrow local-folder agent (picker, reads and
+// conflict-checked atomic apply). No local backend or model is spawned, and closing
+// the window does not stop a remote session (the front door owns its idle
+// policy).
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -17,6 +19,19 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::Manager;
 
+mod desktop_transport;
+mod local_execution;
+mod local_workspace;
+use desktop_transport::{desktop_http_cancel, desktop_http_stream, DesktopTransportState};
+use local_execution::{
+    cancel_local_workspace_command, run_local_workspace_command, LocalExecutionState,
+};
+use local_workspace::{
+    apply_local_workspace_changes, apply_local_workspace_plan, local_workspace_context,
+    local_workspace_read, local_workspace_tree, select_and_sync_local_workspace,
+    sync_local_workspace,
+};
+
 const CONFIG_SCHEMA: &str = "devin_desktop_frontdoor_v1";
 const CONFIG_FILE: &str = "desktop.json";
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(1200);
@@ -24,7 +39,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(1200);
 #[derive(Debug)]
 struct DesktopConfig {
     frontdoor_url: tauri::Url,
-    access_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +56,12 @@ struct FrontdoorProbe {
     reachable: bool,
     origin: String,
     detail: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct DesktopConnection {
+    schema: &'static str,
+    api_base: String,
 }
 
 fn configured_path() -> Result<PathBuf, String> {
@@ -93,19 +113,6 @@ fn validate_frontdoor_url(raw: &str) -> Result<tauri::Url, String> {
     Ok(url)
 }
 
-fn validate_token(raw: &str) -> Result<String, String> {
-    if !(32..=256).contains(&raw.len()) {
-        return Err("access_token deve contenere da 32 a 256 caratteri".to_string());
-    }
-    if raw
-        .chars()
-        .any(|character| character.is_control() || character.is_whitespace())
-    {
-        return Err("access_token contiene spazi o caratteri di controllo".to_string());
-    }
-    Ok(raw.to_string())
-}
-
 fn load_config() -> Result<DesktopConfig, String> {
     let path = configured_path()?;
     reject_symlink(&path, "file")?;
@@ -147,21 +154,13 @@ fn load_config() -> Result<DesktopConfig, String> {
         .filter(|value| !value.is_empty())
         .or_else(|| optional_string(&document, "frontdoor_url"))
         .ok_or_else(|| format!("frontdoor_url mancante in {}", path.display()))?;
-    let token = std::env::var("DEVIN_FRONTDOOR_TOKEN")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| optional_string(&document, "access_token"))
-        .ok_or_else(|| format!("access_token mancante in {}", path.display()))?;
-
     Ok(DesktopConfig {
         frontdoor_url: validate_frontdoor_url(&frontdoor)?,
-        access_token: validate_token(&token)?,
     })
 }
 
 fn environment_override_present() -> bool {
     std::env::var_os("DEVIN_FRONTDOOR_URL").is_some()
-        || std::env::var_os("DEVIN_FRONTDOOR_TOKEN").is_some()
 }
 
 fn status_snapshot() -> DesktopConfigStatus {
@@ -284,25 +283,6 @@ fn replace_file(source: &std::path::Path, destination: &std::path::Path) -> std:
     fs::rename(source, destination)
 }
 
-fn existing_file_token(path: &std::path::Path) -> Result<Option<String>, String> {
-    reject_symlink(path, "file")?;
-    if let Some(directory) = path.parent() {
-        reject_symlink(directory, "directory")?;
-    }
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => {
-            return Err(format!(
-                "Impossibile leggere la configurazione DEVIN: {err}"
-            ))
-        }
-    };
-    let document: Value = serde_json::from_str(&raw)
-        .map_err(|err| format!("Configurazione DEVIN esistente non valida: {err}"))?;
-    Ok(optional_string(&document, "access_token"))
-}
-
 fn reject_symlink(path: &std::path::Path, kind: &str) -> Result<(), String> {
     if fs::symlink_metadata(path)
         .map(|metadata| metadata.file_type().is_symlink())
@@ -334,7 +314,6 @@ fn persist_config_at(
     let document = serde_json::json!({
         "schema": CONFIG_SCHEMA,
         "frontdoor_url": config.frontdoor_url.origin().ascii_serialization(),
-        "access_token": config.access_token,
     });
     let raw = serde_json::to_vec_pretty(&document)
         .map_err(|err| format!("Impossibile serializzare la configurazione DEVIN: {err}"))?;
@@ -364,16 +343,8 @@ fn persist_config(config: &DesktopConfig) -> Result<(), String> {
     persist_config_at(&path, config, true)
 }
 
-fn access_url(config: &DesktopConfig) -> tauri::Url {
-    let mut url = config.frontdoor_url.clone();
-    url.set_path("/app");
-    url.query_pairs_mut()
-        .append_pair("token", &config.access_token);
-    url
-}
-
 #[tauri::command]
-fn connect_frontdoor(app: tauri::AppHandle) -> Result<(), String> {
+fn connect_frontdoor(app: tauri::AppHandle) -> Result<DesktopConnection, String> {
     let config = load_config()?;
     if !frontdoor_reachable(&config.frontdoor_url) {
         return Err(format!(
@@ -381,12 +352,12 @@ fn connect_frontdoor(app: tauri::AppHandle) -> Result<(), String> {
             config.frontdoor_url.origin().ascii_serialization()
         ));
     }
-    let window = app
-        .get_webview_window("main")
+    app.get_webview_window("main")
         .ok_or_else(|| "Finestra DEVIN non disponibile".to_string())?;
-    window
-        .navigate(access_url(&config))
-        .map_err(|err| format!("Navigazione verso DEVIN fallita: {err}"))
+    Ok(DesktopConnection {
+        schema: "devin_desktop_connection_v1",
+        api_base: config.frontdoor_url.origin().ascii_serialization(),
+    })
 }
 
 #[tauri::command]
@@ -411,38 +382,39 @@ fn test_frontdoor_connection(frontdoor_url: String) -> Result<FrontdoorProbe, St
 }
 
 #[tauri::command]
-fn save_frontdoor_config(
-    frontdoor_url: String,
-    access_token: Option<String>,
-) -> Result<DesktopConfigStatus, String> {
+fn save_frontdoor_config(frontdoor_url: String) -> Result<DesktopConfigStatus, String> {
     if environment_override_present() {
         return Err(
-            "Configurazione gestita da DEVIN_FRONTDOOR_URL/DEVIN_FRONTDOOR_TOKEN; rimuovi gli override prima di salvarla dall'app."
+            "Configurazione gestita da DEVIN_FRONTDOOR_URL; rimuovi l'override prima di salvarla dall'app."
                 .to_string(),
         );
     }
     let url = validate_frontdoor_url(&frontdoor_url)?;
-    let path = configured_path()?;
-    let token = match access_token {
-        Some(value) if !value.is_empty() => validate_token(&value)?,
-        _ => existing_file_token(&path)?
-            .ok_or_else(|| "Inserisci il token frontdoor per la prima configurazione".to_string())
-            .and_then(|value| validate_token(&value))?,
-    };
-    persist_config(&DesktopConfig {
-        frontdoor_url: url,
-        access_token: token,
-    })?;
+    persist_config(&DesktopConfig { frontdoor_url: url })?;
     Ok(status_snapshot())
 }
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(DesktopTransportState::new().expect("desktop HTTP transport unavailable"))
+        .manage(LocalExecutionState::default())
         .invoke_handler(tauri::generate_handler![
             connect_frontdoor,
             desktop_config_status,
             test_frontdoor_connection,
-            save_frontdoor_config
+            save_frontdoor_config,
+            desktop_http_stream,
+            desktop_http_cancel,
+            select_and_sync_local_workspace,
+            sync_local_workspace,
+            local_workspace_tree,
+            local_workspace_read,
+            local_workspace_context,
+            run_local_workspace_command,
+            cancel_local_workspace_command,
+            apply_local_workspace_plan,
+            apply_local_workspace_changes
         ])
         .run(tauri::generate_context!())
         .expect("error while running DEVIN AI IDE desktop shell");
@@ -452,25 +424,19 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn token() -> String {
-        "0123456789abcdef0123456789abcdef".to_string()
-    }
-
     #[test]
-    fn builds_bootstrap_url_without_string_concatenation() {
+    fn builds_local_frontend_connection_without_token_in_url() {
         let config = DesktopConfig {
             frontdoor_url: validate_frontdoor_url("http://192.0.2.10:5000").unwrap(),
-            access_token: format!("{}+/=", token()),
         };
-        let target = access_url(&config);
-        assert_eq!(target.path(), "/app");
-        assert_eq!(
-            target
-                .query_pairs()
-                .find(|(key, _)| key == "token")
-                .map(|(_, value)| value.into_owned()),
-            Some(config.access_token)
-        );
+        let connection = DesktopConnection {
+            schema: "devin_desktop_connection_v1",
+            api_base: config.frontdoor_url.origin().ascii_serialization(),
+        };
+        let serialized = serde_json::to_string(&connection).unwrap();
+        assert_eq!(connection.api_base, "http://192.0.2.10:5000");
+        assert!(!serialized.contains("access_token"));
+        assert!(!serialized.contains("/app?token="));
     }
 
     #[test]
@@ -487,14 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn token_rules_match_frontdoor_contract() {
-        assert!(validate_token(&token()).is_ok());
-        assert!(validate_token("short").is_err());
-        assert!(validate_token(&format!("{} bad", token())).is_err());
-    }
-
-    #[test]
-    fn status_snapshot_never_exposes_the_token() {
+    fn status_snapshot_exposes_only_connection_metadata() {
         let status = DesktopConfigStatus {
             schema: "devin_desktop_config_status_v1",
             configured: true,
@@ -505,7 +464,6 @@ mod tests {
         let serialized = serde_json::to_string(&status).unwrap();
         assert!(serialized.contains("frontdoor_url"));
         assert!(!serialized.contains("access_token"));
-        assert!(!serialized.contains(&token()));
     }
 
     #[test]
@@ -522,14 +480,13 @@ mod tests {
         let path = directory.join("desktop.json");
         let config = DesktopConfig {
             frontdoor_url: validate_frontdoor_url("http://192.0.2.10:5000").unwrap(),
-            access_token: token(),
         };
 
         persist_config_at(&path, &config, false).unwrap();
         let document: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(document["schema"], CONFIG_SCHEMA);
         assert_eq!(document["frontdoor_url"], "http://192.0.2.10:5000");
-        assert_eq!(document["access_token"], token());
+        assert!(document.get("access_token").is_none());
         assert_eq!(
             fs::read_dir(&directory)
                 .unwrap()

@@ -75,6 +75,39 @@ def _read_jsonl(path):
             if line.strip()]
 
 
+def test_local_agent_attempt_is_review_only_and_excludes_raw_evidence(tmp_path, monkeypatch):
+    store = _patched_store(monkeypatch, tmp_path)
+    result = asyncio.run(training_router.api_training_local_agent_attempt(_fake_request({
+        "project_path": "/fixture/project",
+        "episode_id": "episode-fixture-1",
+        "task": "Analizza e verifica il progetto",
+        "response": "Ho eseguito i test: uno fallisce nel parser.",
+        "outcome": "analysis_completed",
+        "tool_history": ["tree", "read main.py", "run python -m pytest"],
+        "executions": [{
+            "program": "python",
+            "args": ["-m", "pytest", "-q"],
+            "exit_code": 1,
+            "stdout": "CONTENUTO CHE NON DEVE ESSERE SALVATO",
+            "stderr": "SEGRETO CHE NON DEVE ESSERE SALVATO",
+            "stdout_sha256": "ab" * 32,
+            "stderr_sha256": "cd" * 32,
+            "success": False,
+        }],
+    })))
+
+    assert result["review_required"] is True
+    assert result["auto_promoted"] is False
+    assert result["attempt"]["status"] == "pending_review"
+    trace = result["attempt"]["tests"]
+    assert trace["schema"] == "devin_local_agent_training_trace_v1"
+    assert trace["raw_file_content_stored"] is False
+    assert trace["raw_command_output_stored"] is False
+    assert "stdout" not in trace["executions"][0]
+    assert "stderr" not in trace["executions"][0]
+    assert store.review_queue()[0]["attempt_id"] == result["attempt"]["attempt_id"]
+
+
 # ---------------------------------------------------------------------------
 # 1. add_case: validazione + retire_case tombstone
 # ---------------------------------------------------------------------------

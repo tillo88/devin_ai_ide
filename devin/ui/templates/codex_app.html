@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#151311">
+  <meta name="theme-color" content="#0d0f12">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -17,7 +17,7 @@
   <header class="topbar">
     <button class="ghost-link panel-toggle" id="toggle-workspace-panel" type="button" title="Workspace" aria-label="Apri pannello workspace">&#9776;</button>
     <div class="brand">
-      <span class="brand-mark">&#129504;</span>
+      <span class="brand-mark" aria-hidden="true">D</span>
       <div>
         <div class="brand-title">DEVIN</div>
         <div class="brand-subtitle">AI IDE &middot; rig workspace</div>
@@ -69,7 +69,7 @@
         <button class="workspace-nav-item" type="button" data-open-view="runs"><span aria-hidden="true">&#9776;</span><strong>Runs</strong></button>
         <button class="workspace-nav-item" type="button" data-governance-focus="knowledge"><span>◇</span><strong>Knowledge</strong><small>isolata</small></button>
         <button class="workspace-nav-item" type="button" data-governance-focus="tools"><span>⌘</span><strong>MCP Tools</strong><small>deny by default</small></button>
-        <button class="workspace-nav-item" type="button" data-governance-focus="agents"><span>◎</span><strong>Agent Swarm</strong><small>ruoli reali</small></button>
+        <button class="workspace-nav-item" type="button" data-governance-focus="agents"><span>◎</span><strong>Ruoli del rig</strong><small>routing e lifecycle</small></button>
         <a class="workspace-nav-item" href="/app/diagnostics#training" data-diag-link="training"><span>△</span><strong>Training</strong></a>
       </nav>
       <section class="panel-section" id="projects-section">
@@ -159,7 +159,7 @@
       </section>
       <div class="chat-thread center-chat-view" id="chat-thread" aria-live="polite">
         <div class="chat-hero">
-          <div class="chat-hero-mark">&#129504;</div>
+          <div class="chat-hero-mark" aria-hidden="true">D</div>
           <h1>Ciao Alessandro.</h1>
           <p class="chat-hero-sub">Su cosa lavoriamo oggi?</p>
         </div>
@@ -223,6 +223,7 @@
               <option value="reasoning">reasoning</option>
             </select>
             <input type="file" id="chat-file" multiple hidden>
+            <button type="button" id="chat-stop" class="chat-stop-button" hidden>Stop</button>
             <button type="submit" id="chat-send">Invia</button>
           </div>
         </div>
@@ -424,8 +425,8 @@
         <div class="governance-dashboard">
           <article class="governance-surface" id="governance-agents-panel" data-governance-panel="agents">
             <header>
-              <div><span>Agent Swarm</span><strong>Ruoli del rig</strong></div>
-              <small>abilitato non significa residente</small>
+              <div><span>Routing dei ruoli</span><strong>Clippy, DEVIN e profili futuri</strong></div>
+              <small>catalogo del rig, non agent swarm</small>
             </header>
             <div class="governance-role-grid" id="governance-agent-grid">
               <div class="governance-empty">Caricamento profilo ruoli…</div>
