@@ -295,6 +295,49 @@ class LocalAgentCompleteRequest(BaseModel):
     response: str
 
 
+_LOCAL_AGENT_RESPONSE_FORMAT = {
+    "type": "json_object",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["done", "plan"]},
+            "message": {"type": "string"},
+            "summary": {"type": "string"},
+            "operations": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "operation": {"type": "string", "enum": ["write", "delete"]},
+                        "content": {"type": "string"},
+                        "expected_sha256": {"type": ["string", "null"]},
+                    },
+                    "required": ["path", "operation"],
+                    "additionalProperties": False,
+                },
+            },
+            "verification": {
+                "type": "object",
+                "properties": {
+                    "program": {"type": "string"},
+                    "args": {"type": "array", "items": {"type": "string"}},
+                    "cwd": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["program", "args"],
+                "additionalProperties": False,
+            },
+        },
+        "required": ["status"],
+        "additionalProperties": False,
+    },
+}
+
+
 def _safe_local_agent_path(raw: str) -> str:
     value = str(raw or "").strip()
     path = PurePosixPath(value)
@@ -572,6 +615,7 @@ async def api_local_workspace_agent_once(req: LocalAgentOnceRequest):
                 mode="coding",
                 sforzo=req.reasoning_effort or "medium",
                 max_attempts=1,
+                response_format=_LOCAL_AGENT_RESPONSE_FORMAT,
             ))
         )
         if answer.lstrip().startswith("[") and (

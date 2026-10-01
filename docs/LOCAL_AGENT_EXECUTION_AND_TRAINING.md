@@ -21,6 +21,12 @@ deterministico:
 Il backend invia questo pacchetto al modello una sola volta e accetta soltanto
 `done` o `plan`. Per questo endpoint `AIClient` usa `max_attempts=1`: timeout,
 connessione interrotta o risposta strumentale terminano il turno senza retry.
+La stessa richiesta imposta `response_format=json_object` con uno schema
+bounded per `done|plan`; BeeLlama converte lo schema in un vincolo di
+generazione. Il parser applicativo resta il secondo gate e rifiuta testo
+libero, status strumentali, path non sicuri, fingerprint errati e piani fuori
+budget. Non esiste un fallback che trasformi una risposta libera in un falso
+`done`.
 Il vecchio endpoint `agent-step` fallisce esplicitamente, cosi' un bundle
 desktop rimasto aperto non puo' riattivare il loop multi-inferenza.
 

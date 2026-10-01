@@ -184,6 +184,22 @@ Checkpoint finale del 1 ottobre:
   Inoltre: 17 test Rust, replay Playwright 1440/1000/390, smoke bundle locale,
   syntax check Python/JS e `git diff --check` verdi. L'app resta chiusa finche'
   il backend di produzione non espone il contratto one-shot.
+- il discriminatore tensor-split del 1 ottobre ha completato 6/6 inferenze
+  fresche senza reboot, tutte con 1.118 prompt token e split esplicito. C0
+  (ordine PCI esplicito, 1660S@03 prima e A2000 ultima) e' il candidato per il
+  lifecycle fresco: 51,32 s medi end-to-end. C1 (1080 Ti prima, 1660 Ti
+  ultima) resta il candidato residente per throughput: 73,62 prompt tok/s.
+  Il vecchio profilo dei tre hard reset non dichiarava ne' UUID order ne'
+  `--tensor-split`; la correlazione e' forte ma non prova ancora la root cause.
+  Receipt in `/home/tillo/ai-rig-experiments/tensor-split-20261001` e copia
+  locale ignorata in `_bridge/tensor-split-20261001`.
+- BeeLlama 0.4.6 supporta `response_format=json_object` con schema. Il client
+  one-shot inoltra ora uno schema `done|plan` nella stessa unica richiesta e
+  conserva il parser fail-closed come secondo gate; non converte testo libero
+  in successo. Il probe isolato C0 del 1 ottobre ha prodotto al primo tentativo
+  un `done` JSON valido, distinguendo fatti/ipotesi/limiti, con boot invariato e
+  Clippy ripristinato. Il bench e' stato mutation-tested sia sul forwarding
+  dello schema sia sul rifiuto degli status strumentali.
 
 Playwright e Chromium sono installati fuori dal repository sotto
 `%LOCALAPPDATA%\DEVIN\test-tools\playwright`; il replay cockpit si avvia con

@@ -285,6 +285,33 @@ class TestStreamRetry:
             out = list(client.stream(MESSAGES))
         assert out == ["Hello", " world"]
 
+    def test_stream_forwards_json_response_format_without_retry(self):
+        client = _make_client()
+        response_format = {
+            "type": "json_object",
+            "schema": {
+                "type": "object",
+                "properties": {"status": {"enum": ["done", "plan"]}},
+                "required": ["status"],
+            },
+        }
+        lines = [
+            b'data: {"choices": [{"delta": {"content": "{\\\"status\\\":\\\"done\\\"}"}}]}',
+            b'data: [DONE]',
+        ]
+        with patch(
+            "devin.ai.client.requests.post",
+            return_value=_stream_response(lines=lines),
+        ) as mock_post:
+            out = list(client.stream(
+                MESSAGES,
+                max_attempts=1,
+                response_format=response_format,
+            ))
+        assert out == ['{"status":"done"}']
+        assert mock_post.call_count == 1
+        assert mock_post.call_args.kwargs["json"]["response_format"] == response_format
+
     def test_stream_exhausted_retries_yield_error_notice(self):
         client = _make_client()
         with patch("devin.ai.client.requests.post",
