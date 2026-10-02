@@ -78,6 +78,10 @@ Checkpoint Council sullo stesso branch:
   (`openai`, `anthropic`, `google`) con prompt JSON per asse; sono sempre
   `automatic_send=false`, richiedono copia/incolla dell'operatore e non
   promuovono attempt o memoria;
+- Diagnostics espone ora il flusso a due gate: `Council` prepara un preview
+  bounded con path/secret euristicamente redatti, output grezzi e metadata
+  Golden esclusi; solo il secondo click approvato genera i cinque prompt con
+  pulsante di copia;
 - i pacchetti Council hanno ora un limite fail-closed di 32.000 caratteri;
 - il manifest `devin_colibri_batch_v1` e' resumable ma non avvia processi:
   registra engine, modello, famiglia e revisione. Qwen3.8-Flash-Next, Kimi K3
@@ -86,9 +90,12 @@ Checkpoint Council sullo stesso branch:
 - Colibri resta generatore di esperimenti, non autorita': solo il risultato
   content-addressed del rerun deterministico puo' risolvere l'arbitrato. Le
   Golden held-out sono esplicitamente escluse dagli input di training;
-- 14 test Council/API verdi; le mutazioni su invio automatico, modello GLM
+- 16 test Council/API verdi; le mutazioni su invio automatico, modello GLM
   hardcoded, revisione mutabile e family spoofing sono diventate rosse e sono
-  state ripristinate. Suite canonica finale: 722 test Python verdi, 7 skip e
+  state ripristinate. Le mutazioni aggiuntive su redazione secret e primo gate
+  UI sono diventate rosse e sono state ripristinate; il replay Playwright passa
+  anche da Diagnostics Council e verifica la sequenza preview/approvazione.
+  Suite canonica finale: 725 test Python verdi, 7 skip e
   un test symlink deselezionato, con `settings.json` assente durante il run e
   originale ripristinato SHA256 `DBC02AF75FDF`.
 

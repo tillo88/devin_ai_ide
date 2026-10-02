@@ -130,7 +130,9 @@ Tutto ciò è **ora implementato**; questa sezione resta come memoria del perch�
 - Adapter opzionale OpenAI/Claude con redazione e consenso.
 - Council manuale provider-agnostic: prepara pacchetti ciechi bounded per
   Codex/OpenAI, Claude e Gemini, poi l'operatore copia/incolla le risposte. Il
-  backend non contatta provider e non promuove il risultato.
+  backend non contatta provider e non promuove il risultato. Diagnostics usa
+  due passaggi: preview con secret/path redatti e metadati Golden esclusi,
+  quindi approvazione esplicita e pulsanti `Copia prompt`.
 - Validator finale Colibri: manifest batch stoppato per default con
   `model_id/family/revision` espliciti. Qwen3.8-Flash-Next, Kimi K3 e GLM sono
   profili alternativi da confrontare; Colibri propone esperimenti, mentre il

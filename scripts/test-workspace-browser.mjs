@@ -82,6 +82,10 @@ await page.route('**/*', async route => {
     const html = (await fs.readFile(path.join(root, 'devin/ui/templates/codex_app.html'), 'utf8')).replaceAll('{{ shell_version }}', 'browser-test');
     return route.fulfill({ contentType: 'text/html', body: html });
   }
+  if (u.pathname === '/app/diagnostics') {
+    const html = await fs.readFile(path.join(root, 'devin/ui/templates/codex_diagnostics.html'), 'utf8');
+    return route.fulfill({ contentType: 'text/html', body: html });
+  }
   if (u.pathname.startsWith('/static/')) {
     const f = path.resolve(root, 'devin/ui', '.' + u.pathname);
     if (!f.startsWith(path.join(root, 'devin/ui/static') + path.sep)) return route.abort();
@@ -108,6 +112,17 @@ await page.route('**/*', async route => {
       data = {status:'persisted',chars:posted.response?.length || 0};
     } else if (u.pathname === '/api/training/local-agent/attempt') {
       data = {schema:'devin_local_agent_training_attempt_v1',attempt:{attempt_id:'attempt_local_fixture'},review_required:true,auto_promoted:false};
+    } else if (u.pathname === '/api/council/manual/prepare') {
+      data = posted.redaction_approved ? {
+        schema:'devin_manual_council_preparation_v1',promotion_performed:false,
+        bundle:{automatic_send:false,operator_copy_required:true,prompts:Array.from({length:5},(_,index)=>({
+          packet_id:`crp_${index}`,axis:`axis_${index}`,reviewer_id:['manual-codex','manual-codex','manual-claude','manual-claude','manual-gemini'][index],family:['openai','openai','anthropic','anthropic','google'][index],prompt:`fixture prompt ${index}`,
+        }))},
+      } : {
+        schema:'devin_manual_council_preview_v1',approval_required:true,promotion_performed:false,
+        packet:{attempt_id:'attempt_council_fixture',prompt:'bounded fixture',response:'verified response',evidence:[{evidence_id:'sha256:'+'a'.repeat(64)}]},
+        redaction_manifest:{approved:false,automatic_send:false,operator_review_required:true},
+      };
     } else {
       data = {goal_run_id:'goal_fixture'};
     }
@@ -130,6 +145,11 @@ await page.route('**/*', async route => {
   } else if (u.pathname === '/api/runs') {
     if (runsUnavailable) return route.fulfill({status:503, json:{error:'fixture unavailable'}});
     data = [{run_id:'run_fixture',status:'failed',mtime:'2026-09-19T10:00:00Z'}];
+  } else if (u.pathname === '/api/training/overview') {
+    const attempt = {attempt_id:'attempt_council_fixture',case_id:'case_fixture',status:'pending_review',prompt:'bounded fixture',response:'verified response',tests:{}};
+    data = {summary:{cases:1,attempts:1},cases:[],attempts:[attempt],corrections:[],reviews:[],latest_reviews:{},review_queue:[{attempt_id:attempt.attempt_id,case_id:attempt.case_id,title:'Council fixture',status:'pending_review',gate:{status:'passed',tests_run:1},validators:{overall:'pass',signals:{}}}],lessons:[],benchmarks:[],jobs:[],memory_policy:{auto_promote:false,success_statuses:['verified_success'],failure_statuses:['verified_failure'],auto_statuses:['auto_success'],infra_statuses:['runner_error']}};
+  } else if (u.pathname === '/api/training/exports') {
+    data = {exports:[]};
   } else if (u.pathname === '/api/terminal/output') {
     data = {output:'[INFO] Starting bounded verification\n[WARNING] Retry budget at 50%\n[ERROR] Fixture failure\n[INFO] Evidence preserved',lines_returned:4,file_size:124};
   } else if (u.pathname.endsWith('/events')) {
@@ -361,6 +381,17 @@ try {
   assert.equal(failClosedOutcome,'error-message','desktop bridge failure did not fail closed');
   assert.equal(await page.locator('.app-modal-overlay').count(),0,'desktop bridge failure opened a backend-path modal');
   assert.equal(writes.filter(write => write.path === '/api/workspace/pick_folder').length,backendPickerWritesBefore,'desktop bridge failure called the backend picker');
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('http://workspace.test/app/diagnostics#training');
+  await page.locator('[data-council-attempt="attempt_council_fixture"]').first().waitFor();
+  await page.locator('[data-council-attempt="attempt_council_fixture"]').first().click();
+  await page.waitForFunction(() => !document.querySelector('#council-manual-approve').disabled);
+  assert.ok((await page.locator('#council-manual-preview').textContent()).includes('attempt_council_fixture'));
+  await page.locator('#council-manual-approve').click();
+  await page.locator('[data-council-copy]').first().waitFor();
+  assert.equal(await page.locator('[data-council-copy]').count(),5);
+  const councilWrites = writes.filter(write => write.path === '/api/council/manual/prepare');
+  assert.deepEqual(councilWrites.map(write => write.data.redaction_approved),[false,true]);
   assert.deepEqual(errors,[]);
-  console.log('PASS: Chat/Goal/Runs/Editor/Diff/Log/Governance, submission/race/error guards, local bridge opacity/fail-closed, responsive 1440/1000/390; no live APIs');
+  console.log('PASS: Chat/Goal/Runs/Editor/Diff/Log/Governance/Diagnostics Council, submission/race/error guards, local bridge opacity/fail-closed, responsive 1440/1000/390; no live APIs');
 } finally { await browser.close(); }

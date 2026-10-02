@@ -6,6 +6,7 @@ from devin.training.federated_council import (
     ReviewVerdict,
     ReviewerSpec,
     build_colibri_batch,
+    build_manual_evidence_preview,
     manual_reviewer_roster,
     render_manual_review_bundle,
     resolve_arbiter_experiment,
@@ -104,6 +105,40 @@ def test_council_rejects_unbounded_evidence_before_building_prompts():
         assert "bounded size" in str(exc)
     else:
         raise AssertionError("oversized council evidence admitted")
+
+
+def test_manual_preview_redacts_paths_secrets_and_raw_evidence():
+    preview = build_manual_evidence_preview({
+        "attempt_id": "attempt-private",
+        "status": "pending_review",
+        "prompt": "token=super-secret read C:\\Users\\alice\\private.py",
+        "response": "inspect /home/alice/repo/main.py",
+        "artifacts": ["C:\\Users\\alice\\secret.log"],
+        "tests": {
+            "schema": "devin_local_agent_training_trace_v2",
+            "raw_stdout": "must not leave",
+            "context_receipt": {
+                "local": {
+                    "eligible_files": 333,
+                    "query_terms": ["private term"],
+                    "files": ["C:/private/main.py"],
+                }
+            },
+        },
+    }, {
+        "expected_signals": ["tests_pass"],
+        "metadata": {"gold_tests": "never export this"},
+    })
+    encoded = str(preview)
+    assert "super-secret" not in encoded
+    assert "C:\\Users\\alice" not in encoded
+    assert "/home/alice" not in encoded
+    assert "must not leave" not in encoded
+    assert "gold_tests" not in encoded
+    assert "query_terms" not in encoded
+    assert preview["packet"]["tests"]["local_agent"]["context_receipt"]["local"]["eligible_files"] == 333
+    assert preview["redaction_manifest"]["approved"] is False
+    assert preview["redaction_manifest"]["operator_review_required"] is True
 
 
 def test_aggregator_requires_coverage_and_never_promotes():

@@ -39,6 +39,15 @@ SAFE_PACKET_FIELDS = (
 )
 MAX_SAFE_PACKET_CHARS = 32_000
 MAX_COLIBRI_BATCH_UNITS = 1_000
+SAFE_RECEIPT_FIELDS = frozenset({
+    "schema", "context_tokens", "context_source", "intent", "safety_tokens",
+    "minimum_output_tokens", "preferred_output_tokens", "evidence_token_budget",
+    "evidence_char_budget", "estimated_prompt_tokens", "available_output_tokens",
+    "max_output_tokens", "max_chars", "used_chars", "walked_entries",
+    "eligible_files", "indexed_files", "skipped_large_files", "selected_files",
+    "selected_chunks", "omitted_files", "map_entries", "map_omitted",
+    "deduplicated_chunks", "scan_truncated",
+})
 
 
 def _canonical(value: Any) -> bytes:
@@ -47,6 +56,113 @@ def _canonical(value: Any) -> bytes:
 
 def _content_id(prefix: str, value: Any) -> str:
     return prefix + hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _redact_manual_text(value: Any, max_chars: int) -> str:
+    text = str(value or "")[:max(0, max_chars)]
+    text = re.sub(
+        r"(?i)((?:api[_ -]?key|access[_ -]?token|token|secret|password)\s*[:=]\s*)[^\s,;\"']+",
+        r"\1<redacted>",
+        text,
+    )
+    text = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer <redacted>", text)
+    text = re.sub(r"(?i)\b[A-Z]:\\[^\r\n\"'<>|]+", "<local-path>", text)
+    text = re.sub(
+        r"(?<!\w)/(?:home|Users|mnt|opt|var|srv)/[^\s,;\"'<>]+",
+        "<local-path>",
+        text,
+    )
+    return text
+
+
+def build_manual_evidence_preview(
+    attempt: dict[str, Any],
+    case: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create the only payload that Diagnostics may expose for manual review.
+
+    Raw artifacts, command output, repository paths and case metadata (which
+    can contain held-out gold tests) are deliberately excluded.
+    """
+
+    attempt_id = str(attempt.get("attempt_id") or "").strip()
+    if not attempt_id:
+        raise ValueError("attempt_id is required for manual council preview")
+    case = case if isinstance(case, dict) else {}
+    tests = attempt.get("tests") if isinstance(attempt.get("tests"), dict) else {}
+    gate = tests.get("quality_gate") if isinstance(tests.get("quality_gate"), dict) else {}
+    validators = tests.get("validators") if isinstance(tests.get("validators"), dict) else {}
+    signals = validators.get("signals") if isinstance(validators.get("signals"), dict) else {}
+    raw_receipt = tests.get("context_receipt") if isinstance(tests.get("context_receipt"), dict) else {}
+    receipt: dict[str, dict[str, Any]] = {}
+    for scope in ("local", "model"):
+        values = raw_receipt.get(scope)
+        if not isinstance(values, dict):
+            continue
+        receipt[scope] = {
+            key: values[key]
+            for key in SAFE_RECEIPT_FIELDS
+            if key in values and isinstance(values[key], (str, int, float, bool))
+        }
+    test_summary = {
+        "attempt_status": str(attempt.get("status") or "pending_review")[:80],
+        "error_reason": _redact_manual_text(attempt.get("error_reason"), 1_000),
+        "quality_gate": {
+            "status": str(gate.get("status") or "")[:80],
+            "tests_run": gate.get("tests_run") if isinstance(gate.get("tests_run"), (int, bool)) else None,
+            "test_command": _redact_manual_text(gate.get("test_command"), 500),
+            "errors": [
+                _redact_manual_text(item, 300)
+                for item in (gate.get("errors") or [])[:5]
+            ],
+        },
+        "validators": {
+            "overall": str(validators.get("overall") or "")[:80],
+            "signals": {
+                str(name)[:100]: str(value.get("verdict") or "")[:80]
+                for name, value in signals.items()
+                if isinstance(value, dict)
+            },
+        },
+        "local_agent": {
+            "schema": str(tests.get("schema") or "")[:100],
+            "outcome": str(tests.get("outcome") or "")[:100],
+            "raw_file_content_stored": bool(tests.get("raw_file_content_stored", False)),
+            "raw_command_output_stored": bool(tests.get("raw_command_output_stored", False)),
+            "context_receipt": receipt,
+        },
+    }
+    evidence_id = "sha256:" + hashlib.sha256(_canonical(test_summary)).hexdigest()
+    packet = {
+        "attempt_id": attempt_id,
+        "prompt": _redact_manual_text(attempt.get("prompt"), 8_000),
+        "response": _redact_manual_text(attempt.get("response"), 12_000),
+        "tests": test_summary,
+        "constraints": [
+            _redact_manual_text(item, 500)
+            for item in (case.get("expected_signals") or [])[:30]
+        ],
+        "evidence": [{
+            "evidence_id": evidence_id,
+            "kind": "bounded_attempt_summary",
+        }],
+    }
+    if len(_canonical(packet)) > MAX_SAFE_PACKET_CHARS:
+        raise ValueError("manual council preview exceeds the bounded size")
+    return {
+        "schema": "devin_manual_council_preview_v1",
+        "packet": packet,
+        "redaction_manifest": {
+            "schema": "devin_manual_redaction_manifest_v1",
+            "approved": False,
+            "automatic_send": False,
+            "operator_review_required": True,
+            "paths_heuristically_redacted": True,
+            "secrets_heuristically_redacted": True,
+            "raw_artifacts_included": False,
+            "case_metadata_included": False,
+        },
+    }
 
 
 @dataclass(frozen=True)

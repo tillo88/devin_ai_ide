@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from devin.ui import fast_app
@@ -112,3 +114,50 @@ def test_council_manual_bundle_and_colibri_batch_are_operator_gated():
     assert batch["automatic_start"] is False
     assert batch["runtime"]["model_id"] == "Qwen3.8-Flash-Next"
     assert batch["promotion_performed"] is False
+
+
+def test_council_prepare_uses_training_store_and_requires_redaction_approval(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(fast_app, "WORKSPACE_DIR", tmp_path / "workspace")
+    client = TestClient(fast_app.app)
+    case = client.post("/api/training/cases", json={
+        "task": "Review this local agent answer",
+        "expected_signals": ["tests_pass"],
+    }).json()["case"]
+    attempt = client.post("/api/training/attempts", json={
+        "case_id": case["case_id"],
+        "prompt": "password=hunter2 inspect C:\\Users\\alice\\repo",
+        "response": "Completed with evidence",
+        "status": "pending_review",
+        "tests": {"quality_gate": {"status": "passed", "tests_run": 4}},
+    }).json()["attempt"]
+
+    preview = client.post("/api/council/manual/prepare", json={
+        "attempt_id": attempt["attempt_id"],
+    }).json()
+    assert preview["approval_required"] is True
+    assert preview["redaction_manifest"]["approved"] is False
+    assert "hunter2" not in str(preview)
+
+    prepared = client.post("/api/council/manual/prepare", json={
+        "attempt_id": attempt["attempt_id"],
+        "redaction_approved": True,
+    }).json()
+    assert prepared["preview"]["redaction_manifest"]["approved"] is True
+    assert prepared["bundle"]["automatic_send"] is False
+    assert len(prepared["bundle"]["prompts"]) == 5
+    assert prepared["promotion_performed"] is False
+
+
+def test_diagnostics_wires_two_gate_manual_council_copy_flow():
+    template = Path("devin/ui/templates/codex_diagnostics.html").read_text(encoding="utf-8")
+    script = Path("devin/ui/static/js/codex_diagnostics.js").read_text(encoding="utf-8")
+    assert 'id="council-manual-preview"' in template
+    assert 'id="council-manual-approve"' in template
+    assert 'id="council-manual-bundle"' in template
+    assert 'data-council-attempt=' in script
+    assert '"/api/council/manual/prepare"' in script
+    assert "redaction_approved: false" in script
+    assert "redaction_approved: true" in script
+    assert "navigator.clipboard.writeText(prompt)" in script
