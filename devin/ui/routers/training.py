@@ -91,11 +91,33 @@ def _bounded_local_agent_trace(data: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(item.get("args"), list):
             item["args"] = [str(arg)[:500] for arg in item["args"][:64]]
         clean_executions.append(item)
+    raw_receipt = data.get("context_receipt")
+    clean_receipt: Dict[str, Dict[str, Any]] = {}
+    receipt_fields = {
+        "schema", "context_tokens", "context_source", "intent", "safety_tokens",
+        "minimum_output_tokens", "preferred_output_tokens", "evidence_token_budget",
+        "evidence_char_budget", "estimated_prompt_tokens", "available_output_tokens",
+        "max_output_tokens", "max_chars", "used_chars", "walked_entries",
+        "eligible_files", "indexed_files", "skipped_large_files", "selected_files",
+        "selected_chunks", "omitted_files", "map_entries", "map_omitted",
+        "deduplicated_chunks", "scan_truncated",
+    }
+    if isinstance(raw_receipt, dict):
+        for scope in ("local", "model"):
+            raw_scope = raw_receipt.get(scope)
+            if not isinstance(raw_scope, dict):
+                continue
+            clean_receipt[scope] = {
+                key: raw_scope.get(key)
+                for key in receipt_fields
+                if key in raw_scope and isinstance(raw_scope.get(key), (str, int, float, bool))
+            }
     return {
-        "schema": "devin_local_agent_training_trace_v1",
+        "schema": "devin_local_agent_training_trace_v2",
         "outcome": str(data.get("outcome") or "completed")[:100],
         "tool_history": clean_tools,
         "executions": clean_executions,
+        "context_receipt": clean_receipt,
         "raw_file_content_stored": False,
         "raw_command_output_stored": False,
         "promotion_policy": "pending_human_or_teacher_review",

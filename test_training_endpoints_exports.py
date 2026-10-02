@@ -94,17 +94,37 @@ def test_local_agent_attempt_is_review_only_and_excludes_raw_evidence(tmp_path, 
             "stderr_sha256": "cd" * 32,
             "success": False,
         }],
+        "context_receipt": {
+            "local": {
+                "schema": "devin_context_receipt_v2",
+                "eligible_files": 333,
+                "selected_files": 6,
+                "selected_chunks": 9,
+                "query_terms": ["SEGRETO CHE NON DEVE ESSERE SALVATO"],
+                "files": ["C:/private/project/main.py"],
+            },
+            "model": {
+                "schema": "devin_context_budget_v2",
+                "context_tokens": 8192,
+                "max_output_tokens": 2867,
+                "context_source": "runtime_env",
+            },
+        },
     })))
 
     assert result["review_required"] is True
     assert result["auto_promoted"] is False
     assert result["attempt"]["status"] == "pending_review"
     trace = result["attempt"]["tests"]
-    assert trace["schema"] == "devin_local_agent_training_trace_v1"
+    assert trace["schema"] == "devin_local_agent_training_trace_v2"
     assert trace["raw_file_content_stored"] is False
     assert trace["raw_command_output_stored"] is False
     assert "stdout" not in trace["executions"][0]
     assert "stderr" not in trace["executions"][0]
+    assert trace["context_receipt"]["local"]["eligible_files"] == 333
+    assert trace["context_receipt"]["model"]["context_tokens"] == 8192
+    assert "query_terms" not in trace["context_receipt"]["local"]
+    assert "files" not in trace["context_receipt"]["local"]
     assert store.review_queue()[0]["attempt_id"] == result["attempt"]["attempt_id"]
 
 

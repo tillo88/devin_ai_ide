@@ -540,6 +540,34 @@ def test_local_agent_action_parser_normalizes_and_rejects_unsafe_plans():
         "timeout_seconds": 240,
         "reason": "suite mirata",
     }
+    replacement = chat_router._parse_local_agent_action(json.dumps({
+        "status": "plan",
+        "summary": "Correggi una funzione senza riscrivere il file",
+        "operations": [{
+            "path": "src/large.py",
+            "operation": "replace",
+            "before": "def calculate(value):\n    return value - 1",
+            "content": "def calculate(value):\n    return value + 1",
+            "expected_sha256": "cd" * 32,
+        }],
+    }))
+    assert replacement["operations"] == [{
+        "path": "src/large.py",
+        "operation": "replace",
+        "before": "def calculate(value):\n    return value - 1",
+        "content": "def calculate(value):\n    return value + 1",
+        "expected_sha256": "cd" * 32,
+    }]
+    with pytest.raises(ValueError, match="replace senza anchor"):
+        chat_router._parse_local_agent_action(json.dumps({
+            "status": "plan",
+            "operations": [{
+                "path": "src/large.py",
+                "operation": "replace",
+                "content": "new",
+                "expected_sha256": "cd" * 32,
+            }],
+        }))
     inferred = chat_router._parse_local_agent_action(json.dumps({
         "status": "plan",
         "operations": [{"path": "hello.txt", "content": "hello\n"}],
@@ -572,6 +600,15 @@ def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, mo
     captured = {"messages": []}
 
     class FakeAI:
+        config = {
+            "models": {
+                "local_models": {
+                    "coder": {"ctx_size": 8192},
+                    "reasoning": {"ctx_size": 8192},
+                }
+            }
+        }
+
         def stream(self, messages, mode, sforzo, max_attempts=None, response_format=None,
                    max_tokens=None):
             captured["messages"].append(messages)
@@ -610,13 +647,14 @@ def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, mo
         )
     ))
 
-    assert result == {
-        "status": "done",
-        "message": "Conclusione basata sui file letti.",
-    }
+    assert result["status"] == "done"
+    assert result["message"] == "Conclusione basata sui file letti."
+    assert result["context_receipt"]["schema"] == "devin_context_budget_v2"
+    assert result["context_receipt"]["context_tokens"] == 8192
     assert len(captured["messages"]) == 1
     assert captured["max_attempts"] == 1
-    assert captured["max_tokens"] == 1536
+    assert captured["max_tokens"] >= 2048
+    assert captured["max_tokens"] == result["context_receipt"]["max_output_tokens"]
     assert captured["response_format"]["type"] == "json_object"
     assert captured["response_format"]["schema"]["properties"]["status"]["enum"] == [
         "done", "plan"
@@ -689,8 +727,51 @@ def test_local_agent_one_shot_rejects_evidence_that_consumes_output_budget(tmp_p
         )
     ))
 
-    assert "oltre 20.000 caratteri" in result["error"]
+    assert "oltre il budget dinamico" in result["error"]
     assert "non e' stata inviata" in result["error"]
+
+
+def test_local_agent_capabilities_expose_runtime_budget_without_inference(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    from devin.ui import fast_app
+    from devin.ui.routers import chat as chat_router
+
+    class FakeAI:
+        config = {
+            "models": {
+                "local_models": {
+                    "coder": {"ctx_size": 8192},
+                    "reasoning": {"ctx_size": 8192},
+                }
+            }
+        }
+
+    monkeypatch.setenv("DEVIN_EFFECTIVE_CONTEXT_TOKENS", "16384")
+    monkeypatch.setattr(
+        fast_app, "_validated_project_path", lambda path, allow_general=False: path
+    )
+    monkeypatch.setattr(fast_app, "_get_ai_client", lambda: FakeAI())
+    monkeypatch.setattr(
+        chat_router,
+        "local_workspace_for_project",
+        lambda path: {"mode": "direct", "bridge_id": "fixture"},
+    )
+
+    result = asyncio.run(chat_router.api_local_workspace_agent_capabilities(
+        chat_router.LocalAgentCapabilitiesRequest(
+            task="Modifica src/main.py e aggiungi i test del progetto",
+            project_path=str(tmp_path),
+        )
+    ))
+
+    assert result["schema"] == "devin_context_budget_v2"
+    assert result["context_tokens"] == 16384
+    assert result["context_source"] == "runtime_env"
+    assert result["intent"] == "plan"
+    assert result["preferred_output_tokens"] >= 3072
+    assert result["evidence_char_budget"] > 8000
 
 
 def test_direct_local_agent_turn_persists_user_and_assistant(tmp_path, monkeypatch):
@@ -754,13 +835,13 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert '/events/stream' in js
     assert '/api/chat' in js
     assert '/api/chat/document' in js
-    assert 'desktopInvoke("local_workspace_tree"' in js
-    assert 'ALBERO WORKSPACE' in js
-    assert 'treeChars + line.length + 1 > 3500' in js
-    assert 'localAgentFileObservation' in js
-    assert 'SCHEMA devin_local_one_shot_evidence_v1' in js
-    assert 'LOCAL_AGENT_EVIDENCE_MAX_CHARS = 20000' in js
-    assert 'localAgentEvidencePack(evidenceSections)' in js
+    assert 'desktopInvoke("local_workspace_evidence_v2"' in js
+    assert 'devin_local_evidence_v2' in js
+    assert 'CONTEXT RECEIPT LOCALE' in js
+    assert '/api/local-workspace/agent-capabilities' in js
+    assert 'localAgentFileObservation' not in js
+    assert 'RETRIEVAL AGGIUNTIVO BOUNDED' not in js
+    assert 'localAgentEvidencePack(evidenceSections, evidenceLimit)' in js
     assert '/api/local-workspace/agent-once' in js
     assert '/api/local-workspace/agent-step' not in js
     assert 'singola inferenza, nessun retry' in js
@@ -995,6 +1076,7 @@ def test_tauri_desktop_shell_targets_workspace_app():
         "allow-local-workspace-tree",
         "allow-local-workspace-read",
         "allow-local-workspace-context",
+        "allow-local-workspace-evidence-v2",
         "allow-run-local-workspace-command",
         "allow-cancel-local-workspace-command",
         "allow-apply-local-workspace-plan",

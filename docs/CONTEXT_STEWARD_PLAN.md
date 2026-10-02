@@ -1,6 +1,6 @@
 # Context Steward — audit e piano di realizzazione
 
-Data: 2026-07-21. Fonte dell'idea: `docs/Context Steward.txt` (conversazione di
+Data: 2026-07-21; checkpoint aggiornato 2026-10-02. Fonte dell'idea: `docs/Context Steward.txt` (conversazione di
 design owner). Questo doc converte l'idea in un piano stratificato, testabile e
 ancorato al codice esistente.
 
@@ -120,7 +120,15 @@ CS0 -> CS1 -> CS2 -> CS3 -> CS4 -> CS5. CS0 e CS1 danno gia' valore da soli
   (6 test).
 - CS3 FATTO: `GET /api/steward/status` (read-only, derivato dal core) + badge
   pannello fail-soft "contesto NN% · stato" (e2e test).
-- CS4 (compattazione LLM a confine) e CS5 (stabilita' prefisso KV): DA FARE,
-  richiedono il modello vivo (rig o llama locale) e osservazione dell'owner.
-  Vanno wired nel chat loop dove oggi gira `chat_continuity` (chat.py ~L435).
-  Suite complessiva: 466 passed.
+- CS4 PARZIALE SICURO: il chat loop crea gia' checkpoint bounded, validati e
+  abbinati agli ultimi turni verbatim. Di default la compattazione e'
+  deterministica e non consuma una seconda inferenza. Il riassunto LLM viene
+  abilitato soltanto quando il runtime dichiara
+  `DEVIN_FRESH_INSTANCE_PER_INFERENCE=1`; una preferenza applicativa non puo'
+  fingere questo lifecycle. Cosi' il checkpoint non reintroduce la sequenza di
+  inferenze sulla stessa istanza associata ai reboot del rig.
+- La pressione usa ora la finestra effettiva dichiarata dal runtime tramite
+  `DEVIN_EFFECTIVE_CONTEXT_TOKENS`, con fallback conservativo osservabile; lo
+  status CS3 espone sia la provenienza sia `deterministic_verbatim` oppure
+  `model_fresh_instance`.
+- CS5 (stabilita' prefisso KV): ancora da completare e misurare sul runtime.

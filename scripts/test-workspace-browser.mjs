@@ -53,6 +53,12 @@ await page.addInitScript(() => {
     if (command === 'local_workspace_context') return {
       schema:'devin_local_context_v1',bridge_id:bridgeId,content:'--- FILE LOCALE: src/main.py ---\nfixture',files:['src/main.py'],truncated:false,
     };
+    if (command === 'local_workspace_evidence_v2') return {
+      schema:'devin_local_evidence_v2',bridge_id:bridgeId,
+      content:'SCHEMA devin_local_evidence_v2\n\nREPO MAP LOCALE BOUNDED\nsrc/main.py :: def workspace_name\n\n--- COMPLETO src/main.py · righe 1-4 · SHA256 ' + 'ab'.repeat(32) + ' ---\nfrom pathlib import Path\n\ndef workspace_name(root: Path) -> str:\n    return root.resolve().name',
+      files:['src/main.py'],truncated:false,
+      receipt:{schema:'devin_context_receipt_v2',max_chars:7500,used_chars:420,walked_entries:4,eligible_files:3,indexed_files:3,skipped_large_files:0,selected_files:1,selected_chunks:1,omitted_files:2,map_entries:3,map_omitted:0,deduplicated_chunks:0,scan_truncated:false,query_terms:['modifica']},
+    };
     if (command === 'apply_local_workspace_plan') return {
       schema:'devin_local_workspace_apply_v1',status:'applied_local',run_id:'local_fixture',decision_status:'approved',files:1,recovery_path:'C:/recovery/local_fixture',
     };
@@ -90,6 +96,8 @@ await page.route('**/*', async route => {
     writes.push({path: u.pathname, data: posted});
     if (u.pathname === '/api/chat') {
       data = {status:'local_agent_required',message:'fixture local agent'};
+    } else if (u.pathname === '/api/local-workspace/agent-capabilities') {
+      data = {schema:'devin_context_budget_v2',context_tokens:8192,context_source:'fixture',intent:'plan',safety_tokens:656,minimum_output_tokens:3072,preferred_output_tokens:3686,evidence_token_budget:2750,evidence_char_budget:8250,chars_per_token_estimate:3};
     } else if (u.pathname === '/api/local-workspace/agent-once') {
       data = {status:'plan',summary:'Aggiorna fixture',operations:[{
         path:'src/main.py',operation:'write',content:'print("updated")\n',expected_sha256:'ab'.repeat(32),
@@ -278,6 +286,13 @@ try {
   await page.locator('.app-modal-ok').click();
   await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Verifica: python -m pytest -q'));
   assert.equal(writes.filter(write => write.path === '/api/local-workspace/agent-once').length,oneShotCallsBefore + 1);
+  const evidenceCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'local_workspace_evidence_v2'));
+  assert.equal(evidenceCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
+  assert.equal(evidenceCall.args.maxChars,7550);
+  const oneShotPayload = writes.filter(write => write.path === '/api/local-workspace/agent-once').at(-1).data;
+  assert.ok(oneShotPayload.evidence_pack.includes('SCHEMA devin_local_evidence_v2'));
+  assert.ok(oneShotPayload.evidence_pack.includes('CONTEXT RECEIPT LOCALE'));
+  assert.equal(oneShotPayload.evidence_pack.includes('RETRIEVAL AGGIUNTIVO BOUNDED'),false);
   const runCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'run_local_workspace_command'));
   assert.equal(runCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
   assert.equal(runCall.args.program,'python');

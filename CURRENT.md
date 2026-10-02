@@ -43,9 +43,38 @@ conserva un recovery locale. Non esiste piu' un limite alla dimensione totale
 della cartella collegata. Il vecchio endpoint snapshot resta compatibilita' per
 workspace gia' collegati e per il precedente export verificato.
 
+Checkpoint locale del 2 ottobre, branch `codex/local-context-v2`:
+
+- `devin_local_evidence_v2` sostituisce per l'agente one-shot il prelievo
+  iniziale duplicato: repo map, simboli top-level, chunk ranked, massimo due
+  chunk per file, deduplica e ricevuta `devin_context_receipt_v2`; una fixture
+  da 333 file prova che i dump `data/debug` non nascondano i sorgenti;
+- la finestra arriva da `DEVIN_EFFECTIVE_CONTEXT_TOKENS` con fallback
+  conservativo osservabile. Evidenze e output condividono un budget dinamico;
+  analisi/piani riservano almeno 2.048/3.072 token e falliscono prima del
+  modello quando il risultato non puo' entrare;
+- i piani possono usare `replace` con fingerprint e anchor unico: Tauri
+  materializza localmente file UTF-8 fino a 30 MiB, quindi una correzione in un
+  file grande non richiede di emettere l'intero file nell'output;
+- la trace training v2 conserva soltanto i conteggi bounded della ricevuta,
+  escludendo query, file e path. La compattazione chat usa la stessa finestra
+  runtime e resta deterministica per default; il riassunto LLM e' ammesso solo
+  con `DEVIN_FRESH_INSTANCE_PER_INFERENCE=1` dichiarato dal broker;
+- verifica canonica post-mutazione con `config/settings.json` assente durante
+  il run: 710 test Python verdi, 7 skip e un test symlink Windows deselezionato
+  per il noto `WinError 1314`; il settings originale e' stato ripristinato con
+  SHA256 `DBC02AF75FDF`. Con il settings locale presente risultano 674 pass e
+  36 failure preesistenti, tutte dovute al vecchio endpoint rig LAN `:8080`
+  correttamente rifiutato dal client loopback-only. Inoltre: 21 test Rust,
+  sintassi JS, pannello ragionamento e replay Playwright 1440/1000/390 verdi.
+  Le mutazioni su output minimo,
+  ranking anti-rumore, anchor unico e gate istanza fresca sono diventate rosse
+  e sono state ripristinate. Il valore runtime usato dai test mirati e' stato
+  iniettato dalle fixture.
+
 L'agente locale usa ora un percorso one-shot: Tauri prepara prima dell'inferenza
-un evidence pack bounded (albero, retrieval e letture con fingerprint), poi il
-backend ammette una sola richiesta e un solo tentativo modello. La risposta e'
+un evidence pack v2 bounded (repo map, chunk e fingerprint), poi il backend
+ammette una sola richiesta e un solo tentativo modello. La risposta e'
 conclusiva (`done|plan`); un piano puo' proporre una verifica locale dopo
 l'apply, sempre con conferma, senza una seconda inferenza. Rust non espone una
 shell, limita programma/argomenti/cwd, ripulisce l'ambiente, chiude l'intero

@@ -28,8 +28,8 @@ use local_execution::{
 };
 use local_workspace::{
     apply_local_workspace_changes, apply_local_workspace_plan, local_workspace_context,
-    local_workspace_read, local_workspace_tree, select_and_sync_local_workspace,
-    sync_local_workspace,
+    local_workspace_evidence_v2, local_workspace_read, local_workspace_tree,
+    select_and_sync_local_workspace, sync_local_workspace,
 };
 
 const CONFIG_SCHEMA: &str = "devin_desktop_frontdoor_v1";
@@ -411,6 +411,7 @@ fn main() {
             local_workspace_tree,
             local_workspace_read,
             local_workspace_context,
+            local_workspace_evidence_v2,
             run_local_workspace_command,
             cancel_local_workspace_command,
             apply_local_workspace_plan,
