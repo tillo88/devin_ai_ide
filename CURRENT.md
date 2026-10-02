@@ -1,6 +1,6 @@
 # DEVIN AI IDE — stato corrente e ripresa
 
-**Aggiornato:** 2026-10-01
+**Aggiornato:** 2026-10-02
 
 **Punto di ingresso:** questo file, poi `AGENTS.md` e
 `docs/CURRENT_ARCHITECTURE.md`.
@@ -98,6 +98,30 @@ Checkpoint Council sullo stesso branch:
   Suite canonica finale: 725 test Python verdi, 7 skip e
   un test symlink deselezionato, con `settings.json` assente durante il run e
   originale ripristinato SHA256 `DBC02AF75FDF`.
+
+Checkpoint release locale del 2 ottobre:
+
+- branch `codex/local-context-v2`, commit sorgente pulito `50e7df8`, PR `#38`
+  aperta e mergeable;
+- bundle frontend rigenerato e mirror `%LOCALAPPDATA%\DEVIN\desktop-host`
+  sincronizzato esclusivamente da `F:\devin_ai_ide`;
+- release Tauri costruita nel target esterno
+  `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`, senza ricreare
+  `src-tauri/target` nel checkout;
+- installer NSIS `DEVIN AI IDE_0.2.0_x64-setup.exe`, 3.287.222 byte, SHA256
+  `24187173b6f8ad1b536aea8be719d80217f9c2260a231c18e59c572699042cff`;
+- installer MSI `DEVIN AI IDE_0.2.0_x64_en-US.msi`, 4.698.112 byte, SHA256
+  `05b2c1bfddac3db74e9cc106ce43b50b575aa1bdea5e1edff35f0d89ed402010`;
+- `dist/windows/build-manifest.json` dichiara `source_dirty=false`, thin client
+  senza backend o modelli incorporati; dimensioni e hash reali coincidono col
+  manifest;
+- gli installer non sono ancora firmati Authenticode: sono adatti allo smoke
+  locale, ma una distribuzione esterna richiede il successivo pass di firma;
+- verifica finale prima della build: 725 test Python verdi, 7 skip e un test
+  symlink deselezionato, 21 test Rust, syntax check Python/JS, pannello
+  ragionamento e replay Playwright 1440/1000/390 verdi. La build non e' stata
+  installata o avviata: il prossimo checkpoint e' lo smoke della release con
+  l'operatore.
 
 L'agente locale usa ora un percorso one-shot: Tauri prepara prima dell'inferenza
 un evidence pack v2 bounded (repo map, chunk e fingerprint), poi il backend
