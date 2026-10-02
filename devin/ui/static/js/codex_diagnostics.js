@@ -4,6 +4,8 @@ const $ = (id) => document.getElementById(id);
 const diagnosticsState = {
   activeTab: (window.location.hash || "#runs").slice(1) || "runs",
   projectPath: new URLSearchParams(window.location.search).get("project_path") || "",
+  councilAttemptId: "",
+  councilPrompts: [],
 };
 
 function apiErrorMessage(error) {
@@ -229,6 +231,7 @@ function renderTraining(payload) {
         <div><strong>${escapeHtml(attempt.case_id || attempt.attempt_id)}</strong><span>${escapeHtml(subtitle)}</span></div>
         <span class="status-pill status-${escapeHtml(shownStatus)}">${escapeHtml(shownStatus)}</span>
         <div class="review-actions" data-attempt-id="${escapeHtml(attempt.attempt_id)}">
+          <button class="tiny-button" type="button" data-council-attempt="${escapeHtml(attempt.attempt_id)}">Council</button>
           <button class="tiny-button" type="button" data-review-status="verified_success">✓</button>
           <button class="tiny-button" type="button" data-review-status="verified_failure">✕</button>
           <button class="tiny-button" type="button" data-review-status="needs_correction">Fix</button>
@@ -267,6 +270,7 @@ function renderReviewQueue(payload) {
         </div>
         <span class="status-pill status-${escapeHtml(item.status || "unknown")}">${escapeHtml(item.status || "unknown")}</span>
         <div class="review-actions" data-attempt-id="${escapeHtml(item.attempt_id)}">
+          <button class="tiny-button" type="button" data-council-attempt="${escapeHtml(item.attempt_id)}">Council</button>
           <button class="tiny-button" type="button" data-review-status="verified_success" title="Conferma successo">✓</button>
           <button class="tiny-button" type="button" data-review-status="verified_failure" title="Conferma fallimento">✕</button>
           <button class="tiny-button" type="button" data-review-status="needs_correction" title="Serve correzione">Fix</button>
@@ -293,6 +297,89 @@ function renderExports(payload) {
       <span class="status-pill">${escapeHtml(Math.ceil((item.size || 0) / 1024))} KB</span>
     </article>
   `).join("");
+}
+
+
+async function prepareManualCouncil(attemptId) {
+  const preview = $("council-manual-preview");
+  const approve = $("council-manual-approve");
+  const bundle = $("council-manual-bundle");
+  diagnosticsState.councilAttemptId = "";
+  diagnosticsState.councilPrompts = [];
+  if (approve) approve.disabled = true;
+  if (bundle) bundle.innerHTML = '<div class="empty-state">Preview in preparazione…</div>';
+  setStatus("council-manual-status", "redazione");
+  try {
+    const result = await postJson("/api/council/manual/prepare", {
+      project_path: diagnosticsState.projectPath,
+      attempt_id: attemptId,
+      redaction_approved: false,
+    });
+    diagnosticsState.councilAttemptId = attemptId;
+    if (preview) preview.textContent = JSON.stringify(result.packet || {}, null, 2);
+    if (approve) approve.disabled = false;
+    if (bundle) bundle.innerHTML = '<div class="empty-state">Controlla il preview: nessun dato è stato inviato. Poi approva per generare i cinque prompt ciechi.</div>';
+    setStatus("council-manual-status", "preview da approvare");
+    preview?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (error) {
+    if (preview) preview.textContent = `Errore: ${apiErrorMessage(error)}`;
+    if (bundle) bundle.innerHTML = '<div class="empty-state">Bundle non creato.</div>';
+    setStatus("council-manual-status", "errore");
+  }
+}
+
+
+function renderManualCouncilBundle(payload) {
+  const target = $("council-manual-bundle");
+  const prompts = payload?.bundle?.prompts || [];
+  diagnosticsState.councilPrompts = prompts;
+  if (!target) return;
+  if (!prompts.length) {
+    target.innerHTML = '<div class="empty-state">Nessun prompt generato.</div>';
+    return;
+  }
+  target.innerHTML = prompts.map((item, index) => `
+    <article class="diagnostics-row">
+      <div>
+        <strong>${escapeHtml(item.reviewer_id)} · ${escapeHtml(item.axis)}</strong>
+        <span>${escapeHtml(item.family)} · pacchetto cieco · nessun invio automatico</span>
+      </div>
+      <button class="tiny-button" type="button" data-council-copy="${index}">Copia prompt</button>
+    </article>
+  `).join("");
+}
+
+
+async function approveManualCouncil() {
+  const attemptId = diagnosticsState.councilAttemptId;
+  if (!attemptId) return;
+  if (!window.confirm(
+    "Hai controllato il preview redatto? Verranno solo generati prompt locali: DEVIN non contatterà Codex, Claude, Gemini o altri provider."
+  )) return;
+  setStatus("council-manual-status", "generazione prompt");
+  try {
+    const result = await postJson("/api/council/manual/prepare", {
+      project_path: diagnosticsState.projectPath,
+      attempt_id: attemptId,
+      redaction_approved: true,
+    });
+    renderManualCouncilBundle(result);
+    setStatus("council-manual-status", `${result.bundle?.prompts?.length || 0} prompt pronti`);
+  } catch (error) {
+    setStatus("council-manual-status", `errore: ${apiErrorMessage(error)}`);
+  }
+}
+
+
+async function copyManualCouncilPrompt(index) {
+  const prompt = diagnosticsState.councilPrompts[index]?.prompt || "";
+  if (!prompt) return;
+  try {
+    await navigator.clipboard.writeText(prompt);
+    setStatus("council-manual-status", "prompt copiato · incollalo nel reviewer scelto");
+  } catch (error) {
+    setStatus("council-manual-status", `copia non riuscita: ${apiErrorMessage(error)}`);
+  }
 }
 
 function renderMemory(mind, training) {
@@ -599,11 +686,18 @@ function wireActions() {
   $("mbpp-import-action")?.addEventListener("click", importMbpp);
   $("teacher-packet-action")?.addEventListener("click", () => exportTraining("/api/training/export_teacher_packet", "Teacher packet"));
   $("sft-export-action")?.addEventListener("click", () => exportTraining("/api/training/export", "SFT export"));
+  $("council-manual-approve")?.addEventListener("click", approveManualCouncil);
+  $("council-manual-bundle")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-council-copy]");
+    if (button) copyManualCouncilPrompt(Number(button.dataset.councilCopy));
+  });
   $("runs-list")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-run-log]");
     if (button) openRunLog(button.dataset.runLog);
   });
   $("training-list")?.addEventListener("click", (event) => {
+    const councilButton = event.target.closest("[data-council-attempt]");
+    if (councilButton) { prepareManualCouncil(councilButton.dataset.councilAttempt); return; }
     const button = event.target.closest("[data-review-status]");
     const container = event.target.closest("[data-attempt-id]");
     if (button && container) recordAttemptReview(container.dataset.attemptId, button.dataset.reviewStatus);
@@ -611,6 +705,8 @@ function wireActions() {
   $("review-queue-list")?.addEventListener("click", (event) => {
     const logButton = event.target.closest("[data-run-log]");
     if (logButton) { openRunLog(logButton.dataset.runLog); return; }
+    const councilButton = event.target.closest("[data-council-attempt]");
+    if (councilButton) { prepareManualCouncil(councilButton.dataset.councilAttempt); return; }
     const button = event.target.closest("[data-review-status]");
     const container = event.target.closest("[data-attempt-id]");
     if (button && container) recordAttemptReview(container.dataset.attemptId, button.dataset.reviewStatus);

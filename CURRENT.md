@@ -1,6 +1,6 @@
 # DEVIN AI IDE — stato corrente e ripresa
 
-**Aggiornato:** 2026-10-01
+**Aggiornato:** 2026-10-02
 
 **Punto di ingresso:** questo file, poi `AGENTS.md` e
 `docs/CURRENT_ARCHITECTURE.md`.
@@ -43,9 +43,89 @@ conserva un recovery locale. Non esiste piu' un limite alla dimensione totale
 della cartella collegata. Il vecchio endpoint snapshot resta compatibilita' per
 workspace gia' collegati e per il precedente export verificato.
 
+Checkpoint locale del 2 ottobre, branch `codex/local-context-v2`:
+
+- `devin_local_evidence_v2` sostituisce per l'agente one-shot il prelievo
+  iniziale duplicato: repo map, simboli top-level, chunk ranked, massimo due
+  chunk per file, deduplica e ricevuta `devin_context_receipt_v2`; una fixture
+  da 333 file prova che i dump `data/debug` non nascondano i sorgenti;
+- la finestra arriva da `DEVIN_EFFECTIVE_CONTEXT_TOKENS` con fallback
+  conservativo osservabile. Evidenze e output condividono un budget dinamico;
+  analisi/piani riservano almeno 2.048/3.072 token e falliscono prima del
+  modello quando il risultato non puo' entrare;
+- i piani possono usare `replace` con fingerprint e anchor unico: Tauri
+  materializza localmente file UTF-8 fino a 30 MiB, quindi una correzione in un
+  file grande non richiede di emettere l'intero file nell'output;
+- la trace training v2 conserva soltanto i conteggi bounded della ricevuta,
+  escludendo query, file e path. La compattazione chat usa la stessa finestra
+  runtime e resta deterministica per default; il riassunto LLM e' ammesso solo
+  con `DEVIN_FRESH_INSTANCE_PER_INFERENCE=1` dichiarato dal broker;
+- verifica canonica post-mutazione con `config/settings.json` assente durante
+  il run: 710 test Python verdi, 7 skip e un test symlink Windows deselezionato
+  per il noto `WinError 1314`; il settings originale e' stato ripristinato con
+  SHA256 `DBC02AF75FDF`. Con il settings locale presente risultano 674 pass e
+  36 failure preesistenti, tutte dovute al vecchio endpoint rig LAN `:8080`
+  correttamente rifiutato dal client loopback-only. Inoltre: 21 test Rust,
+  sintassi JS, pannello ragionamento e replay Playwright 1440/1000/390 verdi.
+  Le mutazioni su output minimo,
+  ranking anti-rumore, anchor unico e gate istanza fresca sono diventate rosse
+  e sono state ripristinate. Il valore runtime usato dai test mirati e' stato
+  iniettato dalle fixture.
+
+Checkpoint Council sullo stesso branch:
+
+- il router crea bundle manuali ciechi per tre famiglie indipendenti
+  (`openai`, `anthropic`, `google`) con prompt JSON per asse; sono sempre
+  `automatic_send=false`, richiedono copia/incolla dell'operatore e non
+  promuovono attempt o memoria;
+- Diagnostics espone ora il flusso a due gate: `Council` prepara un preview
+  bounded con path/secret euristicamente redatti, output grezzi e metadata
+  Golden esclusi; solo il secondo click approvato genera i cinque prompt con
+  pulsante di copia;
+- i pacchetti Council hanno ora un limite fail-closed di 32.000 caratteri;
+- il manifest `devin_colibri_batch_v1` e' resumable ma non avvia processi:
+  registra engine, modello, famiglia e revisione. Qwen3.8-Flash-Next, Kimi K3
+  e GLM-5.3 sono profili equivalenti nel contratto; la documentazione ufficiale
+  Colibri conferma engine distinti dietro la stessa superficie `coli serve`;
+- Colibri resta generatore di esperimenti, non autorita': solo il risultato
+  content-addressed del rerun deterministico puo' risolvere l'arbitrato. Le
+  Golden held-out sono esplicitamente escluse dagli input di training;
+- 16 test Council/API verdi; le mutazioni su invio automatico, modello GLM
+  hardcoded, revisione mutabile e family spoofing sono diventate rosse e sono
+  state ripristinate. Le mutazioni aggiuntive su redazione secret e primo gate
+  UI sono diventate rosse e sono state ripristinate; il replay Playwright passa
+  anche da Diagnostics Council e verifica la sequenza preview/approvazione.
+  Suite canonica finale: 725 test Python verdi, 7 skip e
+  un test symlink deselezionato, con `settings.json` assente durante il run e
+  originale ripristinato SHA256 `DBC02AF75FDF`.
+
+Checkpoint release locale del 2 ottobre:
+
+- branch `codex/local-context-v2`, commit sorgente pulito `50e7df8`, PR `#38`
+  aperta e mergeable;
+- bundle frontend rigenerato e mirror `%LOCALAPPDATA%\DEVIN\desktop-host`
+  sincronizzato esclusivamente da `F:\devin_ai_ide`;
+- release Tauri costruita nel target esterno
+  `%LOCALAPPDATA%\DEVIN\build-cache\cargo-target`, senza ricreare
+  `src-tauri/target` nel checkout;
+- installer NSIS `DEVIN AI IDE_0.2.0_x64-setup.exe`, 3.287.222 byte, SHA256
+  `24187173b6f8ad1b536aea8be719d80217f9c2260a231c18e59c572699042cff`;
+- installer MSI `DEVIN AI IDE_0.2.0_x64_en-US.msi`, 4.698.112 byte, SHA256
+  `05b2c1bfddac3db74e9cc106ce43b50b575aa1bdea5e1edff35f0d89ed402010`;
+- `dist/windows/build-manifest.json` dichiara `source_dirty=false`, thin client
+  senza backend o modelli incorporati; dimensioni e hash reali coincidono col
+  manifest;
+- gli installer non sono ancora firmati Authenticode: sono adatti allo smoke
+  locale, ma una distribuzione esterna richiede il successivo pass di firma;
+- verifica finale prima della build: 725 test Python verdi, 7 skip e un test
+  symlink deselezionato, 21 test Rust, syntax check Python/JS, pannello
+  ragionamento e replay Playwright 1440/1000/390 verdi. La build non e' stata
+  installata o avviata: il prossimo checkpoint e' lo smoke della release con
+  l'operatore.
+
 L'agente locale usa ora un percorso one-shot: Tauri prepara prima dell'inferenza
-un evidence pack bounded (albero, retrieval e letture con fingerprint), poi il
-backend ammette una sola richiesta e un solo tentativo modello. La risposta e'
+un evidence pack v2 bounded (repo map, chunk e fingerprint), poi il backend
+ammette una sola richiesta e un solo tentativo modello. La risposta e'
 conclusiva (`done|plan`); un piano puo' proporre una verifica locale dopo
 l'apply, sempre con conferma, senza una seconda inferenza. Rust non espone una
 shell, limita programma/argomenti/cwd, ripulisce l'ambiente, chiude l'intero

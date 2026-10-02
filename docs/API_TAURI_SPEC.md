@@ -171,10 +171,18 @@ read or merge raw AutoMem/Understory stores.
 - `GET /api/council/status`
 - `POST /api/council/plans`
 - `POST /api/council/aggregate`
+- `POST /api/council/manual/prepare`
+- `POST /api/council/manual/bundle`
+- `POST /api/council/colibri/batch`
 - `POST /api/council/arbiter/resolve`
 
 Council APIs build blind bounded review packets and candidate verdicts. Every
-response keeps `promotion_performed=false`; arbiter resolution needs a verified
+manual preparation first returns a bounded redacted preview and requires a
+second explicit approval. The resulting bundle is copy/paste only
+(`automatic_send=false`) and every Colibri
+batch is stopped by default. The batch records engine, exact model, family and
+revision so Qwen, Kimi and GLM remain interchangeable reviewer profiles without
+losing provenance. Every response keeps `promotion_performed=false`; arbiter resolution needs a verified
 content-addressed experiment result.
 
 ### Capability routing

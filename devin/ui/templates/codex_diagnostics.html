@@ -77,6 +77,13 @@
         <h3 class="diagnostics-subtitle">Teacher review queue <span class="mini-label" id="review-queue-status">…</span></h3>
         <p class="diagnostics-inline-help">Solo gli attempt SENZA review (auto_success/auto_failure/runner_error): ogni voce mostra l'evidenza del quality gate e dei validatori del caso. ✓/✕/Fix/Infra registrano la decisione append-only.</p>
         <div class="diagnostics-list" id="review-queue-list">Carico review queue…</div>
+        <h3 class="diagnostics-subtitle">Evidence Council manuale <span class="mini-label" id="council-manual-status">idle</span></h3>
+        <p class="diagnostics-inline-help">Il primo click prepara soltanto un preview redatto sul PC/rig. Controllalo, poi approva esplicitamente la creazione dei prompt per Codex, Claude e Gemini. DEVIN non invia nulla: sarai tu a copiarli.</p>
+        <pre class="run-log-preview" id="council-manual-preview">Seleziona “Council” su un attempt. Qui vedrai esattamente i dati bounded che possono essere copiati.</pre>
+        <div class="diagnostics-actions">
+          <button class="tiny-button primary-mini-button" id="council-manual-approve" type="button" disabled>Approva redazione e genera prompt</button>
+        </div>
+        <div class="diagnostics-list" id="council-manual-bundle">Nessun bundle manuale preparato.</div>
         <h3 class="diagnostics-subtitle">Correction editor <span class="mini-label" id="correction-status">idle</span></h3>
         <p class="diagnostics-inline-help">Le correzioni sono l'UNICA fonte dell'export SFT: una review ✕/Fix senza correzione non produce dataset. Dopo ✕/Fix l'attempt viene precompilato qui.</p>
         <div class="diagnostics-form-grid">

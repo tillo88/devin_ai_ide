@@ -17,6 +17,8 @@ import os
 
 from fastapi import APIRouter
 
+from devin.core.context_budget import effective_context_tokens, llm_compaction_allowed
+
 router = APIRouter()
 
 
@@ -105,10 +107,7 @@ async def api_steward_status(project_path: str = "", chat_id: str = ""):
         history = persistence.load()
         has_checkpoint = bool(persistence.get_continuity())
 
-    local_cfgs = config.get("models", {}).get("local_models", {})
-    contexts = [int(c.get("ctx_size")) for c in local_cfgs.values()
-                if isinstance(c, dict) and str(c.get("ctx_size", "")).isdigit()]
-    context_size = min(contexts) if contexts else 8192
+    context_size, context_source = effective_context_tokens(config)
 
     coordinator = StewardCoordinator(task_id=chat_id or "general", settings=config)
     coordinator.observe_history(history, context_size=context_size)
@@ -117,6 +116,11 @@ async def api_steward_status(project_path: str = "", chat_id: str = ""):
         coordinator.note_action("checkpoint di continuita' presente")
     snapshot = coordinator.snapshot()
     snapshot["context_size"] = context_size
+    snapshot["context_source"] = context_source
+    snapshot["compaction_mode"] = (
+        "model_fresh_instance" if llm_compaction_allowed()
+        else "deterministic_verbatim"
+    )
     snapshot["history_messages"] = len(history)
     return snapshot
 

@@ -10,6 +10,7 @@ fn main() {
             "local_workspace_tree",
             "local_workspace_read",
             "local_workspace_context",
+            "local_workspace_evidence_v2",
             "run_local_workspace_command",
             "cancel_local_workspace_command",
             "apply_local_workspace_plan",

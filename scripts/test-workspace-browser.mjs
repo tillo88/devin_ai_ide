@@ -53,6 +53,12 @@ await page.addInitScript(() => {
     if (command === 'local_workspace_context') return {
       schema:'devin_local_context_v1',bridge_id:bridgeId,content:'--- FILE LOCALE: src/main.py ---\nfixture',files:['src/main.py'],truncated:false,
     };
+    if (command === 'local_workspace_evidence_v2') return {
+      schema:'devin_local_evidence_v2',bridge_id:bridgeId,
+      content:'SCHEMA devin_local_evidence_v2\n\nREPO MAP LOCALE BOUNDED\nsrc/main.py :: def workspace_name\n\n--- COMPLETO src/main.py · righe 1-4 · SHA256 ' + 'ab'.repeat(32) + ' ---\nfrom pathlib import Path\n\ndef workspace_name(root: Path) -> str:\n    return root.resolve().name',
+      files:['src/main.py'],truncated:false,
+      receipt:{schema:'devin_context_receipt_v2',max_chars:7500,used_chars:420,walked_entries:4,eligible_files:3,indexed_files:3,skipped_large_files:0,selected_files:1,selected_chunks:1,omitted_files:2,map_entries:3,map_omitted:0,deduplicated_chunks:0,scan_truncated:false,query_terms:['modifica']},
+    };
     if (command === 'apply_local_workspace_plan') return {
       schema:'devin_local_workspace_apply_v1',status:'applied_local',run_id:'local_fixture',decision_status:'approved',files:1,recovery_path:'C:/recovery/local_fixture',
     };
@@ -76,6 +82,10 @@ await page.route('**/*', async route => {
     const html = (await fs.readFile(path.join(root, 'devin/ui/templates/codex_app.html'), 'utf8')).replaceAll('{{ shell_version }}', 'browser-test');
     return route.fulfill({ contentType: 'text/html', body: html });
   }
+  if (u.pathname === '/app/diagnostics') {
+    const html = await fs.readFile(path.join(root, 'devin/ui/templates/codex_diagnostics.html'), 'utf8');
+    return route.fulfill({ contentType: 'text/html', body: html });
+  }
   if (u.pathname.startsWith('/static/')) {
     const f = path.resolve(root, 'devin/ui', '.' + u.pathname);
     if (!f.startsWith(path.join(root, 'devin/ui/static') + path.sep)) return route.abort();
@@ -90,6 +100,8 @@ await page.route('**/*', async route => {
     writes.push({path: u.pathname, data: posted});
     if (u.pathname === '/api/chat') {
       data = {status:'local_agent_required',message:'fixture local agent'};
+    } else if (u.pathname === '/api/local-workspace/agent-capabilities') {
+      data = {schema:'devin_context_budget_v2',context_tokens:8192,context_source:'fixture',intent:'plan',safety_tokens:656,minimum_output_tokens:3072,preferred_output_tokens:3686,evidence_token_budget:2750,evidence_char_budget:8250,chars_per_token_estimate:3};
     } else if (u.pathname === '/api/local-workspace/agent-once') {
       data = {status:'plan',summary:'Aggiorna fixture',operations:[{
         path:'src/main.py',operation:'write',content:'print("updated")\n',expected_sha256:'ab'.repeat(32),
@@ -100,6 +112,17 @@ await page.route('**/*', async route => {
       data = {status:'persisted',chars:posted.response?.length || 0};
     } else if (u.pathname === '/api/training/local-agent/attempt') {
       data = {schema:'devin_local_agent_training_attempt_v1',attempt:{attempt_id:'attempt_local_fixture'},review_required:true,auto_promoted:false};
+    } else if (u.pathname === '/api/council/manual/prepare') {
+      data = posted.redaction_approved ? {
+        schema:'devin_manual_council_preparation_v1',promotion_performed:false,
+        bundle:{automatic_send:false,operator_copy_required:true,prompts:Array.from({length:5},(_,index)=>({
+          packet_id:`crp_${index}`,axis:`axis_${index}`,reviewer_id:['manual-codex','manual-codex','manual-claude','manual-claude','manual-gemini'][index],family:['openai','openai','anthropic','anthropic','google'][index],prompt:`fixture prompt ${index}`,
+        }))},
+      } : {
+        schema:'devin_manual_council_preview_v1',approval_required:true,promotion_performed:false,
+        packet:{attempt_id:'attempt_council_fixture',prompt:'bounded fixture',response:'verified response',evidence:[{evidence_id:'sha256:'+'a'.repeat(64)}]},
+        redaction_manifest:{approved:false,automatic_send:false,operator_review_required:true},
+      };
     } else {
       data = {goal_run_id:'goal_fixture'};
     }
@@ -122,6 +145,11 @@ await page.route('**/*', async route => {
   } else if (u.pathname === '/api/runs') {
     if (runsUnavailable) return route.fulfill({status:503, json:{error:'fixture unavailable'}});
     data = [{run_id:'run_fixture',status:'failed',mtime:'2026-09-19T10:00:00Z'}];
+  } else if (u.pathname === '/api/training/overview') {
+    const attempt = {attempt_id:'attempt_council_fixture',case_id:'case_fixture',status:'pending_review',prompt:'bounded fixture',response:'verified response',tests:{}};
+    data = {summary:{cases:1,attempts:1},cases:[],attempts:[attempt],corrections:[],reviews:[],latest_reviews:{},review_queue:[{attempt_id:attempt.attempt_id,case_id:attempt.case_id,title:'Council fixture',status:'pending_review',gate:{status:'passed',tests_run:1},validators:{overall:'pass',signals:{}}}],lessons:[],benchmarks:[],jobs:[],memory_policy:{auto_promote:false,success_statuses:['verified_success'],failure_statuses:['verified_failure'],auto_statuses:['auto_success'],infra_statuses:['runner_error']}};
+  } else if (u.pathname === '/api/training/exports') {
+    data = {exports:[]};
   } else if (u.pathname === '/api/terminal/output') {
     data = {output:'[INFO] Starting bounded verification\n[WARNING] Retry budget at 50%\n[ERROR] Fixture failure\n[INFO] Evidence preserved',lines_returned:4,file_size:124};
   } else if (u.pathname.endsWith('/events')) {
@@ -278,6 +306,13 @@ try {
   await page.locator('.app-modal-ok').click();
   await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Verifica: python -m pytest -q'));
   assert.equal(writes.filter(write => write.path === '/api/local-workspace/agent-once').length,oneShotCallsBefore + 1);
+  const evidenceCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'local_workspace_evidence_v2'));
+  assert.equal(evidenceCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
+  assert.equal(evidenceCall.args.maxChars,7550);
+  const oneShotPayload = writes.filter(write => write.path === '/api/local-workspace/agent-once').at(-1).data;
+  assert.ok(oneShotPayload.evidence_pack.includes('SCHEMA devin_local_evidence_v2'));
+  assert.ok(oneShotPayload.evidence_pack.includes('CONTEXT RECEIPT LOCALE'));
+  assert.equal(oneShotPayload.evidence_pack.includes('RETRIEVAL AGGIUNTIVO BOUNDED'),false);
   const runCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'run_local_workspace_command'));
   assert.equal(runCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
   assert.equal(runCall.args.program,'python');
@@ -346,6 +381,17 @@ try {
   assert.equal(failClosedOutcome,'error-message','desktop bridge failure did not fail closed');
   assert.equal(await page.locator('.app-modal-overlay').count(),0,'desktop bridge failure opened a backend-path modal');
   assert.equal(writes.filter(write => write.path === '/api/workspace/pick_folder').length,backendPickerWritesBefore,'desktop bridge failure called the backend picker');
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('http://workspace.test/app/diagnostics#training');
+  await page.locator('[data-council-attempt="attempt_council_fixture"]').first().waitFor();
+  await page.locator('[data-council-attempt="attempt_council_fixture"]').first().click();
+  await page.waitForFunction(() => !document.querySelector('#council-manual-approve').disabled);
+  assert.ok((await page.locator('#council-manual-preview').textContent()).includes('attempt_council_fixture'));
+  await page.locator('#council-manual-approve').click();
+  await page.locator('[data-council-copy]').first().waitFor();
+  assert.equal(await page.locator('[data-council-copy]').count(),5);
+  const councilWrites = writes.filter(write => write.path === '/api/council/manual/prepare');
+  assert.deepEqual(councilWrites.map(write => write.data.redaction_approved),[false,true]);
   assert.deepEqual(errors,[]);
-  console.log('PASS: Chat/Goal/Runs/Editor/Diff/Log/Governance, submission/race/error guards, local bridge opacity/fail-closed, responsive 1440/1000/390; no live APIs');
+  console.log('PASS: Chat/Goal/Runs/Editor/Diff/Log/Governance/Diagnostics Council, submission/race/error guards, local bridge opacity/fail-closed, responsive 1440/1000/390; no live APIs');
 } finally { await browser.close(); }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -474,6 +474,12 @@ const DIRECT_CONTEXT_FILE_BYTES: u64 = 512 * 1024;
 const DIRECT_CONTEXT_MAX_CHARS: usize = 16_000;
 const DIRECT_CONTEXT_PER_FILE_CHARS: usize = 4_000;
 const DIRECT_CONTEXT_MAX_SCAN_FILES: usize = 2_000;
+const DIRECT_EVIDENCE_MIN_CHARS: usize = 3_000;
+const DIRECT_EVIDENCE_MAX_CHARS: usize = 120_000;
+const DIRECT_EVIDENCE_MAX_SCAN_FILES: usize = 5_000;
+const DIRECT_EVIDENCE_CHUNK_CHARS: usize = 2_400;
+const DIRECT_EVIDENCE_CHUNK_LINES: usize = 80;
+const DIRECT_EVIDENCE_MAX_CHUNKS: usize = 18;
 
 #[derive(Debug, Serialize)]
 pub struct DirectTreeEntry {
@@ -516,12 +522,54 @@ pub struct DirectContextPayload {
     truncated: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct DirectEvidenceReceipt {
+    schema: &'static str,
+    max_chars: usize,
+    used_chars: usize,
+    walked_entries: usize,
+    eligible_files: usize,
+    indexed_files: usize,
+    skipped_large_files: usize,
+    selected_files: usize,
+    selected_chunks: usize,
+    omitted_files: usize,
+    map_entries: usize,
+    map_omitted: usize,
+    deduplicated_chunks: usize,
+    scan_truncated: bool,
+    query_terms: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirectEvidencePayload {
+    schema: &'static str,
+    bridge_id: String,
+    content: String,
+    files: Vec<String>,
+    truncated: bool,
+    receipt: DirectEvidenceReceipt,
+}
+
+#[derive(Debug, Clone)]
+struct EvidenceChunk {
+    score: i64,
+    path: String,
+    sha256: String,
+    start_line: usize,
+    end_line: usize,
+    content: String,
+    complete_file: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct DirectPlanOperation {
     path: String,
     operation: String,
     #[serde(default)]
     content: Option<String>,
+    #[serde(default)]
+    before: Option<String>,
     #[serde(default)]
     expected_sha256: Option<String>,
 }
@@ -713,6 +761,318 @@ fn compose_direct_context(
         }
     }
     (content, selected, truncated)
+}
+
+fn language_for_path(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "py" | "pyi" => "python",
+        "js" | "jsx" | "mjs" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "rs" => "rust",
+        "go" => "go",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cc" | "cpp" | "hpp" => "cpp",
+        "css" | "scss" | "sass" | "less" => "css",
+        "html" | "vue" | "svelte" => "html",
+        "json" => "json",
+        "toml" => "toml",
+        "yaml" | "yml" => "yaml",
+        "md" | "rst" => "markdown",
+        _ => "text",
+    }
+}
+
+fn identifier_after<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    let tail = line.strip_prefix(marker)?.trim_start();
+    let end = tail
+        .find(|character: char| {
+            !(character.is_alphanumeric() || character == '_' || character == '$')
+        })
+        .unwrap_or(tail.len());
+    (end > 0).then_some(&tail[..end])
+}
+
+fn symbol_at_line(language: &str, raw: &str) -> Option<String> {
+    if raw
+        .chars()
+        .next()
+        .map(|character| character.is_whitespace())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let line = raw.trim();
+    let markers: &[(&str, &str)] = match language {
+        "python" => &[
+            ("async def ", "async def"),
+            ("def ", "def"),
+            ("class ", "class"),
+        ],
+        "javascript" | "typescript" => &[
+            ("export async function ", "async function"),
+            ("export function ", "function"),
+            ("async function ", "async function"),
+            ("function ", "function"),
+            ("export default class ", "class"),
+            ("export class ", "class"),
+            ("class ", "class"),
+            ("export interface ", "interface"),
+            ("interface ", "interface"),
+            ("export type ", "type"),
+            ("type ", "type"),
+        ],
+        "rust" => &[
+            ("pub async fn ", "async fn"),
+            ("pub(crate) async fn ", "async fn"),
+            ("async fn ", "async fn"),
+            ("pub fn ", "fn"),
+            ("pub(crate) fn ", "fn"),
+            ("fn ", "fn"),
+            ("pub struct ", "struct"),
+            ("struct ", "struct"),
+            ("pub enum ", "enum"),
+            ("enum ", "enum"),
+            ("pub trait ", "trait"),
+            ("trait ", "trait"),
+            ("impl ", "impl"),
+            ("pub mod ", "mod"),
+            ("mod ", "mod"),
+        ],
+        _ => &[],
+    };
+    for (marker, kind) in markers {
+        if let Some(name) = identifier_after(line, marker) {
+            return Some(format!("{kind} {name}"));
+        }
+    }
+    None
+}
+
+fn symbol_positions(path: &str, content: &str) -> Vec<(usize, String)> {
+    let language = language_for_path(path);
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| symbol_at_line(language, line).map(|name| (index, name)))
+        .take(80)
+        .collect()
+}
+
+fn bounded_line_chunk(lines: &[&str], start: usize, stop: usize) -> (String, usize) {
+    let mut output = String::new();
+    let mut end_line = start;
+    for (index, line) in lines.iter().enumerate().take(stop).skip(start) {
+        let required = line.len() + usize::from(!output.is_empty());
+        if !output.is_empty() && output.len() + required > DIRECT_EVIDENCE_CHUNK_CHARS {
+            break;
+        }
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        if line.len() > DIRECT_EVIDENCE_CHUNK_CHARS && output.is_empty() {
+            let mut end = DIRECT_EVIDENCE_CHUNK_CHARS;
+            while end > 0 && !line.is_char_boundary(end) {
+                end -= 1;
+            }
+            output.push_str(&line[..end]);
+        } else {
+            output.push_str(line);
+        }
+        end_line = index + 1;
+    }
+    (output, end_line)
+}
+
+fn evidence_chunks_for_file(
+    path: &str,
+    content: &str,
+    sha256: &str,
+    terms: &[String],
+) -> Vec<EvidenceChunk> {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let symbols = symbol_positions(path, content);
+    let mut starts = vec![0usize];
+    starts.extend(symbols.iter().map(|(line, _)| *line));
+    if !terms.is_empty() {
+        for (index, line) in lines.iter().enumerate() {
+            let lower = line.to_lowercase();
+            if terms.iter().any(|term| lower.contains(term)) {
+                starts.push(index.saturating_sub(8));
+            }
+        }
+    }
+    if symbols.is_empty() && lines.len() > DIRECT_EVIDENCE_CHUNK_LINES {
+        starts.extend((DIRECT_EVIDENCE_CHUNK_LINES..lines.len()).step_by(65));
+    }
+    starts.sort_unstable();
+    starts.dedup();
+    starts.truncate(64);
+
+    let complete_file = content.len() <= DIRECT_EVIDENCE_CHUNK_CHARS;
+    let mut chunks = Vec::new();
+    for start in starts {
+        let stop = (start + DIRECT_EVIDENCE_CHUNK_LINES).min(lines.len());
+        let (body, end_line) = bounded_line_chunk(&lines, start, stop);
+        if body.trim().is_empty() {
+            continue;
+        }
+        let mut score = context_candidate_score(path, &body, terms);
+        if start == 0 {
+            score += 12;
+        }
+        if symbols.iter().any(|(line, _)| *line == start) {
+            score += 18;
+        }
+        chunks.push(EvidenceChunk {
+            score,
+            path: path.to_string(),
+            sha256: sha256.to_string(),
+            start_line: start + 1,
+            end_line,
+            content: body,
+            complete_file: complete_file && start == 0 && end_line == lines.len(),
+        });
+    }
+    chunks.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.start_line.cmp(&right.start_line))
+    });
+    chunks.truncate(2);
+    chunks
+}
+
+fn compact_repo_map(
+    mut lines: Vec<(i64, String)>,
+    directory_counts: &HashMap<String, usize>,
+    extension_counts: &HashMap<String, usize>,
+    max_chars: usize,
+) -> (String, usize, usize) {
+    lines.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let mut directories: Vec<_> = directory_counts.iter().collect();
+    directories.sort_by(|left, right| right.1.cmp(left.1).then_with(|| left.0.cmp(right.0)));
+    let mut extensions: Vec<_> = extension_counts.iter().collect();
+    extensions.sort_by(|left, right| right.1.cmp(left.1).then_with(|| left.0.cmp(right.0)));
+    let directory_summary = directories
+        .into_iter()
+        .take(16)
+        .map(|(name, count)| format!("{name}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let extension_summary = extensions
+        .into_iter()
+        .take(16)
+        .map(|(name, count)| format!("{name}={count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut output = format!(
+        "REPO MAP LOCALE BOUNDED\nDIRECTORY: {directory_summary}\nTIPI: {extension_summary}\nFILE/SIMBOLI:\n"
+    );
+    let mut included = 0usize;
+    for (_, line) in &lines {
+        if output.len() + line.len() + 1 > max_chars {
+            break;
+        }
+        output.push_str(line);
+        output.push('\n');
+        included += 1;
+    }
+    (output, included, lines.len().saturating_sub(included))
+}
+
+fn compose_evidence_v2(
+    repo_lines: Vec<(i64, String)>,
+    chunks: Vec<EvidenceChunk>,
+    directory_counts: &HashMap<String, usize>,
+    extension_counts: &HashMap<String, usize>,
+    max_chars: usize,
+) -> (String, Vec<String>, usize, usize, usize, usize, bool) {
+    let map_budget = (max_chars * 35 / 100).clamp(1_200, 12_000).min(max_chars);
+    let (repo_map, map_entries, map_omitted) =
+        compact_repo_map(repo_lines, directory_counts, extension_counts, map_budget);
+    let mut output = format!("SCHEMA devin_local_evidence_v2\n\n{repo_map}");
+    let mut candidates = chunks;
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.start_line.cmp(&right.start_line))
+    });
+    let mut files = Vec::new();
+    let mut selected_chunks = 0usize;
+    let mut deduplicated = 0usize;
+    let mut digests = HashSet::new();
+    let mut per_file: HashMap<String, usize> = HashMap::new();
+    let mut truncated = map_omitted > 0;
+    for chunk in candidates
+        .into_iter()
+        .take(DIRECT_EVIDENCE_MAX_SCAN_FILES * 2)
+    {
+        if selected_chunks >= DIRECT_EVIDENCE_MAX_CHUNKS {
+            truncated = true;
+            break;
+        }
+        if per_file.get(&chunk.path).copied().unwrap_or(0) >= 2 {
+            continue;
+        }
+        let normalized = chunk
+            .content
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let digest = format!("{:x}", Sha256::digest(normalized.as_bytes()));
+        if !digests.insert(digest) {
+            deduplicated += 1;
+            continue;
+        }
+        let completeness = if chunk.complete_file {
+            "COMPLETO"
+        } else {
+            "ESTRATTO"
+        };
+        let header = format!(
+            "\n--- {completeness} {} · righe {}-{} · SHA256 {} ---\n",
+            chunk.path, chunk.start_line, chunk.end_line, chunk.sha256
+        );
+        let marker = if chunk.complete_file {
+            ""
+        } else {
+            "\n[ESTRATTO BOUNDED: il file continua sul PC; non concludere che sia incompleto.]\n"
+        };
+        if output.len() + header.len() + chunk.content.len() + marker.len() > max_chars {
+            truncated = true;
+            continue;
+        }
+        output.push_str(&header);
+        output.push_str(&chunk.content);
+        output.push_str(marker);
+        if !files.contains(&chunk.path) {
+            files.push(chunk.path.clone());
+        }
+        *per_file.entry(chunk.path).or_insert(0) += 1;
+        selected_chunks += 1;
+    }
+    (
+        output,
+        files,
+        selected_chunks,
+        map_entries,
+        map_omitted,
+        deduplicated,
+        truncated,
+    )
 }
 
 pub(crate) fn direct_workspace_root(bridge_id: &str) -> Result<PathBuf, String> {
@@ -1016,6 +1376,164 @@ pub async fn local_workspace_context(
         files: selected,
         truncated,
     })
+}
+
+fn build_direct_evidence_v2(
+    root: &Path,
+    bridge_id: String,
+    query: &str,
+    max_chars: usize,
+) -> Result<DirectEvidencePayload, String> {
+    let terms = local_context_terms(query);
+    let max_chars = max_chars.clamp(DIRECT_EVIDENCE_MIN_CHARS, DIRECT_EVIDENCE_MAX_CHARS);
+    let mut repo_lines = Vec::new();
+    let mut chunks = Vec::new();
+    let mut directory_counts: HashMap<String, usize> = HashMap::new();
+    let mut extension_counts: HashMap<String, usize> = HashMap::new();
+    let mut walked = 0usize;
+    let mut eligible_files = 0usize;
+    let mut indexed_files = 0usize;
+    let mut skipped_large_files = 0usize;
+    let mut scan_truncated = false;
+
+    for item in WalkDir::new(&root)
+        .follow_links(false)
+        .max_depth(DIRECT_TREE_MAX_DEPTH)
+        .into_iter()
+        .filter_entry(walk_allowed)
+    {
+        walked += 1;
+        if walked > DIRECT_TREE_MAX_WALK {
+            scan_truncated = true;
+            break;
+        }
+        let entry = match item {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        if !entry.file_type().is_file()
+            || entry.file_type().is_symlink()
+            || is_excluded_file(entry.path())
+            || !is_probably_text_path(entry.path())
+        {
+            continue;
+        }
+        eligible_files += 1;
+        if indexed_files >= DIRECT_EVIDENCE_MAX_SCAN_FILES {
+            scan_truncated = true;
+            continue;
+        }
+        let size = match entry.metadata() {
+            Ok(metadata) => metadata.len(),
+            Err(_) => continue,
+        };
+        if size > DIRECT_CONTEXT_FILE_BYTES {
+            skipped_large_files += 1;
+            continue;
+        }
+        let relative = direct_relative(&root, entry.path())?;
+        let (content, _, _) = match read_direct_text(entry.path(), DIRECT_CONTEXT_FILE_BYTES) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        indexed_files += 1;
+        let sha256 = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let symbols = symbol_positions(&relative, &content);
+        let symbol_summary = symbols
+            .iter()
+            .take(8)
+            .map(|(_, name)| name.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let repo_line = if symbol_summary.is_empty() {
+            format!(
+                "{} ({size} B)",
+                relative.replace('\r', "").replace('\n', "")
+            )
+        } else {
+            format!(
+                "{} :: {symbol_summary}",
+                relative.replace('\r', "").replace('\n', "")
+            )
+        };
+        repo_lines.push((
+            context_candidate_score(&relative, &content, &terms),
+            repo_line,
+        ));
+        let directory = relative
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or(".")
+            .to_string();
+        *directory_counts.entry(directory).or_insert(0) += 1;
+        let extension = Path::new(&relative)
+            .extension()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("none")
+            .to_ascii_lowercase();
+        *extension_counts.entry(extension).or_insert(0) += 1;
+        chunks.extend(evidence_chunks_for_file(
+            &relative, &content, &sha256, &terms,
+        ));
+    }
+
+    let (
+        content,
+        files,
+        selected_chunks,
+        map_entries,
+        map_omitted,
+        deduplicated_chunks,
+        compose_truncated,
+    ) = compose_evidence_v2(
+        repo_lines,
+        chunks,
+        &directory_counts,
+        &extension_counts,
+        max_chars,
+    );
+    let selected_files = files.len();
+    let omitted_files = eligible_files.saturating_sub(selected_files);
+    let truncated =
+        scan_truncated || compose_truncated || skipped_large_files > 0 || omitted_files > 0;
+    let receipt = DirectEvidenceReceipt {
+        schema: "devin_context_receipt_v2",
+        max_chars,
+        used_chars: content.len(),
+        walked_entries: walked,
+        eligible_files,
+        indexed_files,
+        skipped_large_files,
+        selected_files,
+        selected_chunks,
+        omitted_files,
+        map_entries,
+        map_omitted,
+        deduplicated_chunks,
+        scan_truncated,
+        query_terms: terms,
+    };
+    Ok(DirectEvidencePayload {
+        schema: "devin_local_evidence_v2",
+        bridge_id,
+        content,
+        files,
+        truncated,
+        receipt,
+    })
+}
+
+#[tauri::command]
+pub async fn local_workspace_evidence_v2(
+    window: WebviewWindow,
+    bridge_id: String,
+    query: String,
+    max_chars: Option<usize>,
+) -> Result<DirectEvidencePayload, String> {
+    authorize_local_ui(&window)?;
+    let root = direct_workspace_root(&bridge_id)?;
+    build_direct_evidence_v2(&root, bridge_id, &query, max_chars.unwrap_or(12_000))
 }
 
 fn safe_relative(raw: &str) -> Result<PathBuf, String> {
@@ -1338,7 +1856,8 @@ fn direct_plan_export(
     let mut entries = Vec::new();
     let mut files = HashMap::new();
     let mut seen = std::collections::HashSet::new();
-    let mut total = 0usize;
+    let mut generated_total = 0usize;
+    let mut materialized_total = 0usize;
     for operation in operations {
         let relative = safe_relative(&operation.path)?;
         let normalized = relative.to_string_lossy().replace('\\', "/");
@@ -1370,12 +1889,15 @@ fn direct_plan_export(
                     .content
                     .ok_or_else(|| format!("Contenuto mancante: {normalized}"))?
                     .into_bytes();
-                total = total
+                generated_total = generated_total
                     .checked_add(body.len())
                     .ok_or_else(|| "Piano locale troppo grande".to_string())?;
-                if total > 2 * 1024 * 1024 {
+                if generated_total > 2 * 1024 * 1024 {
                     return Err("Piano locale oltre 2 MiB".to_string());
                 }
+                materialized_total = materialized_total
+                    .checked_add(body.len())
+                    .ok_or_else(|| "Risultato locale troppo grande".to_string())?;
                 let fingerprint = Fingerprint {
                     sha256: format!("{:x}", Sha256::digest(&body)),
                     size: body.len() as u64,
@@ -1386,6 +1908,55 @@ fn direct_plan_export(
                     if before.is_some() { "modify" } else { "create" }.to_string(),
                     Some(fingerprint),
                 )
+            }
+            "replace" => {
+                if before.is_none() {
+                    return Err(format!("File da modificare non presente: {normalized}"));
+                }
+                let anchor = operation
+                    .before
+                    .ok_or_else(|| format!("Anchor before mancante: {normalized}"))?;
+                let replacement = operation
+                    .content
+                    .ok_or_else(|| format!("Contenuto replace mancante: {normalized}"))?;
+                if anchor.is_empty() || anchor.contains('\0') || replacement.contains('\0') {
+                    return Err(format!("Replace non valido: {normalized}"));
+                }
+                generated_total = generated_total
+                    .checked_add(anchor.len() + replacement.len())
+                    .ok_or_else(|| "Piano locale troppo grande".to_string())?;
+                if generated_total > 2 * 1024 * 1024 {
+                    return Err("Piano locale oltre 2 MiB".to_string());
+                }
+                let metadata = fs::symlink_metadata(&target)
+                    .map_err(|err| format!("File locale non leggibile: {normalized}: {err}"))?;
+                if metadata.len() > MAX_FILE_BYTES {
+                    return Err(format!("File locale oltre 30 MiB: {normalized}"));
+                }
+                let current_bytes = fs::read(&target)
+                    .map_err(|err| format!("File locale non leggibile: {normalized}: {err}"))?;
+                let current = String::from_utf8(current_bytes)
+                    .map_err(|_| format!("Replace richiede un file UTF-8: {normalized}"))?;
+                let occurrences = current.match_indices(&anchor).count();
+                if occurrences != 1 {
+                    return Err(format!(
+                        "Anchor replace non univoco per {normalized}: {occurrences} occorrenze"
+                    ));
+                }
+                let body = current.replacen(&anchor, &replacement, 1).into_bytes();
+                if body.len() as u64 > MAX_FILE_BYTES {
+                    return Err(format!("Risultato replace oltre 30 MiB: {normalized}"));
+                }
+                materialized_total = materialized_total
+                    .checked_add(body.len())
+                    .ok_or_else(|| "Risultato locale troppo grande".to_string())?;
+                let fingerprint = Fingerprint {
+                    sha256: format!("{:x}", Sha256::digest(&body)),
+                    size: body.len() as u64,
+                    mode: 0,
+                };
+                files.insert(normalized.clone(), body);
+                ("modify".to_string(), Some(fingerprint))
             }
             "delete" => {
                 if before.is_none() {
@@ -1403,6 +1974,9 @@ fn direct_plan_export(
                 ))
             }
         };
+        if materialized_total > MAX_TOTAL_BYTES as usize {
+            return Err("Risultato locale oltre 100 MiB".to_string());
+        }
         entries.push(ExportEntry {
             path: normalized,
             operation: export_operation,
@@ -1606,6 +2180,123 @@ mod tests {
     }
 
     #[test]
+    fn evidence_v2_extracts_top_level_symbols_without_requiring_python() {
+        let python = symbol_positions(
+            "spyengine/core/engine.py",
+            "import os\n\nclass SpyEngineApp:\n    def run(self):\n        pass\n\ndef load_config(path):\n    return path\n",
+        );
+        assert_eq!(
+            python,
+            vec![
+                (2, "class SpyEngineApp".to_string()),
+                (6, "def load_config".to_string()),
+            ]
+        );
+        let rust = symbol_positions(
+            "src/main.rs",
+            "use std::path::Path;\n\npub struct Receipt {}\n\npub async fn run_agent() {}\n",
+        );
+        assert_eq!(
+            rust,
+            vec![
+                (2, "struct Receipt".to_string()),
+                (4, "async fn run_agent".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn evidence_v2_maps_large_repo_and_keeps_sources_ahead_of_debug_noise() {
+        let root = std::env::temp_dir().join(format!("devin-evidence-v2-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("spyengine/core")).unwrap();
+        fs::create_dir_all(root.join("spyengine/wizard")).unwrap();
+        fs::create_dir_all(root.join("spyengine/marketplace_harvest")).unwrap();
+        fs::create_dir_all(root.join("data/debug")).unwrap();
+        fs::write(
+            root.join("main.py"),
+            b"from spyengine.core.manager import SpyManagerV3\n\ndef main():\n    return SpyManagerV3()\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("spyengine/core/engine.py"),
+            b"class SpyEngineApp:\n    def run_once(self):\n        return 'complete'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("spyengine/core/manager.py"),
+            b"class SpyManagerV3:\n    def start(self):\n        return True\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("spyengine/wizard/domain_profiles.py"),
+            b"def load_domain_profile(name):\n    return name\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("spyengine/marketplace_harvest/product_knowledge.py"),
+            b"def enrich_product(item):\n    return item\n",
+        )
+        .unwrap();
+        for index in 0..328 {
+            fs::write(
+                root.join(format!("data/debug/dump_{index:03}.html")),
+                format!("<html>ciao capire condiviso debuggare {index}</html>"),
+            )
+            .unwrap();
+        }
+
+        let payload = build_direct_evidence_v2(
+            &root,
+            "12345678-1234-4234-9234-123456789abc".to_string(),
+            "Ciao, riesci a capire cosa fa e cosa c'e da debuggare?",
+            12_000,
+        )
+        .unwrap();
+        assert_eq!(payload.schema, "devin_local_evidence_v2");
+        assert_eq!(payload.receipt.eligible_files, 333);
+        assert_eq!(payload.receipt.indexed_files, 333);
+        assert!(payload.content.len() <= 12_000);
+        assert!(payload.content.contains("main.py :: def main"));
+        assert!(payload.content.contains("spyengine/core/engine.py"));
+        assert!(payload.content.contains("spyengine/core/manager.py"));
+        assert!(payload
+            .content
+            .contains("spyengine/wizard/domain_profiles.py"));
+        assert!(payload
+            .content
+            .contains("marketplace_harvest/product_knowledge.py"));
+        assert!(payload.receipt.map_omitted > 0);
+        assert!(payload.receipt.omitted_files > 0);
+        assert!(payload.truncated);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn evidence_v2_deduplicates_identical_chunks_and_reports_the_receipt() {
+        let body = "def shared():\n    return 'same'\n";
+        let sha = format!("{:x}", Sha256::digest(body.as_bytes()));
+        let chunks = ["main.py", "app.py"]
+            .into_iter()
+            .flat_map(|path| evidence_chunks_for_file(path, body, &sha, &[]))
+            .collect();
+        let repo_lines = vec![
+            (100, "main.py :: def shared".to_string()),
+            (90, "app.py :: def shared".to_string()),
+        ];
+        let (content, files, selected, _, _, deduplicated, _) = compose_evidence_v2(
+            repo_lines,
+            chunks,
+            &HashMap::from([(".".to_string(), 2)]),
+            &HashMap::from([("py".to_string(), 2)]),
+            6_000,
+        );
+        assert!(content.contains("REPO MAP LOCALE BOUNDED"));
+        assert_eq!(selected, 1);
+        assert_eq!(files.len(), 1);
+        assert_eq!(deduplicated, 1);
+    }
+
+    #[test]
     fn direct_plan_requires_current_fingerprint_and_builds_atomic_manifest() {
         let root = std::env::temp_dir().join(format!("devin-direct-plan-{}", Uuid::new_v4()));
         fs::create_dir_all(root.join("src")).unwrap();
@@ -1617,12 +2308,14 @@ mod tests {
                 path: "src/app.js".to_string(),
                 operation: "write".to_string(),
                 content: Some("console.log('new');\n".to_string()),
+                before: None,
                 expected_sha256: Some(before.sha256.clone()),
             },
             DirectPlanOperation {
                 path: "src/new.js".to_string(),
                 operation: "write".to_string(),
                 content: Some("export const ready = true;\n".to_string()),
+                before: None,
                 expected_sha256: None,
             },
         ];
@@ -1642,6 +2335,59 @@ mod tests {
             direct_plan_export(&root, "12345678-1234-4234-9234-123456789abc", operations)
                 .unwrap_err();
         assert!(conflict.contains("fingerprint"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn direct_replace_requires_unique_anchor_and_materializes_the_full_file() {
+        let root = std::env::temp_dir().join(format!("devin-direct-replace-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).unwrap();
+        let target = root.join("src/large.py");
+        let prefix = "# retained context\n".repeat(20_000);
+        let original = format!(
+            "{prefix}\ndef calculate(value):\n    return value - 1\n\n# tail stays local\n"
+        );
+        fs::write(&target, original.as_bytes()).unwrap();
+        let fingerprint = local_fingerprint(&target).unwrap().unwrap();
+        let operation = DirectPlanOperation {
+            path: "src/large.py".to_string(),
+            operation: "replace".to_string(),
+            before: Some("def calculate(value):\n    return value - 1".to_string()),
+            content: Some("def calculate(value):\n    return value + 1".to_string()),
+            expected_sha256: Some(fingerprint.sha256.clone()),
+        };
+        let (manifest, files) = direct_plan_export(
+            &root,
+            "12345678-1234-4234-9234-123456789abc",
+            vec![operation],
+        )
+        .unwrap();
+        let materialized = String::from_utf8(files["src/large.py"].clone()).unwrap();
+        assert_eq!(manifest.entries[0].operation, "modify");
+        assert!(materialized.starts_with(&prefix));
+        assert!(materialized.contains("return value + 1"));
+        assert!(materialized.ends_with("# tail stays local\n"));
+
+        fs::write(
+            &target,
+            b"def duplicate():\n    return 1\n\ndef duplicate():\n    return 1\n",
+        )
+        .unwrap();
+        let duplicate_fingerprint = local_fingerprint(&target).unwrap().unwrap();
+        let duplicate = DirectPlanOperation {
+            path: "src/large.py".to_string(),
+            operation: "replace".to_string(),
+            before: Some("def duplicate():\n    return 1".to_string()),
+            content: Some("def duplicate():\n    return 2".to_string()),
+            expected_sha256: Some(duplicate_fingerprint.sha256),
+        };
+        let error = direct_plan_export(
+            &root,
+            "12345678-1234-4234-9234-123456789abc",
+            vec![duplicate],
+        )
+        .unwrap_err();
+        assert!(error.contains("non univoco"));
         fs::remove_dir_all(&root).unwrap();
     }
 

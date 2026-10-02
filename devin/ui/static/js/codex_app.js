@@ -8,8 +8,6 @@ import {
 import { projectFlowSnapshot } from "./project_flow.js";
 
 const $ = (id) => document.getElementById(id);
-const LOCAL_AGENT_EVIDENCE_MAX_CHARS = 20000;
-
 const state = {
   selectedRunId: null,
   // Ricerca web: "auto" lascia decidere al backend sull'intento del messaggio,
@@ -2814,18 +2812,13 @@ function localAgentBoundedText(value, maxChars = 6000) {
   return `${text.slice(0, headChars)}\n[CLIENT: omessi ${omitted} caratteri centrali]\n${text.slice(-tailChars)}`;
 }
 
-function localAgentEvidencePack(sections, maxChars = LOCAL_AGENT_EVIDENCE_MAX_CHARS) {
+function localAgentEvidencePack(sections, maxChars) {
+  const limit = Math.max(3000, Number(maxChars) || 3000);
   const joined = sections.filter(Boolean).join("\n\n");
-  if (joined.length <= maxChars) return joined;
+  if (joined.length <= limit) return joined;
   const marker = "\n\n[CLIENT: evidence pack troncato per riservare contesto alla risposta]";
-  const keep = Math.max(0, maxChars - marker.length);
+  const keep = Math.max(0, limit - marker.length);
   return `${joined.slice(0, keep).trimEnd()}${marker}`;
-}
-
-function localAgentFileObservation(file, maxChars = 5000) {
-  const header = `LETTURA ${file.path} · SHA256 ${file.sha256} · ${file.size} byte`
-    + `${file.truncated ? " · TRONCATA, non modificare senza ulteriori prove" : ""}\n`;
-  return header + localAgentBoundedText(file.content, Math.max(500, maxChars - header.length));
 }
 
 function localCommandLabel(step) {
@@ -2925,7 +2918,8 @@ function attachLocalTrainingReview(assistantNode, attemptId, projectPath) {
 }
 
 async function recordLocalAgentTrainingAttempt({
-  projectPath, episodeId, task, response, outcome, toolHistory, executions, assistantNode,
+  projectPath, episodeId, task, response, outcome, toolHistory, executions,
+  contextReceipt, assistantNode,
 }) {
   try {
     const result = await postJson("/api/training/local-agent/attempt", {
@@ -2936,6 +2930,7 @@ async function recordLocalAgentTrainingAttempt({
       outcome,
       tool_history: toolHistory,
       executions,
+      context_receipt: contextReceipt,
     });
     if (result.error) throw new Error(result.error);
     attachLocalTrainingReview(assistantNode, result.attempt?.attempt_id, projectPath);
@@ -2944,62 +2939,40 @@ async function recordLocalAgentTrainingAttempt({
   }
 }
 
-async function runLocalWorkspaceAgent(task, workspace, initialContext, assistantNode) {
+async function runLocalWorkspaceAgent(task, workspace, assistantNode) {
   const projectPath = state.selectedProjectPath;
   const episodeId = localUuid();
   const toolHistory = [];
   const executions = [];
-  assistantNode.textContent = "Agente locale · preparo evidenze bounded sul PC…";
-  const tree = await desktopInvoke("local_workspace_tree", { bridgeId: workspace.bridge_id });
-  toolHistory.push("tree");
-  const files = Array.isArray(tree?.files) ? tree.files : [];
-  const noisyPath = /(^|\/)(?:backups?|cache|data|debug|generated|reports?)(?:\/|$)/i;
-  const ordered = [
-    ...files.filter((entry) => !noisyPath.test(entry.path || "")),
-    ...files.filter((entry) => noisyPath.test(entry.path || "")),
-  ];
-  const treeLines = [];
-  let treeChars = 0;
-  for (const entry of ordered) {
-    const line = `${entry.is_text ? "[text]" : "[binary]"} ${entry.path} (${entry.size} byte)`;
-    if (treeLines.length >= 120 || treeChars + line.length + 1 > 3500) break;
-    treeLines.push(line);
-    treeChars += line.length + 1;
+  assistantNode.textContent = "Agente locale · calcolo il budget del modello…";
+  const capabilities = await postJson("/api/local-workspace/agent-capabilities", {
+    task,
+    project_path: projectPath,
+  });
+  if (capabilities.error) throw new Error(capabilities.error);
+  if (capabilities.schema !== "devin_context_budget_v2") {
+    throw new Error("Budget contesto locale non valido");
   }
-  const omitted = Math.max(0, files.length - treeLines.length);
+  const evidenceLimit = Number(capabilities.evidence_char_budget) || 3000;
+  const auxiliaryReserve = state.webForced ? 2600 : 700;
+  const localEvidenceLimit = Math.max(3000, evidenceLimit - auxiliaryReserve);
+  assistantNode.textContent = `Agente locale · indicizzo il workspace entro ${localEvidenceLimit.toLocaleString("it-IT")} caratteri…`;
+  const localEvidence = await desktopInvoke("local_workspace_evidence_v2", {
+    bridgeId: workspace.bridge_id,
+    query: task,
+    maxChars: localEvidenceLimit,
+  });
+  if (localEvidence?.schema !== "devin_local_evidence_v2" || !localEvidence.content) {
+    throw new Error("Evidence pack locale v2 non valido");
+  }
+  const receipt = localEvidence.receipt || {};
+  toolHistory.push(
+    `evidence_v2 ${receipt.selected_chunks || 0} chunk / ${receipt.indexed_files || 0} file indicizzati`,
+  );
   const evidenceSections = [
-    "SCHEMA devin_local_one_shot_evidence_v1",
-    `ALBERO WORKSPACE · ${files.length} file${tree?.truncated ? " · scansione troncata" : ""}`
-      + `${omitted ? ` · ${omitted} omessi dal riepilogo` : ""}\n${treeLines.join("\n")}`,
+    localEvidence.content,
+    `CONTEXT RECEIPT LOCALE\n${JSON.stringify(receipt)}`,
   ];
-
-  const selectedPaths = [...new Set(
-    (Array.isArray(initialContext?.files) ? initialContext.files : [])
-      .filter((path) => typeof path === "string" && path),
-  )].slice(0, 3);
-  const fileEvidence = [];
-  for (let index = 0; index < selectedPaths.length; index += 1) {
-    const path = selectedPaths[index];
-    assistantNode.textContent = `Agente locale · raccolgo evidenze ${index + 1}/${selectedPaths.length}…`;
-    try {
-      const file = await desktopInvoke("local_workspace_read", {
-        bridgeId: workspace.bridge_id,
-        path,
-      });
-      toolHistory.push(`read ${path}`);
-      fileEvidence.push(localAgentFileObservation(file, 4000));
-    } catch (error) {
-      toolHistory.push(`read_failed ${path}`);
-      fileEvidence.push(`LETTURA NON DISPONIBILE ${path}: ${errorMessage(error)}`);
-    }
-  }
-  if (fileEvidence.length) evidenceSections.push(`LETTURE SELEZIONATE\n${fileEvidence.join("\n\n")}`);
-  if (initialContext?.content) {
-    evidenceSections.push(
-      `RETRIEVAL AGGIUNTIVO BOUNDED\n${localAgentBoundedText(initialContext.content, 3000)}`,
-    );
-    toolHistory.push("retrieval");
-  }
   if (state.webForced) {
     assistantNode.textContent = "Agente locale · raccolgo fonti web abilitate…";
     const web = await postJson("/api/local-workspace/web-search", {
@@ -3013,7 +2986,7 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
     toolHistory.push("web_search");
   }
 
-  const evidencePack = localAgentEvidencePack(evidenceSections);
+  const evidencePack = localAgentEvidencePack(evidenceSections, evidenceLimit);
   assistantNode.textContent = "Agente locale · singola inferenza, nessun retry…";
   const step = await postJson("/api/local-workspace/agent-once", {
     task,
@@ -3028,7 +3001,8 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
     await persistLocalAgentResponse(projectPath, response);
     await recordLocalAgentTrainingAttempt({
       projectPath, episodeId, task, response, outcome: "analysis_completed",
-      toolHistory, executions, assistantNode,
+      toolHistory, executions,
+      contextReceipt: { local: receipt, model: step.context_receipt || {} }, assistantNode,
     });
     return;
   }
@@ -3036,8 +3010,16 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
     throw new Error("DEVIN non ha prodotto una conclusione one-shot valida.");
   }
   const operationSummary = step.operations
-    .map((operation) => `${operation.operation === "delete" ? "Elimina" : "Scrivi"} ${operation.path}`)
-    .join("\n");
+    .map((operation) => {
+      if (operation.operation === "delete") return `ELIMINA ${operation.path}`;
+      if (operation.operation === "replace") {
+        const before = localAgentBoundedText(operation.before || "", 500);
+        const after = localAgentBoundedText(operation.content || "", 500);
+        return `MODIFICA ${operation.path}\nPRIMA:\n${before}\nDOPO:\n${after}`;
+      }
+      return `SCRIVI ${operation.path}\n${localAgentBoundedText(operation.content || "", 700)}`;
+    })
+    .join("\n\n");
   const approved = await confirmModal(
     `${step.summary || "DEVIN propone modifiche locali"}\n\n${operationSummary}\n\nApplicare queste modifiche alla cartella Windows?`,
     { okLabel: "Applica modifiche", danger: true },
@@ -3048,7 +3030,8 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
     await persistLocalAgentResponse(projectPath, response);
     await recordLocalAgentTrainingAttempt({
       projectPath, episodeId, task, response, outcome: "plan_rejected",
-      toolHistory, executions, assistantNode,
+      toolHistory, executions,
+      contextReceipt: { local: receipt, model: step.context_receipt || {} }, assistantNode,
     });
     return;
   }
@@ -3094,7 +3077,8 @@ async function runLocalWorkspaceAgent(task, workspace, initialContext, assistant
   await persistLocalAgentResponse(projectPath, persistedResponse);
   await recordLocalAgentTrainingAttempt({
     projectPath, episodeId, task, response: persistedResponse, outcome: "plan_applied",
-    toolHistory, executions, assistantNode,
+    toolHistory, executions,
+    contextReceipt: { local: receipt, model: step.context_receipt || {} }, assistantNode,
   });
   await loadProjectTree();
   await renderActivityRail(projectPath);
@@ -3154,7 +3138,7 @@ async function sendChatMessage(message) {
       const payload = await response.json();
       if (payload.error) throw new Error(payload.error);
       if (payload.status === "local_agent_required" && directWorkspace) {
-        await runLocalWorkspaceAgent(message, directWorkspace, localContext, assistantNode);
+        await runLocalWorkspaceAgent(message, directWorkspace, assistantNode);
         return;
       }
       if (payload.run_id && ["started", "queued", "running"].includes(payload.status)) {
