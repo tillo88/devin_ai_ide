@@ -43,7 +43,7 @@ attempt (mini-swarm o run)  -> quality gate deterministico (gia' esistente)
         router -> pacchetti per-reviewer (ciechi, per asse)
         reviewers (locali + esterni) -> verdetti per asse
         aggregazione (5 assi) -> concordi? / discordi?
-        arbiter (GLM-Colibri) -> se discorde: genera ESPERIMENTO (test)
+        arbiter (Colibri + modello dichiarato) -> se discorde: genera ESPERIMENTO (test)
            -> rerun deterministico -> verdetto risolto con evidenza
    -> reviews.jsonl append-only (store.add_review, esistente) con provenance
    -> verified_success | verified_failure | needs_human_review
@@ -110,7 +110,7 @@ Raccoglie i verdetti per asse. Esiti:
 - **concorde fail** su un asse -> `verified_failure` con motivo;
 - **discorde** su un asse -> passa all'arbiter (non si decide a maggioranza cieca).
 
-### 4.4 Arbiter (GLM-Colibri) — l'adjudicator
+### 4.4 Arbiter (Colibri) — l'adjudicator
 NON un voto in piu'. Sulle discordanze:
 1. legge le ragioni contrastanti;
 2. **genera un esperimento** (un test/prova concettuale, es. il caso "3+3");
@@ -172,7 +172,7 @@ questa provenance (coerente col debito P6 #10, gia' chiuso). Dopo la promozione:
 7. **UI Evidence Council**: pannello con pacchetti, copia guidata, import verdetti,
    stato reviewer, budget. (P7)
 
-I ruoli-modello reali (TEACHER, GLM-Colibri, esterni) si provano sul rig; la
+I ruoli-modello reali (TEACHER, Colibri con profilo dichiarato, esterni) si provano sul rig; la
 logica (router/aggregator/arbiter/budgeter) e' tutta testabile offline con stub,
 come il mini-swarm.
 
@@ -190,9 +190,9 @@ Entrambi passano dagli stessi cancelli anti-contaminazione.
 
 ## 9. Decisioni aperte per l'owner (bloccanti solo quando ci arriviamo)
 - numero massimo di reviewer concorrenti e budget di default (token/tempo);
-- parametri d'esecuzione di GLM-Colibri (runtime/modello identificati in §11:
-  colibri + GLM-5.2 int4/int8-MTP; restano da fissare budget, temperatura,
-  grammatica del verdetto e tier GPU dopo benchmark);
+- profilo Colibri da usare (Qwen/Kimi/GLM o altra famiglia ufficialmente
+  supportata), revisione, budget, temperatura, grammatica del verdetto e tier
+  di memoria dopo benchmark;
 - quali provider esterni abilitare per primi e in che formato;
 - policy di redazione precisa (cosa esce, come si logga);
 - criteri di "cambio critico" che fanno scattare il Council esteso;
@@ -208,28 +208,33 @@ innestare router/aggregator/arbiter. Nessun modello, nessuna VRAM.
 
 ---
 
-## 11. Runtime dell'arbiter: GLM-Colibri come endpoint effimero (batch)
+## 11. Runtime dell'arbiter: Colibri model-agnostic come endpoint effimero (batch)
 
 Questa sezione formalizza **come** l'arbiter di §4.4 gira davvero sul rig. La
 logica del Council (router/aggregator/arbiter/budgeter) resta quella dei §3-§7;
 qui si fissa solo il piano operativo dell'adjudicator.
 
 ### 11.1 Cos'e' Colibri, a runtime
-`JustVugg/colibri` (Apache-2.0) e' un motore in C puro, zero dipendenze, che fa
-girare **GLM-5.2 (744B MoE, pesi MIT di Z.ai)** streammando gli esperti da disco
-(dense part ~9.9GB int4 residente in RAM; 19.456 esperti su disco ~372GB,
-staging su gerarchia VRAM/RAM/NVMe). Container **int4 con teste MTP int8**
-(la variante int4-MTP collassa il draft allo 0% -> usare sempre int8-MTP).
-Lento e pesante per definizione (~0.05-0.1 tok/s su 25GB, fino a ~6 tok/s a
-residenza piena su GPU): **e' la forma giusta per un giudice finale** — raro,
-batch, mai nel loop.
+`JustVugg/colibri` e' il motore, non il nome del modello. La documentazione
+ufficiale corrente espone la stessa superficie `coli chat|serve|web` per
+famiglie GLM, Kimi, Qwen, DeepSeek, Inkling e OLMoE. Per il nostro shortlist
+sono quindi profili distinti almeno **Qwen3.8-Flash-Next**, **Kimi K3** e
+**GLM-5.2/5.3**. Non significa che Colibri esegua qualsiasi checkpoint con lo
+stesso binario: ogni famiglia ha il proprio engine e formato supportato. Fonte
+operativa da riverificare al benchmark:
+`https://github.com/JustVugg/colibri/blob/main/docs/index.mdx`.
+
+DEVIN non hardcoda piu' GLM: ogni batch registra `engine=colibri`, `model_id`,
+`family` e `revision` immutabile. La scelta finale avviene dopo benchmark reali
+di accuratezza, tempo e stabilita' sul rig; il modello resta un giudice raro,
+batch e mai nel loop interattivo.
 
 ### 11.2 Integrazione = un URL, non un embedding
-Colibri **espone un endpoint OpenAI-compatibile** (`coli serve` /
-`openai_server.py`). Quindi DEVIN ci parla **come gia' parla a Ornith su :8080**:
+Colibri espone endpoint OpenAI/Anthropic-compatibili tramite `coli serve`.
+Quindi DEVIN usa lo stesso adapter Council indipendentemente dalla famiglia:
 l'`ExternalReviewer`/arbiter (§4.1, §4.4) punta all'endpoint Colibri, nessuna
 riscrittura. Colibri resta **architetturalmente esterno** e **batch**, coerente
-col runbook AI Rig ("GLM-Colibri = adjudicator batch e generatore di esperimenti,
+col runbook AI Rig ("Colibri = adjudicator batch e generatore di esperimenti,
 non un voto, non un ruolo sempre acceso").
 
 ### 11.3 Finestra di adjudication effimera (gemella della Fase 0 OCR)
@@ -240,7 +245,7 @@ calibration interlock):
 discordanze accumulate come packet append-only (ciechi, redatti)
   -> apre finestra adjudication
   -> Ornith DOWN (stable stop, teardown verificato, VRAM libera)
-  -> Colibri UP (rig pieno: GPU come tier VRAM esperti, cosi' non e' glaciale)
+  -> Colibri UP col profilo model/revision scelto e verificato
   -> per ogni packet: legge le ragioni contrastanti
        -> emette PROPOSTA D'ESPERIMENTO + lettura, in JSON grammar-forced
   -> l'esperimento gira nel GATE DETERMINISTICO (rerun)  <-- verita' qui
@@ -274,7 +279,8 @@ dell'arbiter e' **deterministico nella forma e parsabile**. Il JSON e' la
 proposto**, non `provisional_verdict`. Colibri = adjudicator + generatore di
 esperimenti; l'evidenza rieseguibile resta l'autorita' (coerente con §1, §4.4,
 §5). Il record salvato porta `experiment`, `experiment_result`, `budget_spent`,
-`reviewer_id=glm-colibri`, `family=glm`.
+`reviewer_id=colibri-<profilo>`, `family=<qwen|kimi|glm|...>` e la revisione
+esatta del modello.
 
 ### 11.5 Budget e degrado (rimando a §4.5)
 Colibri e' lento: unita' piccole, heartbeat, una discordanza alla volta. Se sfora
@@ -282,10 +288,9 @@ il budget o non risponde, il Council **degrada** (l'arbitrato resta pendente /
 `needs_human_review`), non si blocca. Nessuna promozione senza copertura minima.
 
 ### 11.6 Vincoli e stato
-- **Disco:** ~372GB, idealmente NVMe sullo shared; verificare teste **int8-MTP**
-  (`ls -l <model>/out-mtp-*`).
-- **RAM 32GB:** gira ma disk-bound; il tier GPU (con Ornith spento) lo rende
-  usabile per un batch raro, non per nulla di interattivo.
+- **Disco/RAM:** dipendono fortemente dal profilo (Qwen, Kimi e GLM hanno
+  footprint differenti); si misurano e si registrano nel benchmark, senza
+  riusare numeri GLM come requisiti universali.
 - **Motore separato:** build C a parte (`./setup.sh`); `/opt/llama.cpp` (Ornith
   stabile) non si tocca.
 - **Confine di ruolo:** produce `external_review`/arbitrato, **non** un gate; i
