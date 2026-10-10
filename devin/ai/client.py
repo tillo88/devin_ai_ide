@@ -56,6 +56,15 @@ _TIMEOUT_PER_SFORZO = {
     "xhigh": 2400,
 }
 
+# Il timeout di requests vale fra un byte e il successivo: durante il prefill
+# il server non manda niente, quindi il prompt lungo va pagato in anticipo.
+# Misurato sul rig (acceptance di contesto, 2026-10-09): 60-68 token/s di
+# prefill a 58k token, senza cache del prompt. 40 token/s e 3 caratteri per
+# token sono volutamente prudenti: un timeout lungo costa niente, uno corto
+# taglia la richiesta e il retry rifa' tutto il prefill da capo.
+PREFILL_TOKEN_PER_SECONDO = 40
+CARATTERI_PER_TOKEN = 3
+
 # Quando il server non separa il pensiero in `reasoning_content` (build vecchia,
 # o --reasoning-format diverso da deepseek), il pensiero arriva dentro
 # `content` fra questi marcatori. Non e' un formato che scegliamo noi: e' quello
@@ -572,14 +581,29 @@ class AIClient:
                     sforzo, ", ".join(_SFORZI_AMMESSI)))
         return sforzo
 
-    def _timeout_ragionato(self, sforzo, timeout=None):
-        """Il tetto di attesa segue lo sforzo dichiarato, non un numero fisso."""
+    def _timeout_ragionato(self, sforzo, timeout=None, messages=None):
+        """Il tetto di attesa segue lo sforzo dichiarato piu' il prefill del prompt."""
         if timeout is not None:
             return timeout
         dichiarati = self.config.get("models", {}).get("reasoning", {}).get("timeouts", {}) or {}
         if sforzo in dichiarati:
-            return int(dichiarati[sforzo])
-        return _TIMEOUT_PER_SFORZO.get(sforzo, _TIMEOUT_PER_SFORZO[""])
+            base = int(dichiarati[sforzo])
+        else:
+            base = _TIMEOUT_PER_SFORZO.get(sforzo, _TIMEOUT_PER_SFORZO[""])
+        return base + self._secondi_di_prefill(messages)
+
+    @staticmethod
+    def _secondi_di_prefill(messages):
+        """Stima prudente dei secondi in cui il server elabora il prompt in silenzio."""
+        caratteri = 0
+        for messaggio in messages or ():
+            contenuto = messaggio.get("content") if isinstance(messaggio, dict) else None
+            if isinstance(contenuto, str):
+                caratteri += len(contenuto)
+            elif isinstance(contenuto, list):
+                caratteri += sum(len(p.get("text") or "") for p in contenuto if isinstance(p, dict))
+        token = caratteri // CARATTERI_PER_TOKEN
+        return token // PREFILL_TOKEN_PER_SECONDO
 
     def _corpo(self, model, messages, sforzo="", stream=False, max_tokens=None,
                temperature=None, response_format=None):
@@ -635,7 +659,7 @@ class AIClient:
         ragionamento in testa glielo spacca.
         """
         sforzo = self._sforzo(sforzo)
-        timeout = self._timeout_ragionato(sforzo, timeout)
+        timeout = self._timeout_ragionato(sforzo, timeout, messages)
 
         last_exception = None
 
@@ -757,7 +781,7 @@ class AIClient:
                 url,
                 json=self._corpo(model, messages, sforzo=sforzo,
                                  max_tokens=max_tokens, temperature=temperature),
-                timeout=self._timeout_ragionato(sforzo),
+                timeout=self._timeout_ragionato(sforzo, messages=messages),
                 headers=self._auth_headers(url)
             )
             r.raise_for_status()
@@ -808,7 +832,7 @@ class AIClient:
         gli insegneremmo a ripetersi.
         """
         sforzo = self._sforzo(sforzo)
-        timeout = self._timeout_ragionato(sforzo)
+        timeout = self._timeout_ragionato(sforzo, messages=messages)
         if max_attempts is None:
             attempt_limit = self.MAX_RETRIES
         else:

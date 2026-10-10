@@ -157,6 +157,15 @@ def test_senza_sforzo_il_timeout_non_torna_a_sessanta_secondi(client):
     assert client._timeout_ragionato("") >= 180
 
 
+def test_il_timeout_paga_il_prefill_del_prompt(client):
+    """Durante il prefill il server tace: 120k caratteri ~ 40k token ~ 1000 s a 40 tok/s."""
+    lungo = [{"role": "system", "content": "x" * 60_000},
+             {"role": "user", "content": [{"type": "text", "text": "y" * 60_000}]}]
+    assert client._timeout_ragionato("low", messages=lungo) == 180 + 1000
+    assert client._timeout_ragionato("low", messages=[{"role": "user", "content": "ciao"}]) == 180
+    assert client._timeout_ragionato("low", timeout=30, messages=lungo) == 30
+
+
 # --- pensiero e risposta ------------------------------------------------
 
 def test_reasoning_content_finisce_nel_canale_del_pensiero(client):
