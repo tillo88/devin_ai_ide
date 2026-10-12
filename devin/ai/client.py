@@ -523,7 +523,15 @@ class AIClient:
     # ============================================================
 
     def _is_retryable_error(self, exception) -> bool:
-        """Determina se un errore è retryable."""
+        """Determina se un errore è retryable.
+
+        Un ReadTimeout NON si ritenta: il server ha accettato la richiesta ed e'
+        solo lento. Il rig ha un solo slot (--parallel 1), quindi ritentare
+        rimette in coda la stessa richiesta pesante e triplica l'attesa senza
+        cambiare l'esito. Si ritentano solo i problemi di connessione.
+        """
+        if isinstance(exception, requests.exceptions.ReadTimeout):
+            return False
         if isinstance(exception, requests.exceptions.Timeout):
             return True
         if isinstance(exception, requests.exceptions.ConnectionError):
@@ -582,9 +590,20 @@ class AIClient:
         return sforzo
 
     def _timeout_ragionato(self, sforzo, timeout=None, messages=None):
-        """Il tetto di attesa segue lo sforzo dichiarato piu' il prefill del prompt."""
-        if timeout is not None:
-            return timeout
+        """Il tetto di attesa segue lo sforzo dichiarato piu' il prefill del prompt.
+
+        Un ``timeout`` passato dal chiamante e' un MINIMO, non un tetto. Planner,
+        coder e critic passavano 60-150 s scritti a mano per un modello che non
+        pensava: a 7 tok/s (2,5 a contesto pieno) un file da ~1000 token piu' il
+        ragionamento non ci sta, la richiesta scadeva, veniva ritentata e il file
+        risultava "vuoto" (scaffold del 12/10, storage.py).
+        """
+        calcolato = self._timeout_calcolato(sforzo, messages)
+        if timeout is None:
+            return calcolato
+        return max(timeout, calcolato)
+
+    def _timeout_calcolato(self, sforzo, messages=None):
         dichiarati = self.config.get("models", {}).get("reasoning", {}).get("timeouts", {}) or {}
         if sforzo in dichiarati:
             base = int(dichiarati[sforzo])

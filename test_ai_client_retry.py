@@ -101,6 +101,12 @@ class TestIsRetryableError:
         err.response = None
         assert client._is_retryable_error(err) is False
 
+    def test_read_timeout_is_not_retried(self):
+        """Il server e' vivo ma lento: ritentare rimette in coda la stessa richiesta."""
+        client = _make_client()
+        assert client._is_retryable_error(requests.exceptions.ReadTimeout("slow")) is False
+        assert client._is_retryable_error(requests.exceptions.ConnectTimeout("down")) is True
+
     def test_generic_exception_not_retryable(self):
         client = _make_client()
         assert client._is_retryable_error(ValueError("bug")) is False
@@ -336,3 +342,13 @@ class TestStreamRetry:
         assert mock_sleep.call_args_list == [call(2), call(4)]
         assert len(out) == 1
         assert "Stream error after 3 attempts" in out[0]
+
+
+def test_read_timeout_is_attempted_once():
+    client = _make_client()
+    with patch("devin.ai.client.requests.post",
+               side_effect=requests.exceptions.ReadTimeout("slow")) as mock_post, \
+         patch("devin.ai.client.time.sleep") as mock_sleep:
+        assert client.local(MESSAGES) is None
+    assert mock_post.call_count == 1
+    mock_sleep.assert_not_called()

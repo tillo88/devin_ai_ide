@@ -109,6 +109,12 @@ async def api_workspace_pick_folder():
     return result
 
 
+# Cartelle interne di DEVIN dentro il workspace: non sono progetti dell'utente.
+# docs_cache (cache della documentazione usata dallo scaffold) finiva nella
+# lista dei progetti.
+_RESERVED_WORKSPACE_DIRS = frozenset({"sandbox", "sandboxes", "docs_cache"})
+
+
 @router.get("/api/workspace/projects")
 async def api_workspace_projects():
     """Lista dei progetti = sottocartelle di workspace/ (escluse quelle interne).
@@ -118,7 +124,7 @@ async def api_workspace_projects():
     projects = []
     if WORKSPACE_DIR.exists():
         for d in sorted(WORKSPACE_DIR.iterdir()):
-            if not d.is_dir() or d.name.startswith(("_", ".")) or d.name == "sandbox":
+            if not d.is_dir() or d.name.startswith(("_", ".")) or d.name in _RESERVED_WORKSPACE_DIRS:
                 continue
             ps = ProjectSpace(str(d))
             from devin.ui.routers.local_workspace import local_workspace_for_project

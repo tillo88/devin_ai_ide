@@ -163,7 +163,15 @@ def test_il_timeout_paga_il_prefill_del_prompt(client):
              {"role": "user", "content": [{"type": "text", "text": "y" * 60_000}]}]
     assert client._timeout_ragionato("low", messages=lungo) == 180 + 1000
     assert client._timeout_ragionato("low", messages=[{"role": "user", "content": "ciao"}]) == 180
-    assert client._timeout_ragionato("low", timeout=30, messages=lungo) == 30
+    # Il timeout del chiamante e' un minimo: non puo' scendere sotto il calcolato.
+    assert client._timeout_ragionato("low", timeout=30, messages=lungo) == 180 + 1000
+    assert client._timeout_ragionato("low", timeout=5000, messages=lungo) == 5000
+
+
+def test_i_timeout_fissi_degli_agenti_non_tagliano_piu_la_generazione(client):
+    """Scaffold del 12/10: coder con timeout=60 -> storage.py "vuoto" dopo 3 tentativi."""
+    assert client._timeout_ragionato("", timeout=60) >= 180
+    assert client._timeout_ragionato("", timeout=150) >= 180
 
 
 # --- pensiero e risposta ------------------------------------------------
@@ -286,11 +294,12 @@ def test_local_manda_lo_sforzo_e_il_timeout_giusti(client):
     assert client._stato["timeout"] == 2400
 
 
-def test_un_timeout_esplicito_vince_sullo_sforzo(client):
+def test_un_timeout_esplicito_non_scende_sotto_lo_sforzo(client):
+    """Il timeout del chiamante e' un minimo: con xhigh resta il tetto di xhigh."""
     client._stato["risposta"] = _FintaRisposta([json.dumps(
         {"choices": [{"message": {"content": "x"}}]})])
     client.local([{"role": "user", "content": "x"}], timeout=30, sforzo="xhigh")
-    assert client._stato["timeout"] == 30
+    assert client._stato["timeout"] == 2400
 
 
 # --- complete() ---------------------------------------------------------
