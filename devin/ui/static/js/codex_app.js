@@ -3597,6 +3597,8 @@ function setupChatComposer() {
         linkWorkspaceFolder().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
       } else if (action === "new-project") {
         createWorkspaceProject().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
+      } else if (action === "build-from-chat") {
+        buildFromConversation().catch((err) => appendChatMessage("assistant", `[error] ${errorMessage(err)}`));
       }
       closeAllTools();
     });
@@ -3607,6 +3609,39 @@ function setupChatComposer() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeAllTools();
   });
+}
+
+// Dalla chat al lavoro: l'intera conversazione (idea, domande, risposte,
+// decisioni) diventa il compito. Progetto vuoto -> scaffold da zero; progetto
+// con codice -> patch con sandbox, test e approvazione. Prima questo passaggio
+// esisteva solo nella vecchia pagina chat.html: nell'app desktop un "procedi"
+// partiva col solo ultimo messaggio, perdendo quanto deciso in chat.
+async function buildFromConversation() {
+  if (!state.selectedProjectPath) {
+    appendChatMessage("assistant", "Seleziona o crea prima un progetto: il codice va scritto in una cartella.");
+    return;
+  }
+  const response = await apiFetch("/api/chat/generate_patch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      project_path: state.selectedProjectPath,
+      chat_id: state.selectedChatId || null,
+    }),
+  });
+  const payload = await response.json();
+  if (payload.error) {
+    appendChatMessage("assistant", payload.error.includes("nessuna conversazione")
+      ? "La conversazione è vuota: prima parliamo di cosa costruire, poi «Costruisci da questa chat»."
+      : `[error] ${payload.error}`);
+    return;
+  }
+  appendChatMessage("assistant", payload.mode === "scaffold"
+    ? `Costruisco da zero quanto deciso in questa chat (run ${payload.run_id}). Seguo la timeline.`
+    : `Applico al progetto quanto deciso in questa chat (run ${payload.run_id}), con test e approvazione prima di scrivere.`);
+  setPipelineStage(0);
+  showRunStatus(payload.run_id, "starting");
+  await selectRun(payload.run_id);
 }
 
 function diagnosticsUrl(section = "") {
