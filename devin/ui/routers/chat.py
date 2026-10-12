@@ -108,6 +108,35 @@ def _detect_mode(message: str) -> str:
     return "coder"
 
 
+_DISCUSSION_FIRST_PHRASES = (
+    "prima di scrivere", "prima di iniziare", "prima di partire", "prima di procedere",
+    "prima di toccare", "prima di creare", "prima di costruire", "prima di generare",
+    "fammi domande", "fammi le domande", "fammi qualche domanda", "fammi delle domande",
+    "hai domande", "hai delle domande", "le domande che ti servono",
+    "proponimi", "come lo struttureresti", "come la struttureresti",
+    "come lo imposteresti", "come la imposteresti", "come lo organizzeresti",
+    "non scrivere codice", "senza scrivere codice", "non scrivere ancora",
+    "non iniziare", "non partire", "aspetta a scrivere",
+    "parliamone", "discutiamone", "discutiamo", "ragioniamoci", "ragioniamo insieme",
+    "mettere giu le idee", "mettiamo giu le idee", "mettere giù le idee", "mettiamo giù le idee",
+    "before writing", "before you write", "ask me", "don't write code", "do not write code",
+    "let's discuss", "lets discuss",
+)
+
+
+def _wants_discussion_first(message: str) -> bool:
+    """L'utente vuole parlarne prima: niente run automatica, si risponde in chat.
+
+    Lo smistamento verso scaffold e manutenzione e' per parole chiave ("da zero",
+    "crea un'app"...). Un messaggio come "vorrei costruire da zero X; prima di
+    scrivere codice fammi le domande" veniva mandato allo scaffold ignorando la
+    seconda meta'. Una richiesta esplicita di dialogo vince sempre: il goal si
+    imposta dopo, dalla chat o dal pulsante Goal.
+    """
+    text = (message or "").lower()
+    return any(phrase in text for phrase in _DISCUSSION_FIRST_PHRASES)
+
+
 def _is_scaffold_request(message: str, project_path: str) -> bool:
     '''Euristica per il routing chat -> scaffolding.
 
@@ -117,7 +146,7 @@ def _is_scaffold_request(message: str, project_path: str) -> bool:
     di manutenzione, che preserva l'architettura esistente e usa la pipeline
     sandbox -> test -> diff -> approvazione.
     '''
-    if not project_path:
+    if not project_path or _wants_discussion_first(message):
         return False
 
     path = Path(project_path).expanduser()
@@ -824,7 +853,8 @@ async def api_chat(req: ChatRequest):
     # quel percorso pianifica una nuova struttura. Le richieste che chiedono
     # modifiche reali vengono avviate come manutenzione e restano soggette a
     # sandbox, test e approvazione esplicita.
-    if req.project_path and is_operational_build_request(message):
+    if (req.project_path and is_operational_build_request(message)
+            and not _wants_discussion_first(message)):
         return await api_run(RunRequest(path=req.project_path, task=message))
 
     # Vision rimosso da DEVIN (2026-07-09): nessun modello locale/rig di questo

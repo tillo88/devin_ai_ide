@@ -12,7 +12,7 @@
  * shell (HTML/CSS/JS/icone), altrimenti i client continuano a servire la
  * versione vecchia dalla cache. Vedi docs/CONTINUITY_2026-07-18.md.
  */
-const CACHE_VERSION = "devin-shell-v20";
+const CACHE_VERSION = "devin-shell-v21";
 const SHELL_URLS = [
   "/app",
   "/manifest.webmanifest",
@@ -21,6 +21,7 @@ const SHELL_URLS = [
   "/static/js/project_flow.js",
   "/static/js/verified_diff.js",
   "/static/js/run_log.js",
+  "/static/js/run_stream.js",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
 ];

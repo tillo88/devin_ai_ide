@@ -6,6 +6,7 @@ import {
   structuredFaults,
 } from "./run_log.js";
 import { projectFlowSnapshot } from "./project_flow.js";
+import { connectRunStream } from "./run_stream.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -1548,6 +1549,7 @@ function applyRunEventToActivity(event) {
   };
   if (Object.hasOwn(stages, event.type)) setPipelineStage(stages[event.type]);
   if (event.type === "run_finished") {
+    state.runFinishedId = event.run_id;
     const status = event.data?.status || "failed";
     showRunStatus(event.run_id, status, { completed: ["success", "verified_success", "awaiting_approval"].includes(status) });
     loadRunLog(event.run_id).catch(() => {});
@@ -1883,10 +1885,7 @@ function renderApprovalBanner(projectPath, lr) {
 }
 
 async function selectProject(projectPath) {
-  if (state.eventSource) {
-    state.eventSource.close();
-    state.eventSource = null;
-  }
+  stopEventStream();
   state.selectedRunId = null;
   state.selectedRunStatus = null;
   state.lastProjectRun = null;
@@ -2236,30 +2235,32 @@ async function loadRunEvents(runId) {
   startEventStream(runId);
 }
 
+const RUN_ACTIVE_STATUSES = new Set(["starting", "queued", "running", "started", "resuming"]);
+
+function runStreamShouldReconnect(runId) {
+  return Boolean(runId)
+    && runId === state.selectedRunId
+    && state.runFinishedId !== runId
+    && RUN_ACTIVE_STATUSES.has(state.selectedRunStatus || "running");
+}
+
+function stopEventStream() {
+  if (state.eventSource) state.eventSource.stop();
+  state.eventSource = null;
+}
+
 function startEventStream(runId) {
-  if (state.eventSource) {
-    state.eventSource.close();
-    state.eventSource = null;
-  }
-
+  stopEventStream();
   if (!apiEventStreamAvailable() || !runId) return;
-
-  const url = `/api/run/${encodeURIComponent(runId)}/events/stream?after_seq=${state.lastEventSeq}`;
-  const source = apiEventSource(url);
-  state.eventSource = source;
-
-  source.onmessage = (message) => {
-    try {
-      appendTimelineEvent(JSON.parse(message.data));
-    } catch (err) {
-      console.warn("Invalid run event", err);
-    }
-  };
-
-  source.onerror = () => {
-    source.close();
-    if (state.eventSource === source) state.eventSource = null;
-  };
+  state.eventSource = connectRunStream({
+    open: (afterSeq) => apiEventSource(
+      `/api/run/${encodeURIComponent(runId)}/events/stream?after_seq=${afterSeq}`,
+    ),
+    lastSeq: () => state.lastEventSeq,
+    onEvent: appendTimelineEvent,
+    shouldReconnect: () => runStreamShouldReconnect(runId),
+    onReconnect: () => { loadRunLog(runId).catch(() => {}); },
+  });
 }
 
 
@@ -2290,7 +2291,7 @@ function scheduleRunLogRefresh() {
 
 async function selectRun(runId) {
   if (!runId) return;
-  if (state.eventSource) { state.eventSource.close(); state.eventSource = null; }
+  stopEventStream();
   state.selectedRunId = runId;
   state.runEvents = [];
   state.runLogPayload = null;
