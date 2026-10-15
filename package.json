@@ -8,7 +8,7 @@
     "desktop:dev": "powershell -ExecutionPolicy Bypass -File ./scripts/run-tauri-desktop.ps1 -SkipPreflight",
     "desktop:build": "powershell -ExecutionPolicy Bypass -File ./scripts/build-windows-installer.ps1",
     "backend": "python devin/ui/fast_app.py",
-    "test:ui": "node --test test_verified_diff.mjs test_run_log_workspace.mjs",
+    "test:ui": "node --test test_verified_diff.mjs test_run_log_workspace.mjs test_chat_markdown.mjs",
     "desktop:info": "powershell -ExecutionPolicy Bypass -File ./scripts/run-tauri-desktop.ps1 -Info -SkipPreflight",
     "desktop:test": "powershell -ExecutionPolicy Bypass -File ./scripts/test-tauri-desktop.ps1",
     "desktop:cache": "powershell -ExecutionPolicy Bypass -File ./scripts/manage-desktop-build-cache.ps1 -Action status",

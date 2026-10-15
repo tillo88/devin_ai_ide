@@ -66,6 +66,7 @@ def test_service_worker_source_shell_only_cache_and_network_only_api():
         '"/static/js/verified_diff.js"',
         '"/static/js/run_log.js"',
         '"/static/js/run_stream.js"',
+        '"/static/js/chat_markdown.js"',
         '"/static/icons/icon-192.png"',
         '"/static/icons/icon-512.png"',
     ):
