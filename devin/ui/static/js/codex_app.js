@@ -7,6 +7,7 @@ import {
 } from "./run_log.js";
 import { projectFlowSnapshot } from "./project_flow.js";
 import { connectRunStream } from "./run_stream.js";
+import { renderMarkdownInto } from "./chat_markdown.js";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -2479,8 +2480,13 @@ function appendChatMessage(role, content = "", options = {}) {
       <span class="chat-role">${role === "user" ? "TU" : "DEVIN"}</span>
       ${deleteButton}
     </div>
-    <p>${escapeHtml(content)}</p>
+    <div class="chat-message-body"></div>
   `;
+  const body = article.querySelector(".chat-message-body");
+  // Le risposte di DEVIN sono markdown: rese con nodi DOM, mai innerHTML.
+  // Quello che scrive l'utente resta testo com'e'.
+  if (role === "assistant" && content) renderMarkdownBody(body, content);
+  else body.textContent = content;
   const btn = article.querySelector("[data-message-index]");
   if (btn) {
     btn.addEventListener("click", (event) => {
@@ -2494,7 +2500,19 @@ function appendChatMessage(role, content = "", options = {}) {
   }
   thread.appendChild(article);
   thread.scrollTop = thread.scrollHeight;
-  return article.querySelector("p");
+  return body;
+}
+
+function renderMarkdownBody(node, text) {
+  try {
+    renderMarkdownInto(node, text);
+    node.classList.add("md");
+  } catch (err) {
+    // Un markdown che il parser non regge non deve far sparire la risposta.
+    console.error(err);
+    node.classList.remove("md");
+    node.textContent = text;
+  }
 }
 
 function renderChatHistory(history = []) {
@@ -3174,6 +3192,10 @@ async function sendChatMessage(message) {
     }
 
     if (buffer.trim()) applyChatEvent(parseSseBlock(buffer), assistantNode);
+    // A risposta finita il testo diventa markdown reso. Durante lo stream resta
+    // testo semplice: ri-analizzare tutto a ogni token costerebbe O(n^2).
+    const finale = splitReasoning(assistantNode._raw || "").answer;
+    if (finale.trim()) renderMarkdownBody(assistantNode, finale);
   } catch (err) {
     if (err?.name !== "AbortError") assistantNode.textContent += `\n[error] ${errorMessage(err, "Stream interrotto")}`;
   } finally {
