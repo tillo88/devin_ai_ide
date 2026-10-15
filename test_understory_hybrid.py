@@ -1081,6 +1081,8 @@ def test_tauri_desktop_shell_targets_workspace_app():
         "allow-cancel-local-workspace-command",
         "allow-apply-local-workspace-plan",
         "allow-apply-local-workspace-changes",
+        "allow-desktop-update-check",
+        "allow-desktop-update-open",
     ]
     assert "thin client" in docs
     assert "front door" in docs
