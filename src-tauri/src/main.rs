@@ -20,9 +20,11 @@ use serde_json::Value;
 use tauri::Manager;
 
 mod desktop_transport;
+mod desktop_update;
 mod local_execution;
 mod local_workspace;
 use desktop_transport::{desktop_http_cancel, desktop_http_stream, DesktopTransportState};
+use desktop_update::{desktop_update_check, desktop_update_open};
 use local_execution::{
     cancel_local_workspace_command, run_local_workspace_command, LocalExecutionState,
 };
@@ -415,7 +417,9 @@ fn main() {
             run_local_workspace_command,
             cancel_local_workspace_command,
             apply_local_workspace_plan,
-            apply_local_workspace_changes
+            apply_local_workspace_changes,
+            desktop_update_check,
+            desktop_update_open
         ])
         .run(tauri::generate_context!())
         .expect("error while running DEVIN AI IDE desktop shell");

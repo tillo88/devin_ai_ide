@@ -15,6 +15,10 @@ fn main() {
             "cancel_local_workspace_command",
             "apply_local_workspace_plan",
             "apply_local_workspace_changes",
+            "desktop_http_stream",
+            "desktop_http_cancel",
+            "desktop_update_check",
+            "desktop_update_open",
         ]));
     tauri_build::try_build(attributes).expect("failed to build DEVIN desktop manifest")
 }

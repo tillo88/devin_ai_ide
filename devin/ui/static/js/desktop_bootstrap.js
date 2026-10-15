@@ -543,7 +543,58 @@ async function connectConfigured() {
   }
 }
 
+// L'interfaccia e' compilata dentro l'app: una UI nuova arriva solo con una
+// build nuova. GitHub Actions ne pubblica una a ogni merge; qui si avvisa e,
+// su richiesta, Rust apre il download dell'installer nel browser.
+let updateChecked = false;
+
+async function checkForUpdate() {
+  if (updateChecked) return;
+  updateChecked = true;
+  let status;
+  try {
+    status = await tauriInvoke("desktop_update_check");
+  } catch (_) {
+    return;
+  }
+  const update = status && status.available;
+  if (!update || document.getElementById("devin-update-banner")) return;
+
+  const banner = element("div", "devin-update-banner");
+  banner.id = "devin-update-banner";
+  banner.setAttribute("role", "status");
+  Object.assign(banner.style, {
+    position: "fixed", right: "16px", bottom: "16px", zIndex: "10000", maxWidth: "360px",
+    padding: "12px 14px", borderRadius: "10px", background: "rgba(15, 23, 42, 0.96)",
+    border: "1px solid rgba(34, 211, 238, 0.45)", color: "#e2e8f0",
+    font: "13px/1.4 system-ui, sans-serif", boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+  });
+  banner.appendChild(element("strong", "", `App DEVIN ${update.version} disponibile`));
+  banner.appendChild(element("div", "", `Questa è la ${status.current}: l'interfaccia nuova arriva solo aggiornando l'app.`));
+  const row = element("div", "");
+  Object.assign(row.style, { display: "flex", gap: "8px", marginTop: "10px", alignItems: "center" });
+  const download = action("Scarica aggiornamento", "primary", async () => {
+    download.disabled = true;
+    try {
+      const version = await tauriInvoke("desktop_update_open");
+      note.textContent = `Download di ${version} aperto nel browser: chiudi DEVIN e avvia l'installer.`;
+    } catch (error) {
+      note.textContent = errorText(error);
+      download.disabled = false;
+    }
+  });
+  const later = action("Più tardi", "secondary", () => banner.remove());
+  row.appendChild(download);
+  row.appendChild(later);
+  banner.appendChild(row);
+  const note = element("div", "");
+  Object.assign(note.style, { marginTop: "6px", color: "#94a3b8" });
+  banner.appendChild(note);
+  document.body.appendChild(banner);
+}
+
 async function boot() {
+  void checkForUpdate();
   if (booting) return;
   booting = true;
   try {

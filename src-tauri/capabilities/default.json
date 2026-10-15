@@ -20,6 +20,8 @@
     "allow-run-local-workspace-command",
     "allow-cancel-local-workspace-command",
     "allow-apply-local-workspace-plan",
-    "allow-apply-local-workspace-changes"
+    "allow-apply-local-workspace-changes",
+    "allow-desktop-update-check",
+    "allow-desktop-update-open"
   ]
 }

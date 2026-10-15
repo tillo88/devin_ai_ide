@@ -149,3 +149,21 @@ MSI packages, and copies only the installers plus `build-manifest.json` to
 `dist\windows`. The manifest records size and SHA-256 for transport integrity;
 it never reads or copies `desktop.json`. Python, WSL, backend binaries, GGUF
 models and runtime data are not Tauri resources.
+
+## Aggiornamenti dell'app (una sola sorgente per l'interfaccia)
+
+L'interfaccia è compilata dentro l'app: l'app non carica codice remoto dal rig.
+Per non avere due copie che divergono (`/opt/devin-ai-ide-frontend` sul rig e
+il bundle nell'.exe), a ogni merge su `main` che tocca UI o shell il workflow
+`.github/workflows/desktop-release.yml` costruisce l'installer su
+`windows-latest` e lo pubblica come release `desktop-v0.2.<run>` (con SHA-256
+nelle note). Sui PR costruisce e prova soltanto.
+
+All'avvio l'app chiede a GitHub le release (`desktop_update_check`, Rust) e, se
+ce n'è una più nuova, mostra un avviso. «Scarica aggiornamento» apre nel
+browser il download dell'installer: l'URL lo ricalcola Rust e deve stare sotto
+`https://github.com/tillo88/devin_ai_ide/releases/download/desktop-v…`.
+L'app non scarica né lancia eseguibili da sola.
+
+`Compila DEVIN.cmd` resta per le build locali di prova (versione 0.2.0: l'app
+segnalerà sempre la release ufficiale come più nuova).
