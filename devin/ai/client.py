@@ -698,7 +698,7 @@ class AIClient:
             return messaggio.get("content") or "", messaggio.get("reasoning_content") or ""
         return "".join(content), "".join(ragionamento)
 
-    def local(self, messages, mode="reasoning", timeout=None, sforzo=""):
+    def local(self, messages, mode="reasoning", timeout=None, sforzo="", max_tokens=None):
         """
         Chiama endpoint locale/rig con retry e backoff esponenziale.
         Copre: Timeout, ConnectionError, HTTPError (502/503/504), ChunkedEncodingError.
@@ -729,7 +729,8 @@ class AIClient:
                 # scade solo un server che tace davvero.
                 r = requests.post(
                     url,
-                    json={**self._corpo(model, messages, sforzo=sforzo, stream=True),
+                    json={**self._corpo(model, messages, sforzo=sforzo, stream=True,
+                                        max_tokens=max_tokens),
                           "return_progress": True},
                     timeout=timeout,
                     headers=self._auth_headers(url),
