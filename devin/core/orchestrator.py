@@ -132,6 +132,13 @@ class Orchestrator:
                   "(esplicito in config): le modifiche verranno applicate e "
                   "committate automaticamente nel progetto reale.")
         self.change_application_mode = requested_application_mode
+        # Prova dell'app (16/10): dopo i test DEVIN usa il programma scritto
+        # (comandi, server, finestra) in una copia della sandbox. Attiva solo
+        # dentro run_scaffold; `execution.app_check: false` la spegne.
+        self.app_check_enabled = bool(self.config.get("execution", {}).get("app_check", True))
+        self._prova_attiva = False
+        self._piano_prova = None
+        self._task_corrente = ""
 
         # FASE 1: Configurazione serializzazione VRAM
         models_config = self.config.get("models", {})
@@ -605,6 +612,15 @@ class Orchestrator:
                 if not test_result.success:
                     errors.append(f"tests.py failed: {(test_result.error or 'exit non-zero')[:2000]}")
 
+        # PROVA DELL'APP (16/10): con test verdi (o senza test) DEVIN usa il
+        # programma come l'utente. Un controllo fallito boccia il gate come un
+        # test rosso, e l'errore torna al self-heal loop.
+        prova = None
+        if not errors and getattr(self, "_prova_attiva", False):
+            prova = self._prova_app(root, written)
+            if prova and prova.get("stato") == "fallita":
+                errors.extend(f"prova dell'app: {e}" for e in prova.get("errori") or [])
+
         if errors:
             status = "verified_failure"
         elif tests_run:
@@ -629,7 +645,61 @@ class Orchestrator:
             "errors": errors,
             "security_warnings": security_warnings,
             "security_scanner": "bandit" if bandit_available() else "assente",
+            "app_check": prova,
         }
+
+    def _prova_app(self, root: Path, written: List[str]) -> Dict[str, Any] | None:
+        """Pianifica (una volta per run) ed esegue la prova dell'app."""
+        from devin.agents.coder import contesto_file
+        from devin.core import app_check
+
+        try:
+            indizi = app_check.tipo_progetto(root)
+            if self._piano_prova is None:
+                if indizi["html"] and not indizi["python"]:
+                    self._piano_prova = app_check.piano_html_statico(root)
+                elif indizi["python"]:
+                    contesti = {}
+                    for relative in sorted(written):
+                        path = _safe_project_target(str(root), relative)
+                        if path.is_file() and path.suffix in {".py", ".md", ".txt", ".toml", ".cfg"}:
+                            testo = path.read_text(encoding="utf-8", errors="replace")
+                            contesti[relative] = contesto_file(relative, testo)
+                    richiesta = app_check.richiesta_piano(
+                        self._task_corrente, sorted(written), contesti, indizi)
+                    motivo = ""
+                    for _tentativo in range(2):
+                        messaggi = [{"role": "user", "content": richiesta + (
+                            f"\n\nIL PIANO PRECEDENTE ERA NON VALIDO: {motivo}. Correggilo." if motivo else "")}]
+                        risposta = self.ai_client.local(messaggi, mode="reasoning", sforzo="low",
+                                                        max_tokens=4096)
+                        try:
+                            self._piano_prova = app_check.leggi_piano(risposta or "")
+                            break
+                        except app_check.PianoNonValido as exc:
+                            motivo = str(exc)
+                    if self._piano_prova is None:
+                        self._piano_prova = []
+                        self._motivo_piano = f"piano della prova non valido: {motivo}"
+                else:
+                    self._piano_prova = []
+            if not self._piano_prova:
+                motivo = getattr(self, "_motivo_piano", "") or "niente da avviare (nessun programma Python o pagina)"
+                self._log(f"Prova dell'app saltata: {motivo}", "warning")
+                return {"stato": "saltata", "motivo": motivo, "passi": [], "errori": []}
+            browser = (app_check.browser_playwright()
+                       if any(p.get("browser") for p in self._piano_prova) else None)
+            self._log(f"🧪 Provo l'app: {len(self._piano_prova)} controlli", "info")
+            prova = app_check.esegui_piano(root, self._piano_prova, browser=browser)
+            for passo in prova["passi"]:
+                livello = {"ok": "success", "fallito": "error"}.get(passo["esito"], "warning")
+                dettaglio = f" — {passo['motivo']}" if passo["motivo"] else ""
+                self._log(f"  {passo['esito']}: {passo['nome']} (`{passo['comando']}`){dettaglio}", livello)
+            return prova
+        except Exception as exc:  # la prova non deve far cadere il run: si dice
+            self._log(f"Prova dell'app non eseguita: {type(exc).__name__}: {exc}", "warning")
+            return {"stato": "saltata", "motivo": f"{type(exc).__name__}: {exc}"[:300],
+                    "passi": [], "errori": []}
 
     def _scaffold_heal_loop(self, quality: Dict[str, Any], impl_files: List[str],
                             spec_by_name: Dict[str, str], running_context: str,
@@ -757,6 +827,10 @@ class Orchestrator:
 
     def run_scaffold(self, task: str, project_path: str = None, run_id: str = None) -> Dict[str, Any]:
         self._reset_web_search_budget()
+        self._prova_attiva = bool(getattr(self, "app_check_enabled", False))
+        self._piano_prova = None
+        self._motivo_piano = ""
+        self._task_corrente = task
         if project_path:
             self.project_path = project_path
             self.git_ops.project_path = project_path

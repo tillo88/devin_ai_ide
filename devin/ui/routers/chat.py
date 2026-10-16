@@ -1496,6 +1496,9 @@ def esito_run_da_chat(mode: str, status: str, result: dict, run_id: str) -> dict
     nomi_falliti = [str(f.get("filename") if isinstance(f, dict) else f) for f in falliti]
     file_txt = ", ".join(f"`{f}`" for f in scritti[:8]) + (" e altri" if len(scritti) > 8 else "")
     conteggio = f"{len(scritti)}/{pianificati} file" if pianificati else f"{len(scritti)} file"
+    from devin.core.app_check import riassunto as riassunto_prova
+    prova = (result.get("quality_gate") or {}).get("app_check")
+    prova_txt = riassunto_prova(prova)
 
     if status == "awaiting_approval":
         testo = (f"Fatto (run {run_id}): {conteggio} scritti ({file_txt}), test verdi. "
@@ -1519,6 +1522,8 @@ def esito_run_da_chat(mode: str, status: str, result: dict, run_id: str) -> dict
             motivo = f" Errore: {str(result['error'])[:200]}."
         testo = (f"Non riuscito (run {run_id}, {status}): {conteggio} scritti.{motivo} "
                  "I dettagli sono nel Log del run.")
+    if prova_txt:
+        testo += f" Prova: {prova_txt}."
     return {
         "chat_message": testo,
         "mode": mode,
@@ -1526,6 +1531,7 @@ def esito_run_da_chat(mode: str, status: str, result: dict, run_id: str) -> dict
         "files_failed": nomi_falliti,
         "total_planned": pianificati,
         "quality_gate": (result.get("quality_gate") or {}).get("status"),
+        "app_check": prova_txt or None,
     }
 
 
