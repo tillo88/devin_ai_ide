@@ -253,7 +253,8 @@ class Orchestrator:
     ) -> str:
         self._log(f"[SELF-HEAL] {stage} failed: {error} — invio al Critic per auto-correzione", "warning")
         context = (context + self._maybe_web_reference(error)
-                   + self._maybe_library_docs(patch, *((sandbox_files or {}).values())))
+                   + self._maybe_library_docs(patch, *((sandbox_files or {}).values()))
+                   + self._soluzioni_passate(error))
         swapped_for_critic = False
         try:
             if self._degraded_mode and self.serialize_vram:
@@ -269,6 +270,27 @@ class Orchestrator:
         finally:
             if swapped_for_critic:
                 self._check_vram_and_swap("coder", "planner")
+
+    def _soluzioni_passate(self, errore: str) -> str:
+        """Soluzioni gia' verificate per errori simili (memoria problema -> soluzione)."""
+        from devin.core.fix_memory import cerca_soluzioni
+        blocco = cerca_soluzioni(getattr(self, "memory_client", None), errore)
+        if blocco:
+            self._log("🧠 Memoria: trovate soluzioni gia' verificate per un errore simile", "info")
+        return blocco
+
+    def _ricorda_correzione(self, errore: str, correzione: str, origine: str) -> None:
+        """Salva una correzione verificata; mai un blocco per il run."""
+        from devin.core.fix_memory import ricorda_correzione
+        try:
+            esito = ricorda_correzione(
+                getattr(self, "memory_client", None), progetto=Path(self.project_path).name,
+                errore=errore, correzione=correzione, origine=origine,
+                lingua=self._project_language())
+            if esito not in {"not_recorded", "duplicate"}:
+                self._log("🧠 Memoria: salvata la correzione (problema -> soluzione verificata)", "info")
+        except Exception as exc:
+            self._log(f"Memoria della correzione non salvata: {type(exc).__name__}: {exc}", "warning")
 
     def _reset_web_search_budget(self) -> None:
         """Budget ricerche web PER RUN (2026-07-18, decisione owner): il
@@ -733,14 +755,18 @@ class Orchestrator:
         if not impl_files:
             return quality
         root = Path(root or self.project_path).resolve()
+        from devin.core.fix_memory import diff_correzione, errore_del_gate, leggi_file
+        ultimo = {}
 
         def action(iteration: int, last: VerifyResult | None) -> Dict[str, Any]:
             gate = (last.evidence if last and last.evidence else quality)
+            errore = errore_del_gate(gate)
+            ultimo.update(errore=errore, prima=leggi_file(root, impl_files))
             feedback = (
                 "Il codice precedente NON passa i test. Correggilo perche' passino.\n"
                 f"Errori/gate:\n{'; '.join(gate.get('errors') or [])[:1200]}\n"
                 f"Output test:\n{(gate.get('test_output') or '')[:1200]}"
-            )
+            ) + self._soluzioni_passate(errore)
             self._log(f"🔁 Self-heal iterazione {iteration}: rigenero {len(impl_files)} file", "info")
             for fname in impl_files:
                 if self._should_stop:
@@ -775,6 +801,10 @@ class Orchestrator:
             f"Self-heal loop: {outcome.reason} dopo {outcome.iterations} iterazioni "
             f"({'VERDE' if outcome.success else 'ancora rosso'})",
             "success" if outcome.success else "warning")
+        if outcome.success and ultimo.get("prima") is not None:
+            # l'ultima iterazione ha reso verde il gate: errore -> correzione verificata
+            correzione = diff_correzione(ultimo["prima"], leggi_file(root, impl_files))
+            self._ricorda_correzione(ultimo.get("errore", ""), correzione, "scaffold_self_heal")
         return outcome.last_result if outcome.last_result else quality
 
     def _remember_scaffold_outcome(self, task: str, quality: Dict[str, Any],
@@ -1668,6 +1698,10 @@ class Orchestrator:
                     sandbox_path, entrypoint=entrypoint, timeout=runner_timeout)
                 if result.success:
                     log("Execution successful!", "success")
+                    if last_error and patch:
+                        # un tentativo prima era fallito: questa patch lo ha risolto
+                        self._ricorda_correzione(str(last_error), str(patch)[:3000],
+                                                 "maintenance_retry")
 
                     if self.change_application_mode == "review":
                         try:
