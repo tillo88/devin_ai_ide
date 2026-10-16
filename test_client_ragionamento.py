@@ -431,3 +431,78 @@ def test_lo_scaffold_ha_un_tetto_di_uscita(monkeypatch):
     c.ai = FintoAI()
     assert c.generate_file("a.py", "spec") == "x = 1"
     assert visti["max_tokens"] == modulo.SCAFFOLD_MAX_TOKENS
+
+
+def test_local_registra_perche_si_e_fermata(client):
+    client._stato["risposta"] = _FintaRisposta([
+        'data: {"choices": [{"delta": {"reasoning_content": "penso"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "length"}]}',
+        "data: [DONE]",
+    ])
+    assert client.local([{"role": "user", "content": "x"}], mode="coder", max_tokens=5) == ""
+    assert client.ultima_fine == "length"
+    assert client.ultimo_ragionamento == "penso"
+
+
+class _AIConFine:
+    def __init__(self, risposta, fine, pensiero=""):
+        self.risposta, self.ultima_fine, self.ultimo_ragionamento = risposta, fine, pensiero
+        self.visti = []
+
+    def local(self, messages, mode="reasoning", timeout=None, sforzo="", max_tokens=None):
+        self.visti.append(messages)
+        return self.risposta
+
+
+def _coder(ai):
+    from devin.agents import coder as modulo
+    c = modulo.Coder.__new__(modulo.Coder)
+    c.ai = ai
+    return c
+
+
+def test_scaffold_tetto_esaurito_pensando_lo_dice():
+    with pytest.raises(ValueError, match="esaurito mentre il modello ragionava"):
+        _coder(_AIConFine("", "length", "x" * 900)).generate_file("t.py", "spec")
+
+
+def test_scaffold_file_tagliato_al_tetto_non_si_scrive():
+    with pytest.raises(ValueError, match="tagliato al tetto"):
+        _coder(_AIConFine("def f(:\n", "length")).generate_file("t.py", "spec")
+
+
+def test_scaffold_senza_risposta_lo_dice():
+    with pytest.raises(ValueError, match="nessuna risposta"):
+        _coder(_AIConFine(None, "")).generate_file("t.py", "spec")
+
+
+def test_scaffold_vede_il_contesto_oltre_i_3000_caratteri():
+    ai = _AIConFine("x = 1", "stop")
+    contesto = "a" * 5000 + "FINE_CONTESTO"
+    assert _coder(ai).generate_file("t.py", "spec", project_context=contesto) == "x = 1"
+    assert "FINE_CONTESTO" in ai.visti[0][1]["content"]
+
+
+def test_contesto_di_un_modulo_lungo_e_la_sua_interfaccia_intera():
+    from devin.agents.coder import contesto_file
+    sorgente = (
+        "from datetime import date\n"
+        "class Scadenza:\n    \"\"\"Una scadenza.\"\"\"\n    titolo: str\n"
+        "    def giorni(self, oggi: date) -> int:\n        return 1\n"
+        + "\n".join(f"def aiuto_{i}(x):\n    return x + {i}\n" for i in range(300))
+        + "\ndef ultima_funzione(percorso: str) -> list:\n    \"\"\"Carica.\"\"\"\n    return []\n"
+    )
+    vista = contesto_file("scadenze.py", sorgente)
+    assert "def ultima_funzione(percorso: str) -> list:" in vista
+    assert "def giorni(self, oggi: date) -> int:" in vista
+    assert "titolo: str" in vista
+    assert "return x + 5" not in vista
+
+
+def test_contesto_corto_intero_e_non_python_tagliato_dichiarato():
+    from devin.agents.coder import contesto_file
+    assert contesto_file("a.py", "x = 1\n") == "x = 1\n"
+    lungo = contesto_file("README.md", "r" * 6000)
+    assert lungo.endswith("(tagliato: 6000 caratteri in tutto)")
+    rotto = contesto_file("b.py", "def (\n" * 2000)
+    assert "tagliato" in rotto
