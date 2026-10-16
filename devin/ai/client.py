@@ -665,6 +665,39 @@ class AIClient:
         pensiero, _, dopo = resto.partition(_CHIUDE_PENSIERO)
         return pensiero, (prima + dopo)
 
+    @staticmethod
+    def _raccogli_risposta(r):
+        """(content, reasoning_content) da una risposta in streaming SSE.
+
+        Se il server ha risposto con un JSON intero (stream ignorato), lo legge
+        come prima. I marcatori <think> dentro content li separa il chiamante.
+        """
+        content, ragionamento, intero = [], [], []
+        for riga in r.iter_lines():
+            if not riga:
+                continue
+            if isinstance(riga, bytes):
+                riga = riga.decode("utf-8")
+            if not riga.startswith("data: "):
+                intero.append(riga)
+                continue
+            dati = riga[6:]
+            if dati == "[DONE]":
+                break
+            try:
+                pezzo = json.loads(dati)
+            except json.JSONDecodeError:
+                continue
+            delta = ((pezzo.get("choices") or [{}])[0]).get("delta") or {}
+            if delta.get("reasoning_content"):
+                ragionamento.append(delta["reasoning_content"])
+            if delta.get("content"):
+                content.append(delta["content"])
+        if intero and not content and not ragionamento:
+            messaggio = json.loads("".join(intero))["choices"][0]["message"]
+            return messaggio.get("content") or "", messaggio.get("reasoning_content") or ""
+        return "".join(content), "".join(ragionamento)
+
     def local(self, messages, mode="reasoning", timeout=None, sforzo=""):
         """
         Chiama endpoint locale/rig con retry e backoff esponenziale.
@@ -687,17 +720,28 @@ class AIClient:
             try:
                 url, model = self._get_endpoints(mode)
                 print(f"[AIClient] POST {url} (mode={mode}, model={model}, timeout={timeout}s, attempt={attempt+1}/{self.MAX_RETRIES})")
+                # In streaming anche qui: il timeout di requests vale fra un
+                # byte e il successivo, e una risposta non-stream non manda
+                # niente finche' l'intero file non e' generato. Il 16/10 lo
+                # scaffold di scadenze.py e' scaduto a ~180 s mentre il modello
+                # stava ancora scrivendo ("contenuto vuoto"). Con lo stream e
+                # return_progress arriva un pezzo anche durante il prefill:
+                # scade solo un server che tace davvero.
                 r = requests.post(
                     url,
-                    json=self._corpo(model, messages, sforzo=sforzo),
+                    json={**self._corpo(model, messages, sforzo=sforzo, stream=True),
+                          "return_progress": True},
                     timeout=timeout,
-                    headers=self._auth_headers(url)
+                    headers=self._auth_headers(url),
+                    stream=True,
                 )
-                r.raise_for_status()
-                data = r.json()
-                messaggio = data["choices"][0]["message"]
-                content = messaggio.get("content") or ""
-                ragionamento = messaggio.get("reasoning_content") or ""
+                try:
+                    r.raise_for_status()
+                    content, ragionamento = self._raccogli_risposta(r)
+                finally:
+                    chiudi = getattr(r, "close", None)
+                    if callable(chiudi):
+                        chiudi()
                 if not ragionamento:
                     ragionamento, content = self._spezza_pensiero(content)
                 self.ultimo_ragionamento = ragionamento
