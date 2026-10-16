@@ -1,3 +1,5 @@
+import ast
+import copy
 import re
 from devin.ai.client import AIClient
 from devin.agents.prompts import (
@@ -5,6 +7,71 @@ from devin.agents.prompts import (
 )
 
 SCAFFOLD_MAX_TOKENS = 12288
+# Quanto contesto dei file gia' scritti vede il coder. Il 16/10 i test di
+# scadenze.py sono stati chiesti con in mano solo i primi 1500 caratteri del
+# modulo (su 9924): 19 test su funzioni che non vedeva, il modello ha
+# ragionato fino al tetto e il file e' uscito vuoto.
+SCAFFOLD_CONTEXT_CHARS = 12000
+CONTESTO_FILE_INTERO = 4000
+
+
+def _firma(nodo: ast.AST) -> ast.AST:
+    """Copia di una def/class con il corpo ridotto a docstring + `...`."""
+    corpo = []
+    doc = ast.get_docstring(nodo, clean=False) if isinstance(
+        nodo, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
+    if doc:
+        corpo.append(ast.Expr(ast.Constant(doc)))
+    if isinstance(nodo, ast.ClassDef):
+        for figlio in nodo.body:
+            if isinstance(figlio, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                corpo.append(_firma(figlio))
+            elif isinstance(figlio, (ast.AnnAssign, ast.Assign)):
+                corpo.append(figlio)
+    if not corpo or (doc and len(corpo) == 1 and not isinstance(nodo, ast.ClassDef)):
+        corpo.append(ast.Expr(ast.Constant(...)))
+    copia = copy.copy(nodo)
+    copia.body = corpo
+    return copia
+
+
+def interfaccia_python(sorgente: str) -> str | None:
+    """L'interfaccia pubblica di un modulo: import, costanti, firme e docstring.
+
+    None se il sorgente non si analizza: chi chiama lo dice, non inventa.
+    """
+    try:
+        albero = ast.parse(sorgente)
+    except SyntaxError:
+        return None
+    righe = []
+    for nodo in albero.body:
+        if isinstance(nodo, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            righe.append(ast.unparse(_firma(nodo)))
+        elif isinstance(nodo, (ast.Import, ast.ImportFrom, ast.AnnAssign, ast.Assign)):
+            testo = ast.unparse(nodo)
+            righe.append(testo if len(testo) <= 300 else testo[:300] + "  # ...")
+        elif isinstance(nodo, ast.Expr) and isinstance(getattr(nodo, "value", None), ast.Constant) \
+                and isinstance(nodo.value.value, str):
+            righe.append(ast.unparse(nodo))
+    return "\n".join(righe)
+
+
+def contesto_file(nome: str, contenuto: str, limite: int = CONTESTO_FILE_INTERO) -> str:
+    """Il pezzo di contesto con cui il coder vede un file gia' scritto.
+
+    Intero se e' corto; per un modulo Python lungo, la sua interfaccia
+    (firme e docstring di tutto il modulo, non solo della testa); altrimenti
+    la testa, dicendo che e' tagliata.
+    """
+    if len(contenuto) <= limite:
+        return contenuto
+    if nome.endswith(".py"):
+        interfaccia = interfaccia_python(contenuto)
+        if interfaccia is not None:
+            return ("# (interfaccia del modulo: firme e docstring, corpi omessi)\n"
+                    + interfaccia[:limite * 2])
+    return contenuto[:limite] + f"\n# ... (tagliato: {len(contenuto)} caratteri in tutto)"
 
 
 class Coder:
@@ -149,7 +216,7 @@ SPEC:
 {spec}
 
 CONTESTO PROGETTO (file già creati in questo scaffold, per coerenza import/nomi):
-{project_context[:3000] if project_context.strip() else "(primo file del progetto, nessun contesto precedente)"}
+{project_context[:SCAFFOLD_CONTEXT_CHARS] if project_context.strip() else "(primo file del progetto, nessun contesto precedente)"}
 
 Restituisci SOLO il contenuto del file {filename}.
 """
@@ -159,7 +226,22 @@ Restituisci SOLO il contenuto del file {filename}.
         # Un tetto all'uscita: con lo stream il timeout non taglia piu' una
         # generazione lunga, e un modello in loop scriverebbe fino a riempire
         # il contesto (131k token, ore). Un file di scaffold ci sta largo.
-        raw = self.ai.local(messages, mode="coder", timeout=60, max_tokens=SCAFFOLD_MAX_TOKENS) or ""
+        risposta = self.ai.local(messages, mode="coder", timeout=60, max_tokens=SCAFFOLD_MAX_TOKENS)
+        if risposta is None:
+            raise ValueError(f"nessuna risposta dal modello per {filename} (rig non raggiungibile)")
+        raw = risposta
+        # Un file arrivato al tetto e' tagliato: dirlo, non scriverlo a meta'.
+        # E se il tetto arriva mentre il modello pensa, il file e' vuoto per
+        # questo, non per un guasto del protocollo.
+        if getattr(self.ai, "ultima_fine", "") == "length":
+            pensiero = len(getattr(self.ai, "ultimo_ragionamento", "") or "")
+            if not raw.strip():
+                raise ValueError(
+                    f"tetto di {SCAFFOLD_MAX_TOKENS} token esaurito mentre il modello ragionava "
+                    f"({pensiero} caratteri di pensiero): {filename} non e' stato scritto")
+            raise ValueError(
+                f"{filename} tagliato al tetto di {SCAFFOLD_MAX_TOKENS} token "
+                f"({len(raw)} caratteri scritti, {pensiero} di pensiero)")
         # Strip di un eventuale fence markdown residuo, anche se il prompt lo vieta esplicitamente
         content = re.sub(r'^```[a-zA-Z]*\n', '', raw.strip())
         content = re.sub(r'\n```$', '', content)

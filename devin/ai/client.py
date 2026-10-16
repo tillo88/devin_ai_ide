@@ -137,6 +137,9 @@ class AIClient:
         # Ultimo ragionamento visto da local(): chi lo vuole lo legge,
         # ma non finisce mai nella risposta ne' nello storico della chat.
         self.ultimo_ragionamento = ""
+        # Perche' si e' fermata l'ultima risposta di local(): "stop", "length"
+        # (tetto di max_tokens), "" se il server non lo ha detto.
+        self.ultima_fine = ""
         local_cfg = models_cfg.get("local_models", {})
 
         # Il model-slot del rig e' raggiungibile solo su loopback: direttamente
@@ -667,12 +670,13 @@ class AIClient:
 
     @staticmethod
     def _raccogli_risposta(r):
-        """(content, reasoning_content) da una risposta in streaming SSE.
+        """(content, reasoning_content, finish_reason) da una risposta SSE.
 
         Se il server ha risposto con un JSON intero (stream ignorato), lo legge
         come prima. I marcatori <think> dentro content li separa il chiamante.
         """
         content, ragionamento, intero = [], [], []
+        fine = ""
         for riga in r.iter_lines():
             if not riga:
                 continue
@@ -688,15 +692,20 @@ class AIClient:
                 pezzo = json.loads(dati)
             except json.JSONDecodeError:
                 continue
-            delta = ((pezzo.get("choices") or [{}])[0]).get("delta") or {}
+            scelta = (pezzo.get("choices") or [{}])[0]
+            if scelta.get("finish_reason"):
+                fine = str(scelta["finish_reason"])
+            delta = scelta.get("delta") or {}
             if delta.get("reasoning_content"):
                 ragionamento.append(delta["reasoning_content"])
             if delta.get("content"):
                 content.append(delta["content"])
         if intero and not content and not ragionamento:
-            messaggio = json.loads("".join(intero))["choices"][0]["message"]
-            return messaggio.get("content") or "", messaggio.get("reasoning_content") or ""
-        return "".join(content), "".join(ragionamento)
+            scelta = json.loads("".join(intero))["choices"][0]
+            messaggio = scelta["message"]
+            return (messaggio.get("content") or "", messaggio.get("reasoning_content") or "",
+                    str(scelta.get("finish_reason") or ""))
+        return "".join(content), "".join(ragionamento), fine
 
     def local(self, messages, mode="reasoning", timeout=None, sforzo="", max_tokens=None):
         """
@@ -714,6 +723,7 @@ class AIClient:
         timeout = self._timeout_ragionato(sforzo, timeout, messages)
 
         last_exception = None
+        self.ultima_fine = ""
 
         for attempt in range(self.MAX_RETRIES):
             url = ""
@@ -738,7 +748,7 @@ class AIClient:
                 )
                 try:
                     r.raise_for_status()
-                    content, ragionamento = self._raccogli_risposta(r)
+                    content, ragionamento, fine = self._raccogli_risposta(r)
                 finally:
                     chiudi = getattr(r, "close", None)
                     if callable(chiudi):
@@ -746,6 +756,7 @@ class AIClient:
                 if not ragionamento:
                     ragionamento, content = self._spezza_pensiero(content)
                 self.ultimo_ragionamento = ragionamento
+                self.ultima_fine = fine
 
                 # Successo: registra per circuit breaker
                 if self._is_remote_url(url):

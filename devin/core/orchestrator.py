@@ -32,7 +32,7 @@ from devin.core.context_retriever import ContextRetriever
 from devin.core.state_persistence import StatePersistence
 from devin.core.change_manifest import build_change_manifest, manifest_path
 from devin.agents.planner import Planner
-from devin.agents.coder import Coder
+from devin.agents.coder import Coder, contesto_file
 from devin.agents.critic import Critic
 from devin.engine.patcher import Patcher
 from devin.engine.runner import Runner
@@ -901,7 +901,7 @@ class Orchestrator:
                 target.write_text(content, encoding="utf-8")
 
                 written.append(fname)
-                running_context += f"\n# FILE: {fname}\n{content[:1500]}\n"
+                running_context += f"\n# FILE: {fname}\n{contesto_file(fname, content)}\n"
                 self._log(f"✓ {fname} ({len(content)} chars)", "success")
 
             except Exception as e:
