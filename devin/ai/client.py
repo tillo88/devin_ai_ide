@@ -839,7 +839,8 @@ class AIClient:
         """Streaming che DISTINGUE il ragionamento dalla risposta.
 
         Produce dizionari {"tipo": ..., "testo": ...} con tipo fra
-        "ragionamento", "risposta" e "avviso".
+        "ragionamento", "risposta", "avviso" e "lettura" (avanzamento del
+        prefill: total, cache, processed, time_ms; testo vuoto).
 
         Perche' separati. Il server consegna il pensiero in
         `reasoning_content`, un campo a parte da `content`. Il codice
@@ -876,14 +877,14 @@ class AIClient:
                 url, model = self._get_endpoints(mode)
                 with requests.post(
                     url,
-                    json=self._corpo(
+                    json={**self._corpo(
                         model,
                         messages,
                         sforzo=sforzo,
                         stream=True,
                         max_tokens=max_tokens,
                         response_format=response_format,
-                    ),
+                    ), "return_progress": True},
                     timeout=timeout,
                     stream=True,
                     headers=self._auth_headers(url)
@@ -926,6 +927,15 @@ class AIClient:
                             pezzo = json.loads(dati)
                         except json.JSONDecodeError:
                             continue
+
+                        # 0) La lettura del prompt: con return_progress il server
+                        # dice quanti token del contesto ha gia' letto. Senza,
+                        # per tutto il prefill la chat non riceve nulla e DEVIN
+                        # sembra piantato (16/10: ~2 minuti su 7k token).
+                        lettura = pezzo.get('prompt_progress')
+                        if isinstance(lettura, dict):
+                            yield {"tipo": "lettura", "testo": "",
+                                   **{k: lettura.get(k) for k in ("total", "cache", "processed", "time_ms")}}
 
                         choice = (pezzo.get('choices') or [{}])[0]
                         finish_reason = choice.get('finish_reason') or finish_reason

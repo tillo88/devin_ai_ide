@@ -2693,10 +2693,26 @@ function avviaCronometroRagionamento(node) {
   }, 500);
 }
 
+// La risposta mentre arriva, gia' come markdown: prima si vedevano `##`,
+// `**` e tabelle grezze fino all'ultimo token. Il parser regge i blocchi ```
+// non ancora chiusi; si ridisegna solo se il testo e' cambiato.
+function rendiRispostaInCorso(node, answer) {
+  // Si arriva qui solo quando il modello ha cominciato a parlare (pensiero o
+  // risposta): la riga di lettura del contesto, se c'era, lascia il posto.
+  if (node._letturaMostrata) {
+    node._letturaMostrata = false;
+    node._rispostaMostrata = undefined;
+  }
+  if (node._rispostaMostrata === answer) return;
+  node._rispostaMostrata = answer;
+  if (answer) renderMarkdownBody(node, answer);
+  else node.textContent = "";
+}
+
 function renderAssistantStream(node, raw) {
   const answer = splitReasoning(raw).answer;
   const reasoning = reasoningCompleto(node, raw);
-  node.textContent = answer;
+  rendiRispostaInCorso(node, answer);
   const article = node.parentElement;
   if (!article) return;
   let panel = article.querySelector(".reasoning-panel");
@@ -2716,6 +2732,26 @@ function renderAssistantStream(node, raw) {
   if (panel.open && !node._reasoningDone) pre.scrollTop = pre.scrollHeight;
 }
 
+// Avanzamento della lettura del contesto (prefill), dal campo prompt_progress
+// di llama-server: senza, per minuti il fumetto resta vuoto.
+function testoLettura(p) {
+  const totale = Number(p?.total) || 0;
+  const fatti = Number(p?.processed) || 0;
+  const cache = Number(p?.cache) || 0;
+  const ms = Number(p?.time_ms) || 0;
+  if (totale <= 0) return "Leggo il contesto…";
+  const quota = Math.min(100, Math.round((100 * fatti) / totale));
+  const numero = (n) => n.toLocaleString("it-IT");
+  let testo = `Leggo il contesto: ${numero(fatti)} / ${numero(totale)} token (${quota}%)`;
+  if (cache > 0) testo += ` · ${numero(cache)} gia' in cache`;
+  const letti = fatti - cache;
+  if (letti > 0 && ms > 0 && fatti < totale) {
+    const restano = Math.round(((totale - fatti) * ms) / letti / 1000);
+    testo += ` · circa ${formatDurata(restano)}`;
+  }
+  return testo;
+}
+
 function applyChatEvent(event, assistantNode) {
   if (!event.data) return;
 
@@ -2730,6 +2766,15 @@ function applyChatEvent(event, assistantNode) {
     assistantNode._raw = (assistantNode._raw || "") + payload.token;
     renderAssistantStream(assistantNode, assistantNode._raw);
     $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+    return;
+  }
+
+  if (event.type === "prefill") {
+    // Solo finche' non e' arrivato niente del modello: poi parla lui.
+    if (!assistantNode._raw && !assistantNode._reasoning) {
+      assistantNode._letturaMostrata = true;
+      assistantNode.textContent = testoLettura(payload);
+    }
     return;
   }
 
