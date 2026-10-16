@@ -1,6 +1,7 @@
 """Regression tests for chat generate-patch work-dir routing."""
 
 import asyncio
+from pathlib import Path
 
 from devin.core.chat_persistence import ChatPersistence
 from devin.ui import fast_app
@@ -180,3 +181,47 @@ def test_build_from_chat_applies_by_default_and_can_ask_first(monkeypatch, tmp_p
     (tmp_path / "c").mkdir()
     response, _, _ = _run_generate_patch(monkeypatch, tmp_path / "c", None, extra={"applica": "boh"})
     assert "applica deve essere" in response["error"]
+
+
+def test_with_the_agent_an_existing_project_also_goes_through_the_sandbox_build(monkeypatch, tmp_path):
+    result = {"success": True, "status": "verified_success", "files_written": ["placeholder.py"],
+              "files_failed": [], "total_planned": 1, "quality_gate": {"status": "verified_success"}}
+
+    class Flag:
+        agent_mode = True
+
+    project = tmp_path / "p"
+    project.mkdir()
+    (project / "placeholder.py").write_text("VALUE = 1\n", encoding="utf-8")
+    ChatPersistence(str(project)).save([{"role": "user", "content": "Aggiungi una funzione"}])
+    seen = {}
+
+    class _Orch(Flag):
+        def __init__(self, config_path, project_path, sse_callback):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def run_scaffold(self, task, project_path, run_id):
+            seen["task"] = task
+            return result
+
+        def run_from_conversation(self, *a, **k):
+            raise AssertionError("con l'agente non si usa la catena patch")
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    monkeypatch.setattr(fast_app, "LOG_DIR", log_dir)
+    monkeypatch.setattr(fast_app, "Orchestrator", _Orch)
+    monkeypatch.setattr(fast_app, "ProjectSpace", lambda path: type("PS", (), {"get_work_dir": lambda self: ""})())
+    monkeypatch.setattr(fast_app, "_validated_project_path", lambda p, allow_general=False: str(Path(p).resolve()))
+    monkeypatch.setattr(fast_app, "_make_run_callback", lambda *a, **k: None)
+    monkeypatch.setattr(fast_app, "_run_events", _FakeRunEvents())
+    monkeypatch.setattr(chat_router.threading, "Thread", _InlineThread)
+    response = asyncio.run(chat_router.api_chat_generate_patch(_Request({"project_path": str(project)})))
+    assert response["mode"] == "patch"
+    assert seen["task"].startswith("Applica al progetto esistente")

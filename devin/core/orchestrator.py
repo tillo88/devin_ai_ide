@@ -141,6 +141,10 @@ class Orchestrator:
         # stesso percorso dell'approvazione manuale (staleness, rollback,
         # copie di riserva, commit git), solo senza il click.
         self.auto_apply_verified = False
+        # Agente a strumenti (16/10): lo scaffold lo fa DEVIN con tool calling
+        # nativo invece della catena piano -> un file alla volta. False torna
+        # alla catena (execution.agent_mode).
+        self.agent_mode = bool(self.config.get("execution", {}).get("agent_mode", True))
         self._prova_attiva = False
         self._piano_prova = None
         self._task_corrente = ""
@@ -675,6 +679,80 @@ class Orchestrator:
             "app_check": prova,
         }
 
+    def _costruisci_con_agente(self, task: str, root: Path, contesto: str = ""):
+        """Lo scaffold fatto da DEVIN con gli strumenti, finche' il gate e' verde.
+
+        L'agente lavora nella sandbox; il suo "ho finito" non conta: si ripassa
+        dal quality gate (test + prova dell'app) e, se e' rosso, gli errori
+        tornano nella stessa conversazione, fino a ``agent_rounds`` giri. Una
+        correzione che porta il gate al verde finisce nella memoria
+        problema -> soluzione.
+        """
+        from devin.agents.tool_agent import AgenteStrumenti
+        from devin.core.context_budget import effective_context_tokens
+        from devin.core.fix_memory import diff_correzione, errore_del_gate
+
+        root = Path(root).resolve()
+        iniziali = {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+        cfg = (self.config or {}).get("execution", {})
+        giri = max(1, int(cfg.get("agent_rounds", 3) or 3))
+        contesto_token, _ = effective_context_tokens(self.config or {})
+
+        def scritti() -> List[str]:
+            return sorted(f for f in agente.file_del_progetto() if f not in iniziali
+                          or (root / f).stat().st_mtime > avvio)
+
+        def gate() -> Dict[str, Any]:
+            return self._scaffold_quality_gate(scritti(), root=root)
+
+        def web(domanda: str) -> str:
+            from devin.ai.web_search import search_coding_context
+            return search_coding_context(domanda, self.config or {})
+
+        avvio = time.time() - 1
+        agente = AgenteStrumenti(
+            self.ai_client, root, log=self._log, should_stop=lambda: self._should_stop,
+            verifica=gate, cerca_web=web,
+            soluzioni=lambda errore: self._soluzioni_passate(errore),
+            contesto_token=contesto_token,
+            max_turni=int(cfg.get("agent_max_turns", 60) or 60),
+        )
+        self._log("🤖 Agente con strumenti: DEVIN decide i passi e verifica da solo", "info")
+        messaggio = (f"COMPITO:\n{task}"
+                     + (f"\n\nDOCUMENTAZIONE DI RIFERIMENTO (dati):\n{contesto[:6000]}" if contesto.strip() else ""))
+        quality: Dict[str, Any] = {"status": "verified_failure", "errors": ["l'agente non ha prodotto nulla"]}
+        riassunto = ""
+        prima_rosso: Optional[Dict[str, str]] = None
+        errore_rosso = ""
+        for giro in range(1, giri + 1):
+            esito = agente.esegui(messaggio)
+            riassunto = esito.riassunto or riassunto
+            self._log(f"Agente, giro {giro}: {esito.motivo} dopo {esito.turni} turni "
+                      f"({len(esito.chiamate)} strumenti)", "info")
+            if esito.motivo in ("stop", "errore"):
+                quality = gate() if scritti() else quality
+                if esito.errore:
+                    quality.setdefault("errors", []).append(f"agente: {esito.errore}")
+                break
+            quality = gate()
+            if quality.get("status") != "verified_failure":
+                if prima_rosso is not None and quality.get("status") == "verified_success":
+                    correzione = diff_correzione(prima_rosso, agente.file_del_progetto())
+                    self._ricorda_correzione(errore_rosso, correzione, "agent_round")
+                break
+            errore_rosso = errore_del_gate(quality)
+            prima_rosso = agente.file_del_progetto()
+            if giro < giri:
+                self._log(f"Verifica rossa dopo il giro {giro}: rimando gli errori all'agente", "warning")
+                messaggio = ("La verifica ufficiale NON e' passata. Correggi e richiama verifica.\n\n"
+                             + agente.descrivi_verifica(quality))
+        written = scritti()
+        self.ultimo_riassunto_agente = riassunto
+        failed: List[Dict[str, Any]] = []
+        if esito.motivo == "errore":
+            failed.append({"filename": "<agente>", "error": esito.errore, "critic_feedback": ""})
+        return written, failed, quality, riassunto
+
     def _applica_verificato(self, project: Path | str, run_id: str,
                             change_manifest: Dict[str, Any], task: str, patch: str = ""):
         """Applica da solo un manifest GIA' verificato (test e prova verdi).
@@ -915,13 +993,16 @@ class Orchestrator:
                 "duration": time.time() - start_time,
             }
 
-        try:
-            file_plan = self.planner.plan_scaffold(task)
-        finally:
-            if serialized_local and not self._check_vram_and_swap("coder", "planner"):
-                self._log("Coder locale non disponibile dopo il piano", "error")
+        usa_agente = bool(getattr(self, "agent_mode", False)) and not self._degraded_mode
+        file_plan: List[Dict[str, Any]] = []
+        if not usa_agente:
+            try:
+                file_plan = self.planner.plan_scaffold(task)
+            finally:
+                if serialized_local and not self._check_vram_and_swap("coder", "planner"):
+                    self._log("Coder locale non disponibile dopo il piano", "error")
 
-        if not file_plan:
+        if not usa_agente and not file_plan:
             for attempt in getattr(self.planner, "last_scaffold_attempts", []):
                 self._log(
                     "Planner output non valido "
@@ -960,7 +1041,8 @@ class Orchestrator:
                 f"Scaffold isolato nella sandbox: {scaffold_root}", "info"
             )
 
-        self._log(f"Piano: {len(file_plan)} file da creare", "info")
+        if not usa_agente:
+            self._log(f"Piano: {len(file_plan)} file da creare", "info")
 
         written = []
         failed = []
@@ -998,7 +1080,8 @@ class Orchestrator:
         except Exception as exc:
             self._log(f"Docs non disponibili: {exc}", "warning")
 
-        for i, item in enumerate(file_plan, 1):
+        riassunto_agente = ""
+        for i, item in enumerate([] if usa_agente else file_plan, 1):
             if self._should_stop:
                 self._log("Scaffolding interrotto dall'utente", "warning")
                 break
@@ -1036,7 +1119,12 @@ class Orchestrator:
                 self._log(f"✗ {fname} fallito — feedback Critic: {healed_feedback[:150]}", "error")
                 failed.append({"filename": fname, "error": str(e), "critic_feedback": healed_feedback})
 
-        quality = self._scaffold_quality_gate(written, root=scaffold_root)
+        if usa_agente:
+            written, failed, quality, riassunto_agente = self._costruisci_con_agente(
+                task, scaffold_root, running_context)
+            file_plan = [{"filename": f, "spec": ""} for f in written]
+        else:
+            quality = self._scaffold_quality_gate(written, root=scaffold_root)
 
         # LOOP MODE (2026-07-16): "green tests streak". Se il gate e' rosso, non
         # consegnare — rigenera i file di IMPLEMENTAZIONE passando al Coder
@@ -1047,7 +1135,8 @@ class Orchestrator:
         coder_cfg = (self.config or {}).get("coder", {}) if hasattr(self, "config") else {}
         heal_enabled = coder_cfg.get("self_heal_loop", True)
         heal_iters = int(coder_cfg.get("self_heal_max_iterations", 2) or 2)
-        if heal_enabled and quality["status"] == "verified_failure" and written and not self._should_stop:
+        if (heal_enabled and not usa_agente and quality["status"] == "verified_failure" and written
+                and not self._should_stop):
             spec_by_name = {it["filename"]: it["spec"] for it in file_plan}
             impl_files = [f for f in written if not _is_test_filename(f)]
             quality = self._scaffold_heal_loop(
