@@ -42,6 +42,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 from pydantic import BaseModel
 
 from devin.ai.document_extract import extract_text as extract_document_text
@@ -1136,8 +1137,14 @@ async def api_chat(req: ChatRequest):
             # conosce il ragionamento si comporta esattamente come prima — e il
             # pensiero viaggia su un evento suo, che il frontend puo' mostrare
             # mentre arriva invece di lasciare la finestra vuota per minuti.
-            for evento in ai.stream_eventi(messages, mode=selected_mode,
-                                           sforzo=req.reasoning_effort or ""):
+            # Il generatore e' sincrono (requests): iterarlo qui dentro
+            # bloccava l'event loop per tutta la generazione, e ogni altra
+            # richiesta (elenco progetti, stato, Stop) aspettava o scadeva. Il
+            # 16/10 la barra laterale mostrava "Nessun progetto" durante le
+            # risposte. Ogni pezzo ora si chiede in un thread.
+            async for evento in iterate_in_threadpool(
+                    ai.stream_eventi(messages, mode=selected_mode,
+                                     sforzo=req.reasoning_effort or "")):
                 tipo = evento["tipo"]
                 testo = evento["testo"]
                 if tipo == "ragionamento":

@@ -13,6 +13,7 @@ import json
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -59,7 +60,9 @@ async def api_autocomplete_stream(req: AutocompleteStreamRequest):
             yield f"event: meta\ndata: {json.dumps({'language': req.language, 'mode': 'coder'})}\n\n"
 
             token_count = 0
-            for chunk in auto.suggest_stream(req.code, language=req.language, cursor_position=req.cursor_position):
+            # in un thread: il generatore sincrono non deve fermare l'event loop
+            async for chunk in iterate_in_threadpool(
+                    auto.suggest_stream(req.code, language=req.language, cursor_position=req.cursor_position)):
                 token_count += 1
                 yield f"data: {json.dumps({'token': chunk})}\n\n"
                 await asyncio.sleep(0)

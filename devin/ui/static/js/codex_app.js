@@ -3757,7 +3757,8 @@ async function refresh() {
     const [mind, health, workspace, knowledge, council, routing, tools, operations] = await Promise.all([
       fetchJson("/api/mind/status").catch(() => null),
       fetchJson("/api/health").catch(() => ({})),
-      fetchJson("/api/workspace/projects").catch(() => ({ projects: [] })),
+      // null = poll fallito: NON vuol dire "nessun progetto" (vedi sotto)
+      fetchJson("/api/workspace/projects").catch(() => null),
       fetchJson(`/api/knowledge-exchange/status${projectQuery}`).catch(() => ({})),
       fetchJson("/api/council/status").catch(() => ({})),
       fetchJson("/api/routing/status").catch(() => ({})),
@@ -3787,7 +3788,12 @@ async function refresh() {
     }
     await refreshGoals();
     renderGovernanceStatus(knowledge, council, routing, tools, operations);
-    renderProjects(workspace);
+    // Un elenco che non e' arrivato non e' un elenco vuoto: col backend
+    // occupato a rispondere la barra laterale diceva "Nessun progetto
+    // ancora" (16/10). Si tiene l'ultimo arrivato.
+    if (workspace) renderProjects(workspace);
+    else if (!state.projectsLoaded) renderProjects({ projects: [] });
+    if (workspace) state.projectsLoaded = true;
     renderSteward();  // fail-soft, non blocca il refresh
     if (!state.chatLoaded) {
       state.chatLoaded = true;
