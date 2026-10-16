@@ -44,10 +44,16 @@ def _bad_response(status):
 
 
 def _ok_response(content="ok"):
+    """Risposta in streaming come la manda llama-server (local() chiede stream)."""
+    import json as _json
     r = MagicMock()
     r.status_code = 200
     r.raise_for_status.return_value = None
-    r.json.return_value = {"choices": [{"message": {"content": content}}]}
+    r.iter_lines.return_value = [
+        b"data: " + _json.dumps({"choices": [{"delta": {}}], "prompt_progress": {"total": 3, "processed": 3}}).encode(),
+        b"data: " + _json.dumps({"choices": [{"delta": {"content": content}}]}).encode(),
+        b"data: [DONE]",
+    ]
     return r
 
 

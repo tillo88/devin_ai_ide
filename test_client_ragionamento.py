@@ -382,3 +382,31 @@ def test_lo_stream_chiede_e_inoltra_l_avanzamento_del_prefill(client):
     # chi vuole solo il testo (autocomplete, stream()) non vede la lettura
     client._stato["risposta"] = _FintaRisposta(righe)
     assert "".join(client.stream([{"role": "user", "content": "x"}])) == "ecco"
+
+
+# --- local() in streaming ------------------------------------------------
+
+def test_local_chiede_lo_stream_e_separa_il_pensiero(client):
+    """16/10: lo scaffold di scadenze.py scadeva a ~180 s con il modello che
+    stava ancora scrivendo, perche' una risposta non-stream non manda byte
+    finche' non e' finita. Ora local() legge lo stream: il timeout vale solo
+    per un server che tace."""
+    righe = [
+        "data: " + json.dumps({"choices": [{"delta": {}}], "prompt_progress": {"total": 9, "processed": 9}}),
+        "data: " + json.dumps({"choices": [{"delta": {"reasoning_content": "penso"}}]}),
+        "data: " + json.dumps({"choices": [{"delta": {"content": "x = 1"}}]}),
+        "data: " + json.dumps({"choices": [{"delta": {"content": "\n"}}]}),
+        "data: [DONE]",
+    ]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    assert client.local([{"role": "user", "content": "x"}], mode="coder") == "x = 1\n"
+    corpo = client._stato["corpi"][-1]
+    assert corpo["stream"] is True and corpo["return_progress"] is True
+    assert client.ultimo_ragionamento == "penso"
+
+
+def test_local_legge_ancora_un_json_intero_e_think_inline(client):
+    risposta = {"choices": [{"message": {"content": "<think>prima</think>dopo"}}]}
+    client._stato["risposta"] = _FintaRisposta([json.dumps(risposta)])
+    assert client.local([{"role": "user", "content": "x"}], mode="coder") == "dopo"
+    assert client.ultimo_ragionamento == "prima"
