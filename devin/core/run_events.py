@@ -145,10 +145,13 @@ class RunEventStore:
             data={"mode": mode, "task": task, "project_path": project_path},
         )
 
-    def finish(self, run_id: str, *, status: str, mode: str | None = None) -> dict[str, Any]:
+    def finish(self, run_id: str, *, status: str, mode: str | None = None,
+               summary: dict[str, Any] | None = None) -> dict[str, Any]:
         data: dict[str, Any] = {"status": status}
         if mode:
             data["mode"] = mode
+        if summary:
+            data["summary"] = summary
         return self.append(
             run_id,
             "run_finished",
