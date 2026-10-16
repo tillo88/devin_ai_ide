@@ -4,6 +4,8 @@ from devin.agents.prompts import (
     CODER_SYSTEM_PROMPT, SCAFFOLD_CODER_SYSTEM_PROMPT, WHOLE_FILE_CODER_SYSTEM_PROMPT,
 )
 
+SCAFFOLD_MAX_TOKENS = 12288
+
 
 class Coder:
     def __init__(self, ai_client: AIClient):
@@ -154,7 +156,10 @@ Restituisci SOLO il contenuto del file {filename}.
             }
         ]
 
-        raw = self.ai.local(messages, mode="coder", timeout=60) or ""
+        # Un tetto all'uscita: con lo stream il timeout non taglia piu' una
+        # generazione lunga, e un modello in loop scriverebbe fino a riempire
+        # il contesto (131k token, ore). Un file di scaffold ci sta largo.
+        raw = self.ai.local(messages, mode="coder", timeout=60, max_tokens=SCAFFOLD_MAX_TOKENS) or ""
         # Strip di un eventuale fence markdown residuo, anche se il prompt lo vieta esplicitamente
         content = re.sub(r'^```[a-zA-Z]*\n', '', raw.strip())
         content = re.sub(r'\n```$', '', content)

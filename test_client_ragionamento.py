@@ -410,3 +410,24 @@ def test_local_legge_ancora_un_json_intero_e_think_inline(client):
     client._stato["risposta"] = _FintaRisposta([json.dumps(risposta)])
     assert client.local([{"role": "user", "content": "x"}], mode="coder") == "dopo"
     assert client.ultimo_ragionamento == "prima"
+
+
+def test_local_passa_il_tetto_di_token(client):
+    client._stato["risposta"] = _FintaRisposta(["data: [DONE]"])
+    client.local([{"role": "user", "content": "x"}], mode="coder", max_tokens=123)
+    assert client._stato["corpi"][-1]["max_tokens"] == 123
+
+
+def test_lo_scaffold_ha_un_tetto_di_uscita(monkeypatch):
+    from devin.agents import coder as modulo
+    visti = {}
+
+    class FintoAI:
+        def local(self, messages, mode="reasoning", timeout=None, sforzo="", max_tokens=None):
+            visti["max_tokens"] = max_tokens
+            return "x = 1"
+
+    c = modulo.Coder.__new__(modulo.Coder)
+    c.ai = FintoAI()
+    assert c.generate_file("a.py", "spec") == "x = 1"
+    assert visti["max_tokens"] == modulo.SCAFFOLD_MAX_TOKENS
