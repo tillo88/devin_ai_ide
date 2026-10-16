@@ -1527,6 +1527,9 @@ def esito_run_da_chat(mode: str, status: str, result: dict, run_id: str) -> dict
                  "I dettagli sono nel Log del run.")
     if prova_txt:
         testo += f" Prova: {prova_txt}."
+    riassunto_agente = str(result.get("agent_summary") or "").strip()
+    if riassunto_agente:
+        testo += f"\n\n{riassunto_agente[:1500]}"
     return {
         "chat_message": testo,
         "mode": mode,
@@ -1631,17 +1634,22 @@ async def api_chat_generate_patch(request: Request):
                     active_runs[run_id] = orch
                 orch.auto_apply_verified = applica == "auto"
                 try:
-                    if mode == "scaffold":
-                        # Progetto vuoto: crea i file da zero usando la
-                        # conversazione come specifica (stesso run_scaffold
-                        # del routing "Chat First").
+                    # Con l'agente a strumenti anche un progetto con codice passa
+                    # da run_scaffold: la sandbox e' una copia del progetto,
+                    # l'agente lo legge e lo modifica, il manifest porta solo le
+                    # differenze. La catena patch resta per agent_mode=false.
+                    if mode == "scaffold" or getattr(orch, "agent_mode", False):
+                        compito = ("Realizza il progetto descritto in questa conversazione. "
+                                   if mode == "scaffold" else
+                                   "Applica al progetto esistente (gia' nella cartella: guardalo prima) "
+                                   "le modifiche decise in questa conversazione. ")
                         result = orch.run_scaffold(
-                            task=("Realizza il progetto descritto in questa conversazione. "
-                                  "Segui le decisioni prese e le correzioni piu' recenti.\n\n"
+                            task=(compito + "Segui le decisioni prese e le correzioni piu' recenti.\n\n"
                                   + conversation_text),
                             project_path=execution_path,
                             run_id=run_id
                         )
+                        result.setdefault("agent_summary", getattr(orch, "ultimo_riassunto_agente", "") or "")
                         stato = _scaffold_event_status(result)
                         with open(log_path, "a", encoding="utf-8") as f:
                             f.write(f"\nevidence: {stato}\nstatus: {stato}\n")

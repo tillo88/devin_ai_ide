@@ -707,6 +707,98 @@ class AIClient:
                     str(scelta.get("finish_reason") or ""))
         return "".join(content), "".join(ragionamento), fine
 
+    @staticmethod
+    def _raccogli_con_strumenti(righe):
+        """Da uno stream SSE con tool calling: testo, pensiero, chiamate, fine.
+
+        Le chiamate arrivano a pezzi per indice (id e nome nel primo pezzo,
+        argomenti concatenati nei successivi): si ricompongono qui.
+        """
+        content, ragionamento, chiamate = [], [], {}
+        fine = ""
+        for riga in righe:
+            if not riga:
+                continue
+            if isinstance(riga, bytes):
+                riga = riga.decode("utf-8")
+            if not riga.startswith("data: "):
+                continue
+            dati = riga[6:]
+            if dati == "[DONE]":
+                break
+            try:
+                pezzo = json.loads(dati)
+            except json.JSONDecodeError:
+                continue
+            scelta = (pezzo.get("choices") or [{}])[0]
+            if scelta.get("finish_reason"):
+                fine = str(scelta["finish_reason"])
+            delta = scelta.get("delta") or {}
+            if delta.get("reasoning_content"):
+                ragionamento.append(delta["reasoning_content"])
+            if delta.get("content"):
+                content.append(delta["content"])
+            for parte in delta.get("tool_calls") or []:
+                indice = int(parte.get("index", len(chiamate)))
+                voce = chiamate.setdefault(indice, {"id": "", "type": "function",
+                                                    "function": {"name": "", "arguments": ""}})
+                if parte.get("id"):
+                    voce["id"] = parte["id"]
+                funzione = parte.get("function") or {}
+                if funzione.get("name"):
+                    voce["function"]["name"] += funzione["name"]
+                if funzione.get("arguments"):
+                    voce["function"]["arguments"] += funzione["arguments"]
+        lista = [chiamate[i] for i in sorted(chiamate)]
+        for i, voce in enumerate(lista):
+            voce["id"] = voce["id"] or f"call_{i}"
+        return {"content": "".join(content), "reasoning": "".join(ragionamento),
+                "tool_calls": lista, "finish_reason": fine}
+
+    def chiama_con_strumenti(self, messages, tools, mode="reasoning", sforzo="", max_tokens=None,
+                             timeout=None):
+        """Un turno con tool calling nativo (API ``tools`` di llama-server).
+
+        In streaming come local(): il timeout vale fra un pezzo e l'altro.
+        Restituisce {content, reasoning, tool_calls, finish_reason}. Un 4xx
+        (richiesta rifiutata, es. contesto pieno) e' un ValueError col motivo
+        del server; la rete che cade si ritenta come in local().
+        """
+        sforzo = self._sforzo(sforzo)
+        timeout = self._timeout_ragionato(sforzo, timeout, messages)
+        ultimo = None
+        for attempt in range(self.MAX_RETRIES):
+            url = ""
+            try:
+                url, model = self._get_endpoints(mode)
+                corpo = {**self._corpo(model, messages, sforzo=sforzo, stream=True, max_tokens=max_tokens),
+                         "tools": tools, "tool_choice": "auto", "return_progress": True}
+                r = requests.post(url, json=corpo, timeout=timeout, stream=True,
+                                  headers=self._auth_headers(url))
+                try:
+                    if 400 <= r.status_code < 500:
+                        raise ValueError(f"richiesta rifiutata dal modello (HTTP {r.status_code}): "
+                                         f"{(r.text or '')[:400]}")
+                    r.raise_for_status()
+                    return self._raccogli_con_strumenti(r.iter_lines())
+                finally:
+                    chiudi = getattr(r, "close", None)
+                    if callable(chiudi):
+                        chiudi()
+            except RigUnavailableError:
+                raise
+            except ValueError:
+                raise
+            except Exception as e:
+                ultimo = e
+                if not self._is_retryable_error(e):
+                    break
+                if url:
+                    self._record_rig_failure(url)
+                if attempt < self.MAX_RETRIES - 1:
+                    time.sleep(self.BASE_BACKOFF * (2 ** attempt))
+        raise RuntimeError(f"modello non raggiungibile: {type(ultimo).__name__}: {ultimo}")
+
     def local(self, messages, mode="reasoning", timeout=None, sforzo="", max_tokens=None):
         """
         Chiama endpoint locale/rig con retry e backoff esponenziale.

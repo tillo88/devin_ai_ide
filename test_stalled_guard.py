@@ -37,7 +37,7 @@ def _make_orchestrator(project: Path, mock_local):
         "context": {"max_chars": 100000, "semantic_search_enabled": False},
         # Percorso legacy sotto test ESPLICITAMENTE: dal 2026-07-21 il default
         # senza questa chiave e' "review" (fix fail-open P0).
-        "execution": {"change_application_mode": "legacy_auto_apply"},
+        "execution": {"change_application_mode": "legacy_auto_apply", "agent_mode": False},
         "coder": {"whole_file_enabled": False},
         "models": {
             "local_models_dir": str(project / "models"),
