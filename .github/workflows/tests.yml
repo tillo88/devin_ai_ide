@@ -1,0 +1,57 @@
+name: Test
+
+# Il controllo che mancava: fino al 16/10 su questo repo nessun PR aveva un
+# check (tranne la build desktop quando toccava la UI), e un merge "con tutti
+# i check verdi" era un merge con zero check. Gira su ogni PR e su main.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest httpx
+      - name: pytest
+        run: python -m pytest -q -p no:cacheprovider
+
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Prove JS (estraggono le funzioni dal codex_app.js vero)
+        run: |
+          fallite=0
+          for prova in test_*.mjs; do
+            echo "::group::$prova"
+            if ! node "$prova"; then
+              echo "::error file=$prova::$prova rotta"
+              fallite=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fallite
