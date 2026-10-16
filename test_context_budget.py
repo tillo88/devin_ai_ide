@@ -68,7 +68,13 @@ def test_llm_compaction_requires_runtime_fresh_instance_contract(monkeypatch):
     assert llm_compaction_allowed() is False
 
 
-def test_chat_wires_llm_compaction_only_behind_fresh_instance_contract():
+def test_chat_compaction_is_model_written_but_validated():
+    # Il 16/10 la regola "riassunto del modello solo con istanza fresca" e'
+    # stata tolta su decisione esplicita: il riassunto lo scrive DEVIN in coda
+    # alla conversazione (prefisso in cache) e passa il controllo degli
+    # identificatori in build_checkpoint prima di accept_checkpoint_proposal.
     source = Path("devin/ui/routers/chat.py").read_text(encoding="utf-8")
-    assert "summarizer = _summarize_continuity if llm_compaction_allowed() else None" in source
+    assert "transcript_in_prompt=False" in source
+    assert "accept_checkpoint_proposal(" in source
+    assert "llm_compaction_allowed" not in source
     assert "context_size, _context_source = effective_context_tokens(ai.config)" in source

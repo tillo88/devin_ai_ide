@@ -22,7 +22,7 @@ def test_steward_status_endpoint_returns_snapshot(monkeypatch):
     assert body["history_messages"] == 0
     assert body["context_size"] == 32768
     assert body["context_source"] == "runtime_env"
-    assert body["compaction_mode"] == "deterministic_verbatim"
+    assert body["compaction_mode"] == "model_validated"
     assert isinstance(body["findings"], list)
     assert isinstance(body["evidence_preserved"], list)
     assert body["compaction"]["done"] == 0

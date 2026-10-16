@@ -17,7 +17,7 @@ import os
 
 from fastapi import APIRouter
 
-from devin.core.context_budget import effective_context_tokens, llm_compaction_allowed
+from devin.core.context_budget import effective_context_tokens
 
 router = APIRouter()
 
@@ -117,10 +117,10 @@ async def api_steward_status(project_path: str = "", chat_id: str = ""):
     snapshot = coordinator.snapshot()
     snapshot["context_size"] = context_size
     snapshot["context_source"] = context_source
-    snapshot["compaction_mode"] = (
-        "model_fresh_instance" if llm_compaction_allowed()
-        else "deterministic_verbatim"
-    )
+    # Il riassunto lo scrive il modello e passa un controllo: se cita un
+    # percorso, un file o un comando che nella chat non c'e', si ripiega
+    # sulla coda verbatim (e il checkpoint ne conserva il motivo).
+    snapshot["compaction_mode"] = "model_validated"
     snapshot["history_messages"] = len(history)
     return snapshot
 

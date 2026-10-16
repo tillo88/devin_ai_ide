@@ -35,15 +35,21 @@ def test_cs4_proposal_requires_explicit_trigger_and_exact_evidence_boundary():
 def test_cs5_prefix_is_stable_when_only_retrieval_changes():
     common = dict(
         stable_parts=["system", "project rules"],
-        recent_history=[{"role": "user", "content": "old"}],
+        recent_history=[{"role": "user", "content": "old"},
+                        {"role": "assistant", "content": "reply"}],
         user_content="new",
     )
     first = compose_prompt_layout(retrieval_parts=["chunk A"], **common)
     second = compose_prompt_layout(retrieval_parts=["chunk B"], **common)
     assert first["stable_prefix_fingerprint"] == second["stable_prefix_fingerprint"]
-    assert first["messages"][0] == second["messages"][0]
-    assert first["messages"][1] != second["messages"][1]
-    assert "EPHEMERAL RETRIEVAL" in first["messages"][1]["content"]
+    # system + tutta la storia identici: la cache del server li riusa
+    assert first["messages"][:-1] == second["messages"][:-1]
+    assert len(first["messages"]) == 4
+    assert first["messages"][-1] != second["messages"][-1]
+    assert "EPHEMERAL RETRIEVAL" in first["messages"][-1]["content"]
+    assert first["messages"][-1]["content"].endswith("new")
+    without = compose_prompt_layout(retrieval_parts=[], **common)
+    assert without["messages"][-1] == {"role": "user", "content": "new"}
 
 
 def test_cs5_checkpoint_change_intentionally_invalidates_prefix():

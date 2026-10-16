@@ -2752,6 +2752,32 @@ function testoLettura(p) {
   return testo;
 }
 
+// Il segno che la chat e' stata compattata, con il riassunto da aprire.
+// Solo textContent: il riassunto e' testo del modello, non HTML fidato.
+function testoCompattazione(p) {
+  const n = Number(p?.summarized_messages) || 0;
+  const tempo = Number(p?.seconds) ? ` · ${formatDurata(Math.round(Number(p.seconds)))}` : "";
+  if (p?.error) return `Compattazione non riuscita: ${p.error}`;
+  if (p?.generation === "model") return `Contesto compattato: ${n} messaggi riassunti da DEVIN${tempo}`;
+  const motivo = p?.rejected_reason ? ` (${p.rejected_reason})` : "";
+  return `Contesto compattato senza riassunto: ${n} messaggi ridotti alla coda testuale${motivo}${tempo}`;
+}
+
+function marcatoreCompattazione(p) {
+  if (!p) return null;
+  const pannello = document.createElement("details");
+  pannello.className = "reasoning-panel compaction-marker";
+  const sommario = document.createElement("summary");
+  sommario.textContent = testoCompattazione(p);
+  pannello.appendChild(sommario);
+  if (p.summary) {
+    const testo = document.createElement("pre");
+    testo.textContent = p.summary;
+    pannello.appendChild(testo);
+  }
+  return pannello;
+}
+
 function applyChatEvent(event, assistantNode) {
   if (!event.data) return;
 
@@ -2766,6 +2792,34 @@ function applyChatEvent(event, assistantNode) {
     assistantNode._raw = (assistantNode._raw || "") + payload.token;
     renderAssistantStream(assistantNode, assistantNode._raw);
     $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+    return;
+  }
+
+  if (event.type === "compaction_start") {
+    // DEVIN riassume la parte vecchia della chat prima di rispondere: minuti
+    // di lavoro che senza questa riga sembrerebbero un blocco.
+    const n = Number(payload.messages) || 0;
+    const inizio = Date.now();
+    const scrivi = () => {
+      if (assistantNode._raw || assistantNode._reasoning) return;
+      const secondi = Math.round((Date.now() - inizio) / 1000);
+      assistantNode._letturaMostrata = true;
+      assistantNode.textContent =
+        `Compatto il contesto: riassumo ${n} messaggi · ${formatDurata(secondi)}`;
+    };
+    scrivi();
+    clearInterval(assistantNode._compattazioneTimer);
+    assistantNode._compattazioneTimer = setInterval(scrivi, 1000);
+    return;
+  }
+
+  if (event.type === "compaction") {
+    clearInterval(assistantNode._compattazioneTimer);
+    assistantNode._compattazioneTimer = null;
+    const marcatore = marcatoreCompattazione(payload);
+    const article = assistantNode.parentElement;
+    if (marcatore && article) article.insertBefore(marcatore, article.querySelector(".reasoning-panel") || assistantNode);
+    if (!assistantNode._raw && !assistantNode._reasoning) assistantNode.textContent = "";
     return;
   }
 
