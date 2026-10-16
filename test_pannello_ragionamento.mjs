@@ -78,17 +78,22 @@ function estrai(sorgente, nome) {
 
 const sorgente = fs.readFileSync(SORGENTE, "utf8");
 const NOMI = ["splitReasoning", "reasoningCompleto", "formatDurata", "testoRiepilogo",
-  "fermaCronometroRagionamento", "avviaCronometroRagionamento", "renderAssistantStream"];
+  "fermaCronometroRagionamento", "avviaCronometroRagionamento", "rendiRispostaInCorso",
+  "renderAssistantStream", "testoLettura"];
 const corpo = NOMI.map((n) => estrai(sorgente, n)).join("\n");
 
 const fabbrica = new Function("document", "THINK_OPEN", "THINK_CLOSE", "setInterval", "clearInterval",
+  "renderMarkdownBody",
   `${corpo}\nreturn { splitReasoning, reasoningCompleto, formatDurata, testoRiepilogo,
-     fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream };`);
+     fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream, testoLettura };`);
 
 let intervalliVivi = 0;
+// il markdown vero lo prova test_chat_markdown.mjs: qui conta chi lo chiama e con cosa
+let renderMarkdown = 0;
 const F = fabbrica(documentFinto, "<think>", "</think>",
   () => { intervalliVivi += 1; return intervalliVivi; },
-  () => { intervalliVivi -= 1; });
+  () => { intervalliVivi -= 1; },
+  (nodo, testo) => { renderMarkdown += 1; nodo.textContent = testo; });
 
 // --- utilità del banco ------------------------------------------------------
 function nuovoMessaggio() {
@@ -177,6 +182,39 @@ prova("il pannello e' aperto mentre pensa e chiuso quando ha finito", () => {
   b._reasoningDone = { seconds: 5, tokens: 1 };
   F.renderAssistantStream(b, "");
   assert.equal(pannelloDi(b).open, false, "doveva essere chiuso a pensiero finito");
+});
+
+prova("la risposta in corso passa dal markdown, una volta per testo nuovo", () => {
+  const n = nuovoMessaggio();
+  const prima = renderMarkdown;
+  F.renderAssistantStream(n, "## Titolo");
+  F.renderAssistantStream(n, "## Titolo");
+  assert.equal(renderMarkdown - prima, 1, "stesso testo ridisegnato due volte");
+  F.renderAssistantStream(n, "## Titolo\n- punto");
+  assert.equal(renderMarkdown - prima, 2);
+  assert.equal(n.textContent, "## Titolo\n- punto");
+});
+
+prova("lettura del contesto: quota, cache e tempo stimato", () => {
+  assert.equal(F.testoLettura({}), "Leggo il contesto…");
+  const t = F.testoLettura({ total: 7100, processed: 3200, cache: 0, time_ms: 40000 });
+  assert.match(t, /3\D?200 \/ 7\D?100 token \(45%\)/, t);
+  assert.match(t, /circa 49s/, t);
+  const c = F.testoLettura({ total: 7200, processed: 7000, cache: 6900, time_ms: 1000 });
+  assert.match(c, /6\D?900 gia' in cache/, c);
+  assert.match(c, /circa 2s/, c);
+  const fine = F.testoLettura({ total: 100, processed: 100, cache: 0, time_ms: 900 });
+  assert.doesNotMatch(fine, /circa/, fine);
+});
+
+prova("la riga di lettura sparisce appena il modello comincia a pensare", () => {
+  const n = nuovoMessaggio();
+  n._letturaMostrata = true;
+  n.textContent = "Leggo il contesto: 10 / 20 token (50%)";
+  n._reasoning = "penso";
+  F.renderAssistantStream(n, "");
+  assert.equal(n.textContent, "", "la riga di lettura e' rimasta nel fumetto");
+  assert.equal(testoPannello(n), "penso");
 });
 
 prova("formatDurata", () => {

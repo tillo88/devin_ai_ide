@@ -358,3 +358,27 @@ def test_senza_configurazione_lo_sforzo_dei_completamenti_resta_basso(client):
 def test_spezza_pensiero(dentro, pensiero, risposta):
     from devin.ai.client import AIClient
     assert AIClient._spezza_pensiero(dentro) == (pensiero, risposta)
+
+
+# --- lettura del contesto (prefill) --------------------------------------
+
+def test_lo_stream_chiede_e_inoltra_l_avanzamento_del_prefill(client):
+    """16/10: ~2 minuti di prefill su 7k token con la chat vuota. Il server
+    dice quanto ha letto se glielo si chiede; quel dato diventa un evento suo,
+    che non tocca ne' la risposta ne' il ragionamento."""
+    righe = [
+        "data: " + json.dumps({"choices": [{"delta": {}}],
+                               "prompt_progress": {"total": 7100, "cache": 0, "processed": 3200, "time_ms": 40000}}),
+        "data: " + json.dumps({"choices": [{"delta": {"reasoning_content": "penso"}}]}),
+        "data: " + json.dumps({"choices": [{"delta": {"content": "ecco"}}]}),
+        "data: [DONE]",
+    ]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    eventi = list(client.stream_eventi([{"role": "user", "content": "x"}]))
+    assert client._stato["corpi"][-1]["return_progress"] is True
+    (lettura,) = [e for e in eventi if e["tipo"] == "lettura"]
+    assert (lettura["total"], lettura["processed"], lettura["time_ms"]) == (7100, 3200, 40000)
+    assert _unisci(eventi, "risposta") == "ecco" and _unisci(eventi, "ragionamento") == "penso"
+    # chi vuole solo il testo (autocomplete, stream()) non vede la lettura
+    client._stato["risposta"] = _FintaRisposta(righe)
+    assert "".join(client.stream([{"role": "user", "content": "x"}])) == "ecco"

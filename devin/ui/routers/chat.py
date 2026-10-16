@@ -1149,6 +1149,12 @@ async def api_chat(req: ChatRequest):
                     yield f"event: warning\ndata: {json.dumps({'message': testo.strip()})}\n\n"
                     await asyncio.sleep(0)
                     continue
+                if tipo == "lettura":
+                    # avanzamento della lettura del contesto: non e' risposta
+                    lettura = {k: evento.get(k) for k in ("total", "cache", "processed", "time_ms")}
+                    yield f"event: prefill\ndata: {json.dumps(lettura)}\n\n"
+                    await asyncio.sleep(0)
+                    continue
                 if first_answer_at is None:
                     first_answer_at = time.time()
                     yield (f"event: reasoning_done\ndata: "
