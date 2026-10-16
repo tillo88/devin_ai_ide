@@ -130,7 +130,8 @@ def test_build_from_chat_scaffold_awaiting_approval_is_not_failed_and_tells_the_
     result = {"success": False, "verified": True, "status": "awaiting_approval",
               "files_written": ["scadenze.py", "test_scadenze.py", "README.md"],
               "files_failed": [], "total_planned": 3,
-              "quality_gate": {"status": "verified_success"}}
+              "quality_gate": {"status": "verified_success", "app_check": {
+                  "stato": "riuscita", "passi": [{"esito": "ok", "nome": "a"}, {"esito": "ok", "nome": "b"}]}}}
     response, captured, project = _run_generate_patch(
         monkeypatch, tmp_path, None, empty=True, scaffold_result=result)
     assert response["mode"] == "scaffold"
@@ -143,6 +144,7 @@ def test_build_from_chat_scaffold_awaiting_approval_is_not_failed_and_tells_the_
     assert finish["status"] == "awaiting_approval"
     message = finish["summary"]["chat_message"]
     assert "3/3 file" in message and "`test_scadenze.py`" in message and "Applica" in message
+    assert "app provata: 2/2 controlli ok" in message
     history = ChatPersistence(str(project)).load()
     assert history[-1]["role"] == "assistant" and history[-1]["content"] == message
 
