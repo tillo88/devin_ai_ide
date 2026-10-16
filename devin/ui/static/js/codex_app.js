@@ -3762,6 +3762,7 @@ async function buildFromConversation() {
     body: JSON.stringify({
       project_path: state.selectedProjectPath,
       chat_id: state.selectedChatId || null,
+      applica: modoApplica(),
     }),
   });
   const payload = await response.json();
@@ -3772,8 +3773,8 @@ async function buildFromConversation() {
     return;
   }
   appendChatMessage("assistant", payload.mode === "scaffold"
-    ? `Costruisco da zero quanto deciso in questa chat (run ${payload.run_id}). Seguo la timeline.`
-    : `Applico al progetto quanto deciso in questa chat (run ${payload.run_id}), con test e approvazione prima di scrivere.`);
+    ? `Costruisco da zero quanto deciso in questa chat (run ${payload.run_id}): test, prova dell'app, poi ${payload.applica === "revisione" ? "aspetto la tua approvazione" : "applico da solo se tutto torna"}.`
+    : `Applico al progetto quanto deciso in questa chat (run ${payload.run_id}): test, prova dell'app, poi ${payload.applica === "revisione" ? "aspetto la tua approvazione" : "applico da solo se tutto torna"}.`);
   state.chatBuildRuns = state.chatBuildRuns || {};
   state.chatBuildRuns[payload.run_id] = {
     project: state.selectedProjectPath, chat: state.selectedChatId || null,
@@ -3923,6 +3924,39 @@ $("effort-mode-chip")?.addEventListener("click", (event) => {
   chip.dataset.effortMode = prossimo.valore || "auto";
   chip.textContent = prossimo.etichetta;
   chip.title = prossimo.titolo;
+});
+
+// «Costruisci da questa chat»: applica da solo (default) o chiede prima.
+// La scelta resta in questo PC; senza localStorage vale il default.
+const MODI_APPLICA = {
+  auto: { etichetta: "\u2705 applica da solo",
+    titolo: "Costruisci da questa chat: applica da solo cio' che passa test e prova dell'app. Clicca per chiedere prima a te." },
+  revisione: { etichetta: "\u{1F441} chiedi prima",
+    titolo: "Costruisci da questa chat: le modifiche verificate aspettano Diff / Applica. Clicca per farle applicare da solo." },
+};
+
+function modoApplica() {
+  if (state.modoApplica) return state.modoApplica;
+  try {
+    const salvato = localStorage.getItem("devin.applica");
+    if (salvato && MODI_APPLICA[salvato]) return salvato;
+  } catch { /* storage non disponibile: default */ }
+  return "auto";
+}
+
+function mostraModoApplica(chip, modo) {
+  if (!chip) return;
+  chip.dataset.applyMode = modo;
+  chip.textContent = MODI_APPLICA[modo].etichetta;
+  chip.title = MODI_APPLICA[modo].titolo;
+}
+
+mostraModoApplica($("apply-mode-chip"), modoApplica());
+$("apply-mode-chip")?.addEventListener("click", (event) => {
+  const modo = modoApplica() === "auto" ? "revisione" : "auto";
+  state.modoApplica = modo;
+  try { localStorage.setItem("devin.applica", modo); } catch { /* resta per questa sessione */ }
+  mostraModoApplica(event.currentTarget, modo);
 });
 
 $("refresh-app")?.addEventListener("click", refresh);

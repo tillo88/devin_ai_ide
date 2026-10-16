@@ -37,3 +37,11 @@ def test_build_from_chat_reports_the_outcome_in_the_chat_it_came_from() -> None:
     assert "delete state.chatBuildRuns[event.run_id]" in esito
     finished = JS[JS.index('if (event.type === "run_finished") {'):]
     assert "esitoInChat(event);" in finished[:300]
+
+
+def test_build_from_chat_sends_the_apply_choice_with_a_visible_switch() -> None:
+    assert 'id="apply-mode-chip"' in HTML
+    body = JS[JS.index("async function buildFromConversation"):]
+    body = body[: body.index("\nfunction ")]
+    assert "applica: modoApplica()" in body
+    assert 'localStorage.getItem("devin.applica")' in JS

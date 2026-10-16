@@ -1504,6 +1504,9 @@ def esito_run_da_chat(mode: str, status: str, result: dict, run_id: str) -> dict
         testo = (f"Fatto (run {run_id}): {conteggio} scritti ({file_txt}), test verdi. "
                  "Le modifiche sono pronte ma non ancora nel progetto: aprile con Diff "
                  "e, se vanno bene, Applica.")
+    elif status == "applied_uncommitted":
+        testo = (f"Fatto (run {run_id}): {conteggio} scritti" + (f" ({file_txt})" if scritti else "")
+                 + ", test verdi e modifiche applicate al progetto, ma il commit git non e' riuscito.")
     elif status in {"verified_success", "success"}:
         testo = (f"Fatto (run {run_id}): {conteggio} scritti" + (f" ({file_txt})" if scritti else "")
                  + ", test verdi e modifiche applicate al progetto.")
@@ -1592,6 +1595,11 @@ async def api_chat_generate_patch(request: Request):
     _run_events.start(run_id, mode=f"chat_{mode}", task="Costruisci da questa chat",
                       project_path=execution_path)
     chat_id = data.get("chat_id") or None
+    # Default: applica da solo cio' che passa test e prova dell'app (16/10).
+    # "revisione" torna all'approvazione manuale con Diff / Applica.
+    applica = str(data.get("applica") or "auto").strip().lower()
+    if applica not in {"auto", "revisione"}:
+        return {"error": f"applica deve essere 'auto' o 'revisione', non {applica!r}"}
 
     def _bg():
         from devin.ui.fast_app import (  # lazy: risolti a thread-run time
@@ -1621,6 +1629,7 @@ async def api_chat_generate_patch(request: Request):
             ) as orch:
                 with runs_lock:
                     active_runs[run_id] = orch
+                orch.auto_apply_verified = applica == "auto"
                 try:
                     if mode == "scaffold":
                         # Progetto vuoto: crea i file da zero usando la
@@ -1655,4 +1664,4 @@ async def api_chat_generate_patch(request: Request):
             _concludi("failed", {"error": f"{type(e).__name__}: {e}"})
 
     threading.Thread(target=_bg, daemon=True).start()
-    return {"run_id": run_id, "status": "started", "mode": mode}
+    return {"run_id": run_id, "status": "started", "mode": mode, "applica": applica}

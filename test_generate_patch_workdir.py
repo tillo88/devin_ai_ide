@@ -34,7 +34,7 @@ class _FakeRunEvents:
         self.finished.append((run_id, kwargs))
 
 
-def _run_generate_patch(monkeypatch, tmp_path, work_dir, empty=False, scaffold_result=None):
+def _run_generate_patch(monkeypatch, tmp_path, work_dir, empty=False, scaffold_result=None, extra=None):
     project = tmp_path / "devin-project"
     project.mkdir()
     if not empty:
@@ -61,11 +61,13 @@ def _run_generate_patch(monkeypatch, tmp_path, work_dir, empty=False, scaffold_r
 
         def run_from_conversation(self, conversation_text, project_path, run_id):
             captured["run_path"] = project_path
+            captured["auto_apply"] = getattr(self, "auto_apply_verified", None)
             captured["conversation"] = conversation_text
             return {"success": True, "status": "success"}
 
         def run_scaffold(self, task, project_path, run_id):
             captured["scaffold_path"] = project_path
+            captured["auto_apply"] = getattr(self, "auto_apply_verified", None)
             return scaffold_result
 
     class _ProjectSpace:
@@ -99,7 +101,7 @@ def _run_generate_patch(monkeypatch, tmp_path, work_dir, empty=False, scaffold_r
     captured["log_dir"] = log_dir
 
     response = asyncio.run(chat_router.api_chat_generate_patch(
-        _Request({"project_path": str(project)})))
+        _Request({"project_path": str(project), **(extra or {})})))
     return response, captured, project
 
 
@@ -165,3 +167,16 @@ def test_build_from_chat_patch_mode_also_finishes_the_run(monkeypatch, tmp_path)
     response, captured, _ = _run_generate_patch(monkeypatch, tmp_path, None)
     _, finish = captured["events"].finished[0]
     assert finish["status"] == "success" and finish["mode"] == "chat_patch"
+
+
+def test_build_from_chat_applies_by_default_and_can_ask_first(monkeypatch, tmp_path):
+    (tmp_path / "a").mkdir()
+    response, captured, _ = _run_generate_patch(monkeypatch, tmp_path / "a", None)
+    assert response["applica"] == "auto" and captured["auto_apply"] is True
+    (tmp_path / "b").mkdir()
+    response, captured, _ = _run_generate_patch(monkeypatch, tmp_path / "b", None,
+                                                extra={"applica": "revisione"})
+    assert response["applica"] == "revisione" and captured["auto_apply"] is False
+    (tmp_path / "c").mkdir()
+    response, _, _ = _run_generate_patch(monkeypatch, tmp_path / "c", None, extra={"applica": "boh"})
+    assert "applica deve essere" in response["error"]
