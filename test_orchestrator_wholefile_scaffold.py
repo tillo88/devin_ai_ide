@@ -709,3 +709,115 @@ if __name__ == "__main__":
     test_scaffold_no_models_returns_failed_status()
     test_scaffold_local_planner_unavailable_returns_failed_status()
     print("\n🎉 Tutti i test passati!")
+
+
+def test_scaffold_auto_apply_verified_writes_project_and_commits():
+    """Applica da solo (16/10): uno scaffold verde arriva nel progetto, con
+    le copie di riserva del manifest e un commit; niente attesa."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project = _make_project(tmpdir)
+
+        def mock_local(messages, mode="reasoning", timeout=None, **kwargs):
+            return "OK"
+
+        orch, lp, ap = _make_orchestrator(
+            project, mock_local,
+            coder_cfg={"whole_file_enabled": False, "self_heal_loop": False},
+        )
+        commits = []
+        try:
+            _patch_scaffold_agents(orch, {
+                "calc.py": "def add(a, b):\n    return a + b\n",
+                "test_calc.py": (
+                    "from calc import add\n\n"
+                    "def test_add():\n    assert add(2, 3) == 5\n"
+                ),
+            })
+            orch.change_application_mode = "review"
+            orch.auto_apply_verified = True
+            with patch("devin.engine.git_ops.GitOps.commit",
+                       side_effect=lambda self_patch, task: commits.append(task) or {"success": True}):
+                result = orch.run_scaffold(
+                    "Correggi la calcolatrice con test reali",
+                    project_path=str(project),
+                    run_id="run_scaffold_auto",
+                )
+        finally:
+            lp.stop()
+            ap.stop()
+
+        assert result["status"] == "verified_success", result
+        assert result["applied"] is True and result["success"] is True
+        assert "return a + b" in (project / "calc.py").read_text()
+        assert (project / "test_calc.py").exists()
+        assert commits and "verificato e applicato da DEVIN" in commits[0]
+        backup = project / ".devin_state" / "pending_changes" / "run_scaffold_auto" / "backup" / "calc.py"
+        assert "return a - b" in backup.read_text(), "manca la copia di riserva"
+        state = json.loads((project / ".devin_state" / "run_scaffold_auto.json").read_text())
+        assert state["final_status"] == "success"
+        assert state["applied_by"] == "verified_auto_apply"
+
+
+def test_scaffold_auto_apply_never_applies_a_red_candidate():
+    """Applica da solo NON vuol dire applicare tutto: test rossi, progetto intatto."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project = _make_project(tmpdir)
+
+        def mock_local(messages, mode="reasoning", timeout=None, **kwargs):
+            return "OK"
+
+        orch, lp, ap = _make_orchestrator(
+            project, mock_local,
+            coder_cfg={"whole_file_enabled": False, "self_heal_loop": False},
+        )
+        try:
+            _patch_scaffold_agents(orch, {
+                "calc.py": "def add(a, b):\n    return a * b\n",
+                "test_calc.py": (
+                    "from calc import add\n\n"
+                    "def test_add():\n    assert add(2, 3) == 5\n"
+                ),
+            })
+            orch.change_application_mode = "review"
+            orch.auto_apply_verified = True
+            orch.git_ops.commit = MagicMock()
+            result = orch.run_scaffold("Calcolatrice", project_path=str(project),
+                                       run_id="run_scaffold_auto_red")
+        finally:
+            lp.stop()
+            ap.stop()
+
+        assert result["status"] == "failed"
+        assert result.get("applied") is False
+        assert "return a - b" in (project / "calc.py").read_text()
+        assert not (project / "test_calc.py").exists()
+
+
+def test_maintenance_auto_apply_verified_writes_project():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project = _make_project(tmpdir)
+
+        def mock_local(messages, mode="reasoning", timeout=None, **kwargs):
+            content = _user_content(messages)
+            if "TASK" in content:
+                return "RESULT: ACTION_NEEDED\n1. Fix calc.py"
+            if "CURRENT CODE" in content:
+                return WHOLE_FILE_ANSWER
+            if "ERROR" in content:
+                return "Change minus to plus"
+            return "OK"
+
+        orch, lp, ap = _make_orchestrator(
+            project, mock_local, coder_cfg={"whole_file_enabled": True})
+        orch.change_application_mode = "review"
+        orch.auto_apply_verified = True
+        try:
+            with patch("devin.engine.git_ops.GitOps.commit", return_value={"success": True}):
+                result = orch.run("Fix the bug in calc.py", project_path=str(project),
+                                  run_id="run_maint_auto")
+        finally:
+            lp.stop()
+            ap.stop()
+
+        assert result["status"] == "success" and result["applied"] is True
+        assert "return a + b" in (project / "calc.py").read_text()

@@ -136,6 +136,11 @@ class Orchestrator:
         # (comandi, server, finestra) in una copia della sandbox. Attiva solo
         # dentro run_scaffold; `execution.app_check: false` la spegne.
         self.app_check_enabled = bool(self.config.get("execution", {}).get("app_check", True))
+        # Applica da solo cio' che ha passato test e prova dell'app (16/10,
+        # scelta di Alessandro). Lo decide chi avvia il run, per richiesta:
+        # stesso percorso dell'approvazione manuale (staleness, rollback,
+        # copie di riserva, commit git), solo senza il click.
+        self.auto_apply_verified = False
         self._prova_attiva = False
         self._piano_prova = None
         self._task_corrente = ""
@@ -648,6 +653,23 @@ class Orchestrator:
             "app_check": prova,
         }
 
+    def _applica_verificato(self, project: Path | str, run_id: str,
+                            change_manifest: Dict[str, Any], task: str, patch: str = ""):
+        """Applica da solo un manifest GIA' verificato (test e prova verdi).
+
+        Stesso percorso dell'approvazione manuale: controlli di staleness,
+        rollback in caso d'errore, copie di riserva in
+        .devin_state/pending_changes/<run>/backup, poi commit git (che resta
+        il modo per tornare indietro).
+        """
+        from devin.core.change_manifest import apply_change_manifest
+        from devin.engine.git_ops import GitOps
+
+        applicato = apply_change_manifest(
+            project, run_id, expected_entry_digest=change_manifest["entry_digest"])
+        commit = GitOps(str(project)).commit(patch, f"{task[:160]} (verificato e applicato da DEVIN)")
+        return applicato, commit
+
     def _prova_app(self, root: Path, written: List[str]) -> Dict[str, Any] | None:
         """Pianifica (una volta per run) ed esegue la prova dell'app."""
         from devin.agents.coder import contesto_file
@@ -1023,7 +1045,8 @@ class Orchestrator:
                 "warning",
             )
 
-        if self.change_application_mode == "review" and quality.get("status") == "verified_success":
+        if (self.change_application_mode == "review" and quality.get("status") == "verified_success"
+                and not getattr(self, "auto_apply_verified", False)):
             # Un successo verificato ma non ancora approvato non e' una lezione
             # permanente. La promozione avverra' soltanto dopo la decisione.
             memory_outcome = "pending_approval"
@@ -1088,6 +1111,42 @@ class Orchestrator:
                     "quality_gate": quality,
                     "duration": time.time() - start_time,
                 }
+
+            if change_manifest["entries"] and getattr(self, "auto_apply_verified", False):
+                manifest_file = manifest_path(source_project, effective_run_id)
+                try:
+                    applicato, commit = self._applica_verificato(
+                        source_project, effective_run_id, change_manifest, task)
+                except Exception as exc:
+                    self._log(f"Applicazione automatica non riuscita ({type(exc).__name__}: {exc}): "
+                              "le modifiche restano in attesa di approvazione", "error")
+                else:
+                    finale = "success" if (commit or {}).get("success") else "applied_uncommitted"
+                    scaffold_state.save({
+                        "task": task, "attempt": 0, "max_retries": 0,
+                        "final_status": finale, "step": "changes_applied",
+                        "verified": True, "applied": True, "applied_by": "verified_auto_apply",
+                        "sandbox_path": str(scaffold_root),
+                        "change_manifest_path": str(manifest_file),
+                        "quality_gate": quality, "files_written": written,
+                        "commit_result": commit,
+                    })
+                    self._restore_local_test_models()
+                    self._log(
+                        f"Verificato e applicato al progetto: {len(change_manifest['entries'])} file"
+                        + ("" if finale == "success" else " (commit git non riuscito)"),
+                        "success",
+                    )
+                    return {
+                        "success": True, "verified": True, "applied": True,
+                        "status": "verified_success",
+                        "files_written": written, "files_failed": failed,
+                        "total_planned": len(file_plan),
+                        "change_manifest": applicato, "commit": commit,
+                        "quality_gate": quality, "memory_outcome": memory_outcome,
+                        "duration": time.time() - start_time,
+                        "degraded_mode": self._degraded_mode,
+                    }
 
             if change_manifest["entries"]:
                 manifest_file = manifest_path(source_project, effective_run_id)
@@ -1639,6 +1698,29 @@ class Orchestrator:
                                 "duration": time.time() - start_time,
                                 "model_source": model_status.model_source,
                             }
+
+                        if change_manifest["entries"] and getattr(self, "auto_apply_verified", False):
+                            try:
+                                applicato, commit = self._applica_verificato(
+                                    self.project_path, effective_run_id, change_manifest, task, patch)
+                            except Exception as exc:
+                                log(f"Applicazione automatica non riuscita ({type(exc).__name__}: {exc}): "
+                                    "le modifiche restano in attesa di approvazione", "error")
+                            else:
+                                finale = "success" if (commit or {}).get("success") else "applied_uncommitted"
+                                log(f"Verificato e applicato al progetto: "
+                                    f"{len(change_manifest['entries'])} file", "success")
+                                save_state(final_status=finale, patch=patch, step="changes_applied",
+                                           verified=True, applied=True, applied_by="verified_auto_apply",
+                                           sandbox_path=str(sandbox_path))
+                                write_status_footer(finale)
+                                return {
+                                    "success": True, "verified": True, "applied": True,
+                                    "status": finale, "plan": plan.to_dict(), "patch": patch,
+                                    "change_manifest": applicato, "commit": commit,
+                                    "logs": logs, "duration": time.time() - start_time,
+                                    "model_source": model_status.model_source,
+                                }
 
                         if change_manifest["entries"]:
                             manifest_file = manifest_path(
