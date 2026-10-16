@@ -112,9 +112,9 @@
       "recent_messages": 8,
       "refresh_messages": 6,
       "source_max_chars": 24000,
-      "summary_max_chars": 6000,
-      "summary_max_tokens": 1200
+      "compaction_max_chars": 12000,
+      "compaction_max_tokens": 6144
     },
-    "note": "system_prompt vuoto di default = chat generica (nessun ruolo forzato). Personalizzalo qui SOLO se vuoi un'identita' fissa (es. 'Sei l'assistente di DEVIN AI IDE...'); resta comunque per-chat, non hardcoded nel codice. max_history_messages limita quanti turni passati vengono rimandati al modello ad ogni richiesta (protezione OOM/contesto locale limitato)."
+    "note": "system_prompt vuoto di default = chat generica (nessun ruolo forzato). Personalizzalo qui SOLO se vuoi un'identita' fissa (es. 'Sei l'assistente di DEVIN AI IDE...'); resta comunque per-chat, non hardcoded nel codice. max_history_messages vale solo con continuity.enabled=false: con la continuita' accesa la conversazione va intera finche' supera trigger_ratio del contesto, poi DEVIN la compatta (riassunto controllato, al massimo compaction_max_chars caratteri e compaction_max_tokens token) e restano parola per parola gli ultimi recent_messages."
   }
 }

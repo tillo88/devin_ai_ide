@@ -79,13 +79,14 @@ function estrai(sorgente, nome) {
 const sorgente = fs.readFileSync(SORGENTE, "utf8");
 const NOMI = ["splitReasoning", "reasoningCompleto", "formatDurata", "testoRiepilogo",
   "fermaCronometroRagionamento", "avviaCronometroRagionamento", "rendiRispostaInCorso",
-  "renderAssistantStream", "testoLettura"];
+  "renderAssistantStream", "testoLettura", "testoCompattazione", "marcatoreCompattazione"];
 const corpo = NOMI.map((n) => estrai(sorgente, n)).join("\n");
 
 const fabbrica = new Function("document", "THINK_OPEN", "THINK_CLOSE", "setInterval", "clearInterval",
   "renderMarkdownBody",
   `${corpo}\nreturn { splitReasoning, reasoningCompleto, formatDurata, testoRiepilogo,
-     fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream, testoLettura };`);
+     fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream, testoLettura,
+     testoCompattazione, marcatoreCompattazione };`);
 
 let intervalliVivi = 0;
 // il markdown vero lo prova test_chat_markdown.mjs: qui conta chi lo chiama e con cosa
@@ -109,6 +110,23 @@ const prove = [];
 function prova(nome, fn) { prove.push([nome, fn]); }
 
 // --- le prove ---------------------------------------------------------------
+
+prova("compattazione riuscita: segno con il riassunto da aprire", () => {
+  const m = F.marcatoreCompattazione({ generation: "model", summarized_messages: 14,
+    seconds: 95, summary: "## Fatti\n<b>non e' html</b>" });
+  assert.match(m.className, /compaction-marker/);
+  assert.equal(m.querySelector("summary").textContent,
+    `Contesto compattato: 14 messaggi riassunti da DEVIN · ${F.formatDurata(95)}`);
+  assert.equal(m.querySelector("pre").textContent, "## Fatti\n<b>non e' html</b>");
+});
+
+prova("compattazione ripiegata: il motivo si legge", () => {
+  const testo = F.testoCompattazione({ generation: "deterministic", summarized_messages: 6,
+    rejected_reason: "riassunto scartato: `x.py` non compare nella chat" });
+  assert.match(testo, /senza riassunto: 6 messaggi/);
+  assert.match(testo, /`x.py` non compare nella chat/);
+  assert.match(F.testoCompattazione({ error: "boom" }), /non riuscita: boom/);
+});
 
 prova("il pensiero dall'evento SSE finisce nel pannello", () => {
   const n = nuovoMessaggio();

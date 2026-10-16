@@ -55,16 +55,17 @@ from devin.core.chat_persistence import ChatPersistence
 from devin.core.chat_continuity import (
     accept_checkpoint_proposal,
     build_checkpoint,
+    checkpoint_matches,
     checkpoint_needs_refresh,
     context_from_checkpoint,
     estimate_tokens,
+    pending_messages,
     should_checkpoint,
 )
 from devin.core.context_budget import (
     completion_budget,
     context_budget,
     effective_context_tokens,
-    llm_compaction_allowed,
 )
 from devin.core.prompt_layout import compose_prompt_layout
 from devin.memory.eval_recorder import (
@@ -1008,78 +1009,107 @@ async def api_chat(req: ChatRequest):
         "LINGUA: rispondi SEMPRE nella stessa lingua del messaggio dell'utente "
         "(se ti scrive in italiano, rispondi in italiano).")
 
-    # Continuita' preventiva: prima che i turni vecchi escano dalla finestra,
-    # crea un handoff strutturato e lo abbina sempre a una coda verbatim recente.
+    # Continuita': la conversazione va al modello INTERA finche' ci sta. Quando
+    # quello che il turno manderebbe supera trigger_ratio del contesto, i
+    # messaggi piu' vecchi diventano un checkpoint scritto da DEVIN stesso e
+    # restano parola per parola solo gli ultimi `recent_messages`. Il
+    # riassunto si chiede in coda alla conversazione (stesso prefisso del
+    # turno prima: la cache del server lo ha gia' letto) e si accetta solo se
+    # non cita percorsi, file o comandi che nella chat non ci sono; altrimenti
+    # si ripiega sulla coda verbatim e il motivo arriva all'utente.
     # E' stato conversazionale per-chat, mai memoria recall-safe.
     continuity_cfg = chat_cfg.get("continuity", {})
     continuity_enabled = continuity_cfg.get("enabled", True)
     recent_messages = max(2, int(continuity_cfg.get("recent_messages", 8)))
+    compaction_max_chars = int(continuity_cfg.get("compaction_max_chars", 12000))
+    compaction_max_tokens = int(continuity_cfg.get("compaction_max_tokens", 6144))
     checkpoint = chat_persistence.get_continuity() if continuity_enabled else None
+    if checkpoint and not checkpoint_matches(persisted_history, checkpoint):
+        # storia modificata o checkpoint di un'altra storia: non vale piu'
+        checkpoint = None
     context_size, _context_source = effective_context_tokens(ai.config)
-    fixed_context = "\n\n".join([*system_parts, *retrieval_parts])
-    if continuity_enabled and should_checkpoint(
+    fixed_context = "\n\n".join([*system_parts, *retrieval_parts, content])
+    needs_compaction = continuity_enabled and should_checkpoint(
         persisted_history,
         context_size=context_size,
         fixed_context=fixed_context,
         trigger_ratio=float(continuity_cfg.get("trigger_ratio", 0.72)),
-        max_history_messages=max_history,
         recent_messages=recent_messages,
         min_messages=int(continuity_cfg.get("min_messages", 12)),
+        checkpoint=checkpoint,
     ) and checkpoint_needs_refresh(
-        persisted_history,
-        checkpoint,
-        recent_messages=recent_messages,
-        refresh_messages=int(continuity_cfg.get("refresh_messages", 6)),
-    ):
-        def _summarize_continuity(prompt: str):
-            # Niente temperatura 0 qui: e' il regime in cui un modello che
-            # ragiona entra in cerchio (misurato: 11.000 caratteri senza mai
-            # chiudere). Il campionamento lo decide la configurazione, e
-            # complete() chiede da se' uno sforzo basso.
-            return ai.complete(
-                prompt,
-                max_tokens=int(continuity_cfg.get("summary_max_tokens", 1200)),
-                mode="reasoning",
-            )
+        persisted_history, checkpoint, recent_messages=recent_messages, refresh_messages=1,
+    )
 
-        summarizer = _summarize_continuity if llm_compaction_allowed() else None
-        proposal = await asyncio.to_thread(
-            build_checkpoint,
+    def _layout(cp):
+        parti = list(system_parts)
+        continuita = context_from_checkpoint(cp)
+        if continuita:
+            parti.append(continuita)
+        if continuity_enabled:
+            storia = pending_messages(persisted_history, cp)
+        else:
+            # senza continuita' resta il vecchio tetto a numero di messaggi
+            storia = persisted_history[-max_history:] if persisted_history else []
+        return compose_prompt_layout(
+            stable_parts=parti,
+            retrieval_parts=retrieval_parts,
+            recent_history=storia,
+            user_content=content,
+            checkpoint=cp,
+        ), bool(continuita)
+
+    def _compatta():
+        """Esegue la compattazione; restituisce (checkpoint, esito per la UI)."""
+        partenza = time.time()
+        base, _ = _layout(checkpoint)
+        conversazione = base["messages"][:-1]
+
+        def _riassunto(istruzione: str):
+            testo = ai.local(
+                conversazione + [{"role": "user", "content": istruzione}],
+                mode="reasoning", sforzo="low", max_tokens=compaction_max_tokens,
+            )
+            if testo is None:
+                raise RuntimeError("il rig non ha risposto")
+            if getattr(ai, "ultima_fine", "") == "length":
+                raise RuntimeError(
+                    f"tetto di {compaction_max_tokens} token raggiunto prima della fine")
+            return testo
+
+        proposta = build_checkpoint(
             persisted_history,
             existing=checkpoint,
-            summarizer=summarizer,
+            summarizer=_riassunto,
             recent_messages=recent_messages,
-            source_max_chars=int(continuity_cfg.get("source_max_chars", 24000)),
-            summary_max_chars=int(continuity_cfg.get("summary_max_chars", 6000)),
+            summary_max_chars=compaction_max_chars,
             trigger="context_pressure",
+            transcript_in_prompt=False,
         )
-        if proposal:
+        esito = {"seconds": 0.0, "summarized_messages": 0, "generation": "",
+                 "rejected_reason": None, "summary": "", "error": None}
+        nuovo = checkpoint
+        if proposta:
             try:
-                checkpoint = accept_checkpoint_proposal(
-                    persisted_history,
-                    proposal,
-                    recent_messages=recent_messages,
-                    summary_max_chars=int(continuity_cfg.get("summary_max_chars", 6000)),
+                nuovo = accept_checkpoint_proposal(
+                    persisted_history, proposta, recent_messages=recent_messages,
+                    summary_max_chars=compaction_max_chars,
                 )
             except ValueError as exc:
+                esito["error"] = str(exc)
                 print(f"[ContextSteward] checkpoint proposal rejected: {exc}")
             else:
-                chat_persistence.set_continuity(checkpoint)
+                chat_persistence.set_continuity(nuovo)
+                esito.update(
+                    summarized_messages=int(nuovo.get("summarized_messages") or 0),
+                    generation=str(nuovo.get("generation") or ""),
+                    rejected_reason=nuovo.get("rejected_reason"),
+                    summary=str(nuovo.get("summary") or ""),
+                )
+        esito["seconds"] = round(time.time() - partenza, 1)
+        return nuovo, esito
 
-    continuity_context = context_from_checkpoint(checkpoint)
-    if continuity_context:
-        system_parts.append(continuity_context)
-
-    # Tronca ai piu' recenti max_history messaggi: protegge da OOM/contesto
-    # locale limitato su run prolungate (vincolo hardware locale).
-    history_limit = recent_messages if continuity_context else max_history
-    prompt_layout = compose_prompt_layout(
-        stable_parts=system_parts,
-        retrieval_parts=retrieval_parts,
-        recent_history=persisted_history[-history_limit:] if persisted_history else [],
-        user_content=content,
-        checkpoint=checkpoint,
-    )
+    prompt_layout, has_continuity = _layout(checkpoint)
     messages = prompt_layout["messages"]
 
     # Il label deve riflettere il modello REALMENTE usato da ai.stream()
@@ -1100,7 +1130,7 @@ async def api_chat(req: ChatRequest):
         "ctx_size": model_cfg.get("ctx_size", ""),
         "vision": model_cfg.get("vision", {}).get("enabled", False),
         "web_search_used": req.use_web_search,
-        "continuity_checkpoint": bool(continuity_context),
+        "continuity_checkpoint": has_continuity,
         "continuity_summarized_messages": (
             int(checkpoint.get("summarized_messages") or 0) if checkpoint else 0
         ),
@@ -1127,6 +1157,28 @@ async def api_chat(req: ChatRequest):
         if web_search_error:
             yield f"event: warning\ndata: {json.dumps({'message': f'Web search non disponibile: {web_search_error}'})}\n\n"
 
+        messaggi = messages
+        if needs_compaction:
+            # Si vede: la compattazione legge la conversazione e scrive un
+            # riassunto, minuti col modello che pensa. Prima avveniva prima
+            # dell'SSE e la chat restava muta.
+            da_riassumere = max(0, len(pending_messages(persisted_history, checkpoint)) - recent_messages)
+            yield (f"event: compaction_start\ndata: "
+                   f"{json.dumps({'messages': da_riassumere, 'context_tokens': context_size})}\n\n")
+            try:
+                nuovo, esito = await asyncio.to_thread(_compatta)
+            except Exception as exc:  # la risposta parte comunque, col contesto di prima
+                esito = {"error": f"{type(exc).__name__}: {exc}"[:300], "summarized_messages": 0}
+                nuovo = checkpoint
+            nuovo_layout, ha_continuita = _layout(nuovo)
+            messaggi = nuovo_layout["messages"]
+            model_detail.update({
+                "continuity_checkpoint": ha_continuita,
+                "continuity_summarized_messages": int((nuovo or {}).get("summarized_messages") or 0),
+                "stable_prefix_fingerprint": nuovo_layout["stable_prefix_fingerprint"],
+            })
+            yield f"event: compaction\ndata: {json.dumps(esito)}\n\n"
+
         # 'model' e' l'alias mostrato in chat; 'model_id' resta per la
         # diagnostica tecnica, non per la superficie primaria.
         yield f"event: meta\ndata: {json.dumps({'mode': selected_mode, 'model': model_label, 'model_id': model_name, 'detail': model_detail})}\n\n"
@@ -1143,7 +1195,7 @@ async def api_chat(req: ChatRequest):
             # 16/10 la barra laterale mostrava "Nessun progetto" durante le
             # risposte. Ogni pezzo ora si chiede in un thread.
             async for evento in iterate_in_threadpool(
-                    ai.stream_eventi(messages, mode=selected_mode,
+                    ai.stream_eventi(messaggi, mode=selected_mode,
                                      sforzo=req.reasoning_effort or "")):
                 tipo = evento["tipo"]
                 testo = evento["testo"]

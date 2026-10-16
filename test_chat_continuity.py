@@ -3,7 +3,10 @@ import json
 from devin.core.chat_continuity import (
     CHECKPOINT_SCHEMA,
     build_checkpoint,
+    checkpoint_matches,
     checkpoint_needs_refresh,
+    pending_messages,
+    unsupported_identifiers,
     context_from_checkpoint,
     history_fingerprint,
     should_checkpoint,
@@ -22,15 +25,84 @@ def _history(count=16):
     ]
 
 
-def test_checkpoint_triggers_before_message_window_drops_old_turns():
+def test_checkpoint_triggers_on_tokens_not_on_message_count():
+    # tanti messaggi corti in un contesto grande: nessuna compattazione
+    assert not should_checkpoint(
+        _history(40), context_size=131072, recent_messages=8, min_messages=12,
+    )
+    # pochi messaggi ma pesanti: si compatta prima di sforare
+    pesanti = [dict(m, content=m["content"] + " " + "y" * 3000) for m in _history(14)]
     assert should_checkpoint(
-        _history(13), context_size=8192, max_history_messages=20,
-        recent_messages=8, min_messages=12,
+        pesanti, context_size=8192, recent_messages=8, min_messages=12,
     )
     assert not should_checkpoint(
-        _history(11), context_size=8192, max_history_messages=20,
-        recent_messages=8, min_messages=12,
+        pesanti[:11], context_size=8192, recent_messages=8, min_messages=12,
     )
+
+
+def test_after_a_checkpoint_only_uncovered_messages_count():
+    pesanti = [dict(m, content=m["content"] + " " + "y" * 3000) for m in _history(14)]
+    cp = build_checkpoint(pesanti, summarizer=lambda _: "## Fatti\n" + "ok " * 40,
+                          recent_messages=8)
+    assert pending_messages(pesanti, cp) == pesanti[6:]
+    assert not should_checkpoint(pesanti, context_size=8192, recent_messages=8,
+                                 min_messages=12, checkpoint=cp)
+    # una storia modificata invalida il checkpoint: si riparte da tutta
+    edited = [{"role": "user", "content": "altro"}] + pesanti[1:]
+    assert not checkpoint_matches(edited, cp)
+    assert pending_messages(edited, cp) == edited
+
+
+def test_model_summary_citing_unknown_identifiers_is_rejected():
+    history = _history(16)
+    inventato = ("## Fatti\nModificato `devin/core/inventato.py` e lanciato `pytest -k fantasma`;"
+                 " toccato anche file_3.py. " + "dettaglio " * 10)
+    cp = build_checkpoint(history, summarizer=lambda _: inventato, recent_messages=8)
+    assert cp["generation"] == "deterministic"
+    assert "devin/core/inventato.py" in cp["rejected_reason"]
+    assert "pytest -k fantasma" in cp["rejected_reason"]
+    assert "file_3.py" not in cp["rejected_reason"]
+
+    fedele = "## Fatti\nIl file `file_3.py` e file_5.py sono citati. " + "dettaglio " * 10
+    ok = build_checkpoint(history, summarizer=lambda _: fedele, recent_messages=8)
+    assert ok["generation"] == "model"
+    assert ok["rejected_reason"] is None
+
+
+def test_summary_over_the_limit_or_failing_is_said_not_truncated():
+    lungo = build_checkpoint(_history(16), summarizer=lambda _: "## Fatti\n" + "z" * 900,
+                             recent_messages=8, summary_max_chars=500)
+    assert lungo["generation"] == "deterministic"
+    assert "oltre il limite" in lungo["rejected_reason"]
+
+    def rotto(_):
+        raise RuntimeError("tetto raggiunto")
+
+    fallito = build_checkpoint(_history(16), summarizer=rotto, recent_messages=8)
+    assert "tetto raggiunto" in fallito["rejected_reason"]
+
+
+def test_cache_mode_sends_only_the_instruction():
+    prompts = []
+    build_checkpoint(_history(16), recent_messages=8, transcript_in_prompt=False,
+                     summarizer=lambda p: prompts.append(p) or "## Fatti\n" + "a " * 60)
+    assert "primi 8 messaggi" in prompts[0]
+    assert "message 0:" not in prompts[0]
+    assert "Copia ESATTAMENTE" in prompts[0]
+
+
+def test_unsupported_identifiers_ignores_prose():
+    assert unsupported_identifiers("e.g. input/output, v0.4.8, ecc.", "") == []
+    assert unsupported_identifiers("vedi https://x.io/a.", "") == ["https://x.io/a"]
+
+
+def test_fallback_after_a_good_checkpoint_keeps_the_previous_handoff():
+    first = build_checkpoint(_history(16), summarizer=lambda _: "## Fatti\nPRIMO HANDOFF " + "a " * 50,
+                             recent_messages=8)
+    second = build_checkpoint(_history(24), existing=first, summarizer=lambda _: None,
+                              recent_messages=8)
+    assert second["generation"] == "deterministic"
+    assert "PRIMO HANDOFF" in second["summary"]
 
 
 def test_checkpoint_is_structured_bounded_and_reused():
