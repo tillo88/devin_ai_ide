@@ -25,3 +25,15 @@ def test_build_from_chat_posts_the_selected_conversation() -> None:
     assert "project_path: state.selectedProjectPath" in body
     assert "chat_id: state.selectedChatId" in body
     assert "selectRun(payload.run_id)" in body
+
+
+def test_build_from_chat_reports_the_outcome_in_the_chat_it_came_from() -> None:
+    body = JS[JS.index("async function buildFromConversation"):]
+    body = body[: body.index("\nfunction ")]
+    assert "state.chatBuildRuns[payload.run_id]" in body
+    esito = JS[JS.index("function esitoInChat"):]
+    esito = esito[: esito.index("\n}\n")]
+    assert "event.data?.summary?.chat_message" in esito
+    assert "delete state.chatBuildRuns[event.run_id]" in esito
+    finished = JS[JS.index('if (event.type === "run_finished") {'):]
+    assert "esitoInChat(event);" in finished[:300]

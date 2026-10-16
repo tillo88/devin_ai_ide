@@ -1540,6 +1540,19 @@ function showRunStatus(runId, status, { updateBadge = true, completed = false } 
   renderProjectFlow();
 }
 
+// «Costruisci da questa chat»: a fine run la chat da cui e' partito dice
+// com'e' andata (prima restava ferma su "Seguo la timeline"). Il testo arriva
+// dal backend, che lo salva anche nello storico della chat: qui lo si mostra
+// solo se quella chat e' aperta, e una volta sola anche se l'evento torna.
+function esitoInChat(event) {
+  const partenza = state.chatBuildRuns?.[event.run_id];
+  const testo = event.data?.summary?.chat_message;
+  if (!partenza || !testo) return;
+  delete state.chatBuildRuns[event.run_id];
+  if (partenza.project !== state.selectedProjectPath || partenza.chat !== (state.selectedChatId || null)) return;
+  appendChatMessage("assistant", testo);
+}
+
 function applyRunEventToActivity(event) {
   if (!event || event.run_id !== state.selectedRunId) return;
   const stages = {
@@ -1552,6 +1565,7 @@ function applyRunEventToActivity(event) {
   if (event.type === "run_finished") {
     state.runFinishedId = event.run_id;
     const status = event.data?.status || "failed";
+    esitoInChat(event);
     showRunStatus(event.run_id, status, { completed: ["success", "verified_success", "awaiting_approval"].includes(status) });
     loadRunLog(event.run_id).catch(() => {});
     if (state.selectedProjectPath) renderActivityRail(state.selectedProjectPath).catch(() => {});
@@ -3760,6 +3774,10 @@ async function buildFromConversation() {
   appendChatMessage("assistant", payload.mode === "scaffold"
     ? `Costruisco da zero quanto deciso in questa chat (run ${payload.run_id}). Seguo la timeline.`
     : `Applico al progetto quanto deciso in questa chat (run ${payload.run_id}), con test e approvazione prima di scrivere.`);
+  state.chatBuildRuns = state.chatBuildRuns || {};
+  state.chatBuildRuns[payload.run_id] = {
+    project: state.selectedProjectPath, chat: state.selectedChatId || null,
+  };
   setPipelineStage(0);
   showRunStatus(payload.run_id, "starting");
   await selectRun(payload.run_id);

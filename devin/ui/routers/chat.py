@@ -22,8 +22,11 @@ fast_app re-esporta (shim): `api_chat`, `ChatRequest`, `_is_scaffold_request`,
 `_read_upload_limited` (quest'ultimo risolto lazy da routers/projects.py).
 
 Fetta split 15 (FINALE, 2026-07-18): anche `/api/chat/generate_patch` vive
-qui. Come da contratto originale NON registra `_run_events.start` e NON
-chiama `_finish_run_events` (preservato verbatim). Dipendenze lazy da
+qui. Dal 16/10 registra `_run_events.start` / `_finish_run_events` come gli
+altri run: senza, la timeline restava "running" per sempre e la chat non
+sapeva com'era finita (il footer diceva "failed" anche a uno scaffold verde
+in attesa di approvazione). A fine run scrive l'esito anche nella chat da cui
+e' partito. Dipendenze lazy da
 fast_app: `LOG_DIR`/`_make_run_callback`/`_validated_project_path`
 nell'handler; `Orchestrator`/`CONFIG_PATH`/`active_runs`/`runs_lock` dentro
 la closure `_bg` (risolti a thread-run time, pattern runs_core).
@@ -1481,6 +1484,51 @@ async def api_chat_history_delete_message(request: Request):
 # ============================================================
 
 
+def esito_run_da_chat(mode: str, status: str, result: dict, run_id: str) -> dict:
+    """Cosa dire in chat quando un «Costruisci da questa chat» finisce.
+
+    Una frase per l'utente (``chat_message``) piu' i dati da cui viene, cosi'
+    la UI e lo storico dicono la stessa cosa.
+    """
+    scritti = [str(f) for f in (result.get("files_written") or [])]
+    falliti = result.get("files_failed") or []
+    pianificati = int(result.get("total_planned") or (len(scritti) + len(falliti)) or 0)
+    nomi_falliti = [str(f.get("filename") if isinstance(f, dict) else f) for f in falliti]
+    file_txt = ", ".join(f"`{f}`" for f in scritti[:8]) + (" e altri" if len(scritti) > 8 else "")
+    conteggio = f"{len(scritti)}/{pianificati} file" if pianificati else f"{len(scritti)} file"
+
+    if status == "awaiting_approval":
+        testo = (f"Fatto (run {run_id}): {conteggio} scritti ({file_txt}), test verdi. "
+                 "Le modifiche sono pronte ma non ancora nel progetto: aprile con Diff "
+                 "e, se vanno bene, Applica.")
+    elif status in {"verified_success", "success"}:
+        testo = (f"Fatto (run {run_id}): {conteggio} scritti" + (f" ({file_txt})" if scritti else "")
+                 + ", test verdi e modifiche applicate al progetto.")
+    elif status == "syntax_only":
+        testo = (f"Fatto a meta' (run {run_id}): {conteggio} scritti ({file_txt}), ma senza "
+                 "test eseguibili: e' verificata solo la sintassi.")
+    else:
+        motivo = ""
+        if falliti:
+            primo = falliti[0] if isinstance(falliti[0], dict) else {}
+            motivo = f" Non riusciti: {', '.join(f'`{n}`' for n in nomi_falliti[:5])}"
+            if primo.get("error"):
+                motivo += f" — {str(primo['error'])[:200]}"
+            motivo += "."
+        elif result.get("error"):
+            motivo = f" Errore: {str(result['error'])[:200]}."
+        testo = (f"Non riuscito (run {run_id}, {status}): {conteggio} scritti.{motivo} "
+                 "I dettagli sono nel Log del run.")
+    return {
+        "chat_message": testo,
+        "mode": mode,
+        "files_written": scritti,
+        "files_failed": nomi_falliti,
+        "total_planned": pianificati,
+        "quality_gate": (result.get("quality_gate") or {}).get("status"),
+    }
+
+
 @router.post("/api/chat/generate_patch")
 async def api_chat_generate_patch(request: Request):
     """
@@ -1534,14 +1582,31 @@ async def api_chat_generate_patch(request: Request):
                         encoding="utf-8")
 
     sse_callback = _make_run_callback(run_id, log_path)
+    from devin.ui.fast_app import _run_events  # lazy: patchabile su fast_app
+    _run_events.start(run_id, mode=f"chat_{mode}", task="Costruisci da questa chat",
+                      project_path=execution_path)
+    chat_id = data.get("chat_id") or None
 
     def _bg():
         from devin.ui.fast_app import (  # lazy: risolti a thread-run time
             CONFIG_PATH,
             Orchestrator,
+            _finish_run_events,
+            _scaffold_event_status,
             active_runs,
             runs_lock,
         )
+
+        def _concludi(status: str, result: dict | None):
+            sintesi = esito_run_da_chat(mode, status, result or {}, run_id)
+            _finish_run_events(run_id, status, mode=f"chat_{mode}", summary=sintesi)
+            try:
+                # resta nella conversazione: la vede l'utente anche dopo un
+                # ricaricamento, e la vede DEVIN al turno dopo
+                ChatPersistence(project_path, chat_id=chat_id).append("assistant", sintesi["chat_message"])
+            except Exception as exc:
+                print(f"[generate_patch] esito non salvato in chat: {exc}")
+
         try:
             with Orchestrator(
                 config_path=CONFIG_PATH,
@@ -1562,8 +1627,10 @@ async def api_chat_generate_patch(request: Request):
                             project_path=execution_path,
                             run_id=run_id
                         )
+                        stato = _scaffold_event_status(result)
                         with open(log_path, "a", encoding="utf-8") as f:
-                            f.write(f"status: {'success' if result.get('success') else 'failed'}\n")
+                            f.write(f"\nevidence: {stato}\nstatus: {stato}\n")
+                        _concludi(stato, result)
                     else:
                         result = orch.run_from_conversation(
                             conversation_text=conversation_text,
@@ -1572,12 +1639,14 @@ async def api_chat_generate_patch(request: Request):
                         )
                         # Niente scrittura qui: run_from_conversation() scrive gia' il
                         # footer 'status: X' internamente in ogni return path.
+                        _concludi(str(result.get("status") or "failed"), result)
                 finally:
                     with runs_lock:
                         active_runs.pop(run_id, None)
         except Exception as e:
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[FATAL] {e}\nstatus: failed\n")
+            _concludi("failed", {"error": f"{type(e).__name__}: {e}"})
 
     threading.Thread(target=_bg, daemon=True).start()
     return {"run_id": run_id, "status": "started", "mode": mode}

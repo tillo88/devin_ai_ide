@@ -271,9 +271,9 @@ def _make_run_callback(run_id: str, log_path: Path):
     return _callback
 
 
-def _finish_run_events(run_id: str, status: str, mode: str = "run"):
+def _finish_run_events(run_id: str, status: str, mode: str = "run", summary: dict | None = None):
     try:
-        _run_events.finish(run_id, status=status, mode=mode)
+        _run_events.finish(run_id, status=status, mode=mode, summary=summary)
     except Exception as exc:
         print(f"[RunEvents] finish failed: {exc}")
 

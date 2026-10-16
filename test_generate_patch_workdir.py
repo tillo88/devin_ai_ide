@@ -23,10 +23,22 @@ class _Request:
         return self.payload
 
 
-def _run_generate_patch(monkeypatch, tmp_path, work_dir):
+class _FakeRunEvents:
+    def __init__(self):
+        self.started, self.finished = [], []
+
+    def start(self, run_id, **kwargs):
+        self.started.append((run_id, kwargs))
+
+    def finish(self, run_id, **kwargs):
+        self.finished.append((run_id, kwargs))
+
+
+def _run_generate_patch(monkeypatch, tmp_path, work_dir, empty=False, scaffold_result=None):
     project = tmp_path / "devin-project"
     project.mkdir()
-    (project / "placeholder.py").write_text("VALUE = 1\n", encoding="utf-8")
+    if not empty:
+        (project / "placeholder.py").write_text("VALUE = 1\n", encoding="utf-8")
     ChatPersistence(str(project)).save([
         {"role": "user", "content": "Correggi il progetto"},
     ])
@@ -51,6 +63,10 @@ def _run_generate_patch(monkeypatch, tmp_path, work_dir):
             captured["run_path"] = project_path
             captured["conversation"] = conversation_text
             return {"success": True, "status": "success"}
+
+        def run_scaffold(self, task, project_path, run_id):
+            captured["scaffold_path"] = project_path
+            return scaffold_result
 
     class _ProjectSpace:
         def __init__(self, path):
@@ -77,6 +93,10 @@ def _run_generate_patch(monkeypatch, tmp_path, work_dir):
     monkeypatch.setattr(fast_app, "_validated_project_path", _validate)
     monkeypatch.setattr(fast_app, "_make_run_callback", lambda *a, **k: None)
     monkeypatch.setattr(chat_router.threading, "Thread", _InlineThread)
+    events = _FakeRunEvents()
+    captured["events"] = events
+    monkeypatch.setattr(fast_app, "_run_events", events)
+    captured["log_dir"] = log_dir
 
     response = asyncio.run(chat_router.api_chat_generate_patch(
         _Request({"project_path": str(project)})))
@@ -104,3 +124,42 @@ def test_generate_patch_preserves_project_path_without_work_dir(monkeypatch, tmp
     assert response["mode"] == "patch"
     assert captured["init_path"] == str(project.resolve())
     assert captured["run_path"] == str(project.resolve())
+
+
+def test_build_from_chat_scaffold_awaiting_approval_is_not_failed_and_tells_the_chat(monkeypatch, tmp_path):
+    result = {"success": False, "verified": True, "status": "awaiting_approval",
+              "files_written": ["scadenze.py", "test_scadenze.py", "README.md"],
+              "files_failed": [], "total_planned": 3,
+              "quality_gate": {"status": "verified_success"}}
+    response, captured, project = _run_generate_patch(
+        monkeypatch, tmp_path, None, empty=True, scaffold_result=result)
+    assert response["mode"] == "scaffold"
+    log = (captured["log_dir"] / f"{response['run_id']}.log").read_text(encoding="utf-8")
+    assert "status: awaiting_approval" in log
+    assert "status: failed" not in log
+    events = captured["events"]
+    assert events.started and events.started[0][1]["mode"] == "chat_scaffold"
+    run_id, finish = events.finished[0]
+    assert finish["status"] == "awaiting_approval"
+    message = finish["summary"]["chat_message"]
+    assert "3/3 file" in message and "`test_scadenze.py`" in message and "Applica" in message
+    history = ChatPersistence(str(project)).load()
+    assert history[-1]["role"] == "assistant" and history[-1]["content"] == message
+
+
+def test_build_from_chat_failure_names_the_file_and_the_reason(monkeypatch, tmp_path):
+    result = {"success": False, "status": "failed", "files_written": ["a.py"],
+              "files_failed": [{"filename": "test_a.py", "error": "tetto di 12288 token esaurito"}],
+              "total_planned": 2, "quality_gate": {"status": "syntax_only"}}
+    response, captured, _ = _run_generate_patch(
+        monkeypatch, tmp_path, None, empty=True, scaffold_result=result)
+    _, finish = captured["events"].finished[0]
+    assert finish["status"] == "failed"
+    message = finish["summary"]["chat_message"]
+    assert "Non riuscito" in message and "`test_a.py`" in message and "tetto di 12288" in message
+
+
+def test_build_from_chat_patch_mode_also_finishes_the_run(monkeypatch, tmp_path):
+    response, captured, _ = _run_generate_patch(monkeypatch, tmp_path, None)
+    _, finish = captured["events"].finished[0]
+    assert finish["status"] == "success" and finish["mode"] == "chat_patch"
