@@ -1258,6 +1258,8 @@ async def api_chat(req: ChatRequest):
             # richiesta (elenco progetti, stato, Stop) aspettava o scadeva. Il
             # 16/10 la barra laterale mostrava "Nessun progetto" durante le
             # risposte. Ogni pezzo ora si chiede in un thread.
+            uso_prompt: dict = {}
+
             async def _evento_chat(evento):
                 """Un evento dello stream del modello -> eventi SSE per l'app."""
                 nonlocal reasoning_count, first_answer_at, token_count, full_response
@@ -1271,6 +1273,11 @@ async def api_chat(req: ChatRequest):
                 if tipo == "avviso":
                     yield f"event: warning\ndata: {json.dumps({'message': testo.strip()})}\n\n"
                     await asyncio.sleep(0)
+                    return
+                if tipo == "uso":
+                    # quanti token ha letto davvero il modello (strumenti compresi)
+                    uso_prompt.update(prompt_tokens=evento.get("prompt_tokens"),
+                                      cache_tokens=evento.get("cache_tokens"))
                     return
                 if tipo == "lettura":
                     # avanzamento della lettura del contesto: non e' risposta
@@ -1318,6 +1325,9 @@ async def api_chat(req: ChatRequest):
             strumenti_web = [] if req.use_web_search else [STRUMENTO_CERCA_WEB]
             strumenti = (strumenti_web + strumenti_mcp) or None
             conversazione = list(messaggi)
+            uso_prompt.update(tools_offered=len(strumenti or []))
+            print(f"[Chat] strumenti offerti al modello: {len(strumenti or [])} "
+                  f"({', '.join(t['function']['name'] for t in (strumenti or []))[:300]})")
             ricerche = 0
             giri_strumenti = 0
             for _giro in range(16):
@@ -1422,7 +1432,7 @@ async def api_chat(req: ChatRequest):
             scrittura = max(0.0, elapsed - pensiero)
             tps = round(token_count / scrittura, 1) if scrittura > 0 else 0
             yield (f"event: done\ndata: "
-                   f"{json.dumps({'tokens': token_count, 'tps': tps, 'elapsed': round(elapsed, 1), 'reasoning_tokens': reasoning_count, 'reasoning_seconds': pensiero})}\n\n")
+                   f"{json.dumps({'tokens': token_count, 'tps': tps, 'elapsed': round(elapsed, 1), 'reasoning_tokens': reasoning_count, 'reasoning_seconds': pensiero, **uso_prompt})}\n\n")
 
             if chat_persistence and full_response.strip():
                 chat_persistence.append("assistant", full_response)

@@ -601,3 +601,14 @@ def test_l_agente_recupera_le_chiamate_scritte_come_testo():
         {"content": MARKUP_17_10, "tool_calls": [], "reasoning": "", "finish_reason": "stop"}, [CERCA])
     assert risposta["content"] == "Giusto, cerco adesso."
     assert len(risposta["tool_calls"]) == 2
+
+
+def test_lo_stream_dice_quanto_era_lungo_il_prompt(client):
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+             "data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": "stop"}],
+                                    "timings": {"prompt_n": 300, "cache_n": 4000}}),
+             "data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[CERCA]))
+    uso = [e for e in eventi if e["tipo"] == "uso"][0]
+    assert uso["prompt_tokens"] == 4300 and uso["cache_tokens"] == 4000
