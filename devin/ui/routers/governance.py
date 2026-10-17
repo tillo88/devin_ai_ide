@@ -18,6 +18,15 @@ from devin.ui.routers.explorer import (
 router = APIRouter()
 
 
+def _stato_risolutore():
+    """L'ambiente strumenti (OR-Tools) e' installato? Senza, lo strumento non viene offerto."""
+    from devin.core import risolutore
+
+    pronto, motivo = risolutore.disponibile()
+    return {"status": "enabled" if pronto else "unavailable", "detail": motivo,
+            "python": str(risolutore.interprete()), "tool": "risolvi_vincoli"}
+
+
 def _stato_mcp():
     """I server MCP del registro (config/mcp_servers.json), senza connettersi.
 
@@ -58,6 +67,7 @@ async def api_tools_status():
             "model_execution": False,
         },
         "external_mcp": _stato_mcp(),
+        "constraint_solver": _stato_risolutore(),
         "tools": [
             {
                 "tool_id": "project_files",
