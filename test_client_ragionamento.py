@@ -550,13 +550,22 @@ def test_le_chiamate_scritte_come_testo_diventano_vere_e_non_si_vedono(client):
         {"domanda": "schema turni 4 squadre ciclo continuo"}, {"domanda": "turnazione 1/21"}]
 
 
-def test_markup_di_uno_strumento_non_offerto_resta_testo(client):
-    altro = "Ecco: <tool_call>\n<function=rm_rf>\n<parameter=x>\n1\n</parameter>\n</function>\n</tool_call>"
+def test_nome_inesistente_diventa_chiamata_da_rifiutare_non_markup(client):
+    # 17/10: "<function=github__get_user>\n{}\n</parameter>..." restava in chat
+    altro = "<tool_call>\n<function=github__get_user>\n{}\n</parameter>\n</function>\n</tool_call>"
     righe = ["data: " + json.dumps({"choices": [{"delta": {"content": altro}}]}), "data: [DONE]"]
     client._stato["risposta"] = _FintaRisposta(righe)
     eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[CERCA]))
-    assert "".join(e["testo"] for e in eventi if e["tipo"] == "risposta") == altro
-    assert not [e for e in eventi if e["tipo"] == "chiamate"]
+    assert "".join(e["testo"] for e in eventi if e["tipo"] == "risposta") == ""
+    chiamata = [e for e in eventi if e["tipo"] == "chiamate"][0]["chiamate"][0]
+    assert chiamata["function"] == {"name": "github__get_user", "arguments": "{}"}
+
+
+def test_nome_senza_prefisso_si_risolve():
+    from devin.ai.tool_text import estrai_chiamate
+    get_me = {"type": "function", "function": {"name": "github__get_me", "parameters": {}}}
+    _, chiamate = estrai_chiamate("<tool_call><function=get_me></function></tool_call>", [CERCA, get_me])
+    assert chiamate[0]["function"]["name"] == "github__get_me"
 
 
 def test_un_minore_nel_testo_normale_non_trattiene_nulla(client):
