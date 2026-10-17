@@ -1201,7 +1201,7 @@ async def api_chat(req: ChatRequest):
 
         # 'model' e' l'alias mostrato in chat; 'model_id' resta per la
         # diagnostica tecnica, non per la superficie primaria.
-        yield f"event: meta\ndata: {json.dumps({'mode': selected_mode, 'model': model_label, 'model_id': model_name, 'detail': model_detail})}\n\n"
+        yield f"event: meta\ndata: {json.dumps({'mode': selected_mode, 'model': model_label, 'model_id': model_name, 'detail': model_detail, 'user_index': len(persisted_history)})}\n\n"
 
         try:
             # stream_eventi() distingue i canali. La risposta continua ad
@@ -1322,6 +1322,9 @@ async def api_chat(req: ChatRequest):
 
             if chat_persistence and full_response.strip():
                 chat_persistence.append("assistant", full_response)
+                # l'indice nello storico: l'app mette subito la × per cancellarlo
+                yield (f"event: salvato\ndata: "
+                       f"{json.dumps({'assistant_index': len(chat_persistence.load()) - 1})}\n\n")
                 if req.project_path:
                     chat_eval = detect_chat_only_output(message, full_response)
                     if chat_eval:

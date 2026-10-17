@@ -2480,6 +2480,31 @@ async function reviewRunChanges(projectPath, runId) {
   }
 }
 
+// La × per cancellare un messaggio: serve il suo indice nello storico. I
+// messaggi caricati lo hanno subito; quelli appena scritti lo ricevono dal
+// backend (meta -> user_index, salvato -> assistant_index). Prima restavano
+// senza × finche' non si ricaricava la chat (17/10).
+function aggiungiCancella(article, index) {
+  if (!article || !Number.isInteger(index) || article.querySelector("[data-message-index]")) return;
+  const top = article.querySelector(".chat-message-topline");
+  if (!top) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "message-delete-button";
+  btn.dataset.messageIndex = String(index);
+  btn.title = "Cancella questo messaggio";
+  btn.textContent = "×";
+  btn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    deleteChatMessage(Number(btn.dataset.messageIndex)).catch((err) => {
+      console.error(err);
+      appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
+    });
+  });
+  top.appendChild(btn);
+}
+
 function appendChatMessage(role, content = "", options = {}) {
   const thread = $("chat-thread");
   // La hero di benvenuto vive solo finche' la chat e' vuota: al primo
@@ -2488,13 +2513,9 @@ function appendChatMessage(role, content = "", options = {}) {
   thread.querySelector(".chat-hero")?.remove();
   const article = document.createElement("article");
   article.className = `chat-message ${role}`;
-  const deleteButton = Number.isInteger(options.historyIndex)
-    ? `<button class="message-delete-button" data-message-index="${options.historyIndex}" title="Cancella questo messaggio">×</button>`
-    : "";
   article.innerHTML = `
     <div class="chat-message-topline">
       <span class="chat-role">${role === "user" ? "TU" : "DEVIN"}</span>
-      ${deleteButton}
     </div>
     <div class="chat-message-body"></div>
   `;
@@ -2503,17 +2524,7 @@ function appendChatMessage(role, content = "", options = {}) {
   // Quello che scrive l'utente resta testo com'e'.
   if (role === "assistant" && content) renderMarkdownBody(body, content);
   else body.textContent = content;
-  const btn = article.querySelector("[data-message-index]");
-  if (btn) {
-    btn.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      deleteChatMessage(Number(btn.dataset.messageIndex)).catch((err) => {
-        console.error(err);
-        appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
-      });
-    });
-  }
+  aggiungiCancella(article, options.historyIndex);
   thread.appendChild(article);
   thread.scrollTop = thread.scrollHeight;
   return body;
@@ -2923,7 +2934,13 @@ function applyChatEvent(event, assistantNode) {
     return;
   }
 
+  if (event.type === "salvato") {
+    aggiungiCancella(assistantNode.parentElement, payload.assistant_index);
+    return;
+  }
+
   if (event.type === "meta") {
+    aggiungiCancella(state.chatUserNode?.parentElement, payload.user_index);
     // Alias nella superficie primaria; il model id completo (sul rig e' il path
     // assoluto del GGUF) resta nel tooltip, per la diagnostica.
     const article = assistantNode.parentElement;
@@ -3276,7 +3293,7 @@ async function runLocalWorkspaceAgent(task, workspace, assistantNode) {
 }
 
 async function sendChatMessage(message) {
-  appendChatMessage("user", message);
+  state.chatUserNode = appendChatMessage("user", message);
   const assistantNode = appendChatMessage("assistant", "");
   state.chatAssistantNode = assistantNode;
   setChatBusy(true);
