@@ -24,10 +24,15 @@ def _stato_mcp():
     "pronto" vuol dire acceso e con i suoi segreti presenti; la connessione vera
     avviene all'inizio di un run o di un messaggio, e un errore li' si vede in chat.
     """
-    from devin.ai.mcp_client import ErroreMCP, stato_registro
+    from devin.ai.mcp_client import ErroreMCP, prova_connessioni, stato_registro
 
     try:
         servers = stato_registro()
+        if any(server["status"] == "pronto" for server in servers):
+            esiti = prova_connessioni()
+            for server in servers:
+                if server["name"] in esiti:
+                    server["connection"] = esiti[server["name"]]
     except ErroreMCP as exc:
         return {"status": "invalid", "error": str(exc), "registered_count": 0,
                 "servers": [], "invocation_enabled": False}

@@ -1279,6 +1279,14 @@ async def api_chat(req: ChatRequest):
             for avviso in avvisi_mcp:   # un server acceso che non risponde si dice, non si salta in silenzio
                 yield f"event: warning\ndata: {json.dumps({'message': avviso})}\n\n"
             strumenti_mcp = list(mcp.strumenti) if mcp else []
+            if mcp and messaggi and messaggi[0].get("role") == "system":
+                # senza dirglielo il modello rispondeva "non posso interrogare GitHub"
+                collegati = ", ".join(f"{nome} ({esito})" for nome, esito in mcp.esiti.items()
+                                      if esito.startswith("connesso:"))
+                messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + (
+                    f"\n\nSERVIZI COLLEGATI: {collegati}. Hai i loro strumenti (nome servizio__strumento): "
+                    "usali quando la domanda riguarda quel servizio (es. per GitHub: chi e' l'utente, "
+                    "repository, file, issue, pull request) invece di dire che non puoi.")}] + list(messaggi[1:])
             strumenti_web = [] if req.use_web_search else [STRUMENTO_CERCA_WEB]
             strumenti = (strumenti_web + strumenti_mcp) or None
             conversazione = list(messaggi)
