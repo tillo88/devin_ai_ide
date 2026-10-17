@@ -1007,7 +1007,7 @@ class AIClient:
         return 0
 
     def stream_eventi(self, messages, mode="reasoning", sforzo="", max_attempts=None,
-                      response_format=None, max_tokens=None, tools=None):
+                      response_format=None, max_tokens=None, tools=None, annulla=None):
         """``_stream_eventi_grezzo`` piu' il recupero delle chiamate scritte come testo.
 
         Con strumenti offerti, dal primo ``<tool_call>`` nella risposta in poi il
@@ -1020,7 +1020,7 @@ class AIClient:
             messages = con_catalogo(messages, tools)
         grezzo = self._stream_eventi_grezzo(messages, mode=mode, sforzo=sforzo, max_attempts=max_attempts,
                                             response_format=response_format, max_tokens=max_tokens,
-                                            tools=tools)
+                                            tools=tools, annulla=annulla)
         if not tools:
             yield from grezzo
             return
@@ -1066,7 +1066,7 @@ class AIClient:
         return {**evento, "chiamate": ripulita["tool_calls"]}
 
     def _stream_eventi_grezzo(self, messages, mode="reasoning", sforzo="", max_attempts=None,
-                              response_format=None, max_tokens=None, tools=None):
+                              response_format=None, max_tokens=None, tools=None, annulla=None):
         """Streaming che DISTINGUE il ragionamento dalla risposta.
 
         Produce dizionari {"tipo": ..., "testo": ...} con tipo fra
@@ -1146,6 +1146,10 @@ class AIClient:
                     r.raise_for_status()
 
                     for line in r.iter_lines():
+                        if annulla is not None and annulla.is_set():
+                            # chi aspettava la risposta se n'e' andato: chiudere la
+                            # connessione ferma anche la generazione sul server
+                            return
                         if not line:
                             continue
                         line = line.decode('utf-8')
