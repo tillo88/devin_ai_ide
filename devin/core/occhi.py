@@ -105,6 +105,9 @@ def disponibile(config: Optional[Dict[str, Any]] = None) -> tuple[bool, str]:
     browser = Path(os.path.expanduser("~/.cache/ms-playwright"))
     if not browser.is_dir() or not any(browser.glob("chromium*")):
         return False, "Chromium di Playwright non installato (~/.cache/ms-playwright)"
+    # il marcatore lo scrive l'operazione che installa l'ambiente solo se Chromium e' partito davvero
+    if not (python.parent.parent / ".occhi-ok").exists():
+        return False, "Chromium installato ma non verificato (librerie di sistema mancanti?)"
     return True, "pronto"
 
 
