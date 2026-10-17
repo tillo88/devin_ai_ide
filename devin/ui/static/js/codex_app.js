@@ -2587,6 +2587,23 @@ function renderChatHistory(history = []) {
   history.forEach((message, index) => {
     appendChatMessage(message.role === "user" ? "user" : "assistant", message.content ?? "", { historyIndex: index });
   });
+  riattaccaRispostaInCorso(thread);
+}
+
+// Cambiando pagina mentre DEVIN pensa, al ritorno la chat si ridisegna dallo
+// storico e la risposta in corso spariva (17/10), anche se lo stream andava
+// avanti. Il nodo vivo esiste ancora e continua a ricevere i token: lo si
+// rimette in fondo se la chat e' la stessa.
+function riattaccaRispostaInCorso(thread) {
+  const nodo = state.chatAssistantNode;
+  if (!thread || !nodo || !state.chatAbort) return;
+  if (state.chatStreamKey !== chiaveChatCorrente()) return;
+  const articolo = nodo.parentElement;
+  if (articolo && articolo.parentElement !== thread) thread.appendChild(articolo);
+}
+
+function chiaveChatCorrente() {
+  return `${state.selectedProjectPath || ""}|${state.selectedChatId || ""}`;
 }
 
 async function deleteChatMessage(index) {
@@ -3336,6 +3353,7 @@ async function sendChatMessage(message) {
   state.chatUserNode = appendChatMessage("user", message);
   const assistantNode = appendChatMessage("assistant", "");
   state.chatAssistantNode = assistantNode;
+  state.chatStreamKey = chiaveChatCorrente();
   setChatBusy(true);
 
   state.chatAbort = new AbortController();
