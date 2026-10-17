@@ -6157,6 +6157,9 @@ body.codex-shell {
   white-space: pre;
 }
 .chat-message-body.md pre.md-code code { padding: 0; background: none; font-size: 12.5px; line-height: 1.5; }
+/* formule: LaTeX reso come testo con i simboli veri (chat_markdown.js) */
+.chat-message-body.md .md-math { font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; font-size: 1.04em; white-space: nowrap; }
+.chat-message-body.md .md-math-block { font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; font-size: 1.08em; text-align: center; margin: 8px 0; white-space: pre-wrap; }
 .chat-message-body.md .md-table-wrap { overflow-x: auto; margin: 6px 0 10px; }
 .chat-message-body.md table { border-collapse: collapse; font-size: 0.95em; }
 .chat-message-body.md th, .chat-message-body.md td {
