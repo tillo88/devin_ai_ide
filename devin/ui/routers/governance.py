@@ -27,6 +27,14 @@ def _stato_risolutore():
             "python": str(risolutore.interprete()), "tool": "risolvi_vincoli"}
 
 
+def _stato_occhi():
+    """Il browser (Chromium di Playwright) per guardare le pagine c'e'?"""
+    from devin.core import occhi
+
+    pronto, motivo = occhi.disponibile()
+    return {"status": "enabled" if pronto else "unavailable", "detail": motivo, "tool": "guarda_pagina"}
+
+
 def _stato_mcp():
     """I server MCP del registro (config/mcp_servers.json), senza connettersi.
 
@@ -68,6 +76,7 @@ async def api_tools_status():
         },
         "external_mcp": _stato_mcp(),
         "constraint_solver": _stato_risolutore(),
+        "page_viewer": _stato_occhi(),
         "tools": [
             {
                 "tool_id": "project_files",
