@@ -1025,7 +1025,9 @@ async def api_chat(req: ChatRequest):
     # Nudge leggero e sempre presente, non hardcoda l'italiano: mirror della lingua utente.
     system_parts.append(
         "LINGUA: rispondi SEMPRE nella stessa lingua del messaggio dell'utente "
-        "(se ti scrive in italiano, rispondi in italiano).")
+        "(se ti scrive in italiano, rispondi in italiano). FORMULE: niente LaTeX "
+        "(\\( \\), \\frac, \\text): scrivi i calcoli in testo semplice con i simboli "
+        "÷ × ≤ ≥ ≈ √ ² (es. 20 turni ÷ 4 squadre = 5 turni ciascuna).")
 
     # Continuita': la conversazione va al modello INTERA finche' ci sta. Quando
     # quello che il turno manderebbe supera trigger_ratio del contesto, i

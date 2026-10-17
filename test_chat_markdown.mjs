@@ -130,3 +130,25 @@ test("un trattino non e' una riga orizzontale, tre si'", () => {
   assert.equal(parseMarkdown("---")[0].type, "hr");
   assert.equal(parseMarkdown("* * *")[0].type, "hr");
 });
+
+test("le formule LaTeX diventano testo con i simboli veri (copia-incolla del 17/10)", async () => {
+  const { latexToText } = await import("./devin/ui/static/js/chat_markdown.js");
+  assert.equal(latexToText("20 \\text{ turni totali} \\div 4 \\text{ squadre} = 5 \\text{ turni pro capite}"),
+    "20 turni totali ÷ 4 squadre = 5 turni pro capite");
+  assert.equal(latexToText("\\frac{a+b}{2} \\le \\sqrt{x^2 + 1}"), "(a+b)/2 ≤ √(x² + 1)");
+  assert.equal(latexToText("30^\\circ, x_{10}, 2^{n+1}"), "30°, x₁₀, 2ⁿ⁺¹");
+  assert.equal(latexToText("\\left( \\frac{7}{21} \\right) \\times 100 \\approx 33\\%"), "( 7/21 ) × 100 ≈ 33%");
+  assert.equal(latexToText("\\comandoignoto{x}"), "comandoignotox");
+});
+
+test("formula in linea e a blocco, sempre senza innerHTML", () => {
+  const root = render("ciascuna fa 5 turni (\\(20 \\div 4 = 5\\)).\n\n\\[\n\\frac{1}{2}\n\\]\n\n$$a \\times b$$");
+  const [p, blocco, blocco2] = root.childNodes;
+  const span = p.childNodes.find((c) => c.className === "md-math");
+  assert.equal(span.textContent, "20 ÷ 4 = 5");
+  assert.equal(blocco.className, "md-math-block");
+  assert.equal(blocco.textContent, "1/2");
+  assert.equal(blocco2.textContent, "a × b");
+  // un prezzo con il dollaro non e' una formula
+  assert.equal(render("costa $5 o $6").textContent, "costa $5 o $6");
+});
