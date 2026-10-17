@@ -1203,6 +1203,8 @@ async def api_chat(req: ChatRequest):
         "retrieval_ephemeral": prompt_layout["retrieval_ephemeral"],
     }
 
+    annulla = threading.Event()
+
     async def _genera_sse(model_name: str, model_detail: dict):
         token_count = 0
         # Il ragionamento si conta a parte dalla risposta. Tenerli insieme
@@ -1337,7 +1339,7 @@ async def api_chat(req: ChatRequest):
                 note: list[str] = []
                 flusso = ai.stream_eventi(conversazione, mode=selected_mode,
                                           sforzo=req.reasoning_effort or "",
-                                          tools=strumenti)
+                                          tools=strumenti, annulla=annulla)
                 async for evento in iterate_in_threadpool(flusso):
                     if evento["tipo"] == "chiamate":
                         chiamate = evento.get("chiamate") or []
@@ -1472,6 +1474,10 @@ async def api_chat(req: ChatRequest):
             async for pezzo in _genera_sse(model_name, model_detail):
                 yield pezzo
         finally:
+            # L'app se ne va (ricarica, cambio pagina, chiusura): senza questo
+            # il modello continuava a generare per minuti una risposta che
+            # nessuno legge, e la richiesta dopo restava in coda (17/10).
+            annulla.set()
             note_utente.chiudi(chiave_note)
 
     return StreamingResponse(

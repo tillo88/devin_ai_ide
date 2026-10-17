@@ -627,3 +627,17 @@ def test_il_catalogo_degli_strumenti_va_nel_prompt(client):
     doppio = con_catalogo(client._stato["corpi"][-1]["messages"], [CERCA])
     assert doppio[0]["content"].count("STRUMENTI DISPONIBILI") == 1
     assert con_catalogo([{"role": "user", "content": "x"}], [CERCA])[0]["role"] == "system"
+
+
+def test_annullato_lo_stream_si_ferma_e_chiude_la_connessione(client):
+    """17/10: ricaricando l'app, il modello continuava a generare per minuti per nessuno."""
+    import threading
+    annulla = threading.Event()
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"reasoning_content": f"p{i}"}}]}) for i in range(50)]
+    client._stato["risposta"] = _FintaRisposta(righe + ["data: [DONE]"])
+    flusso = client.stream_eventi([{"role": "user", "content": "x"}], annulla=annulla)
+    primi = [next(flusso), next(flusso)]
+    annulla.set()
+    resto = list(flusso)
+    assert [e["testo"] for e in primi] == ["p0", "p1"]
+    assert len(resto) <= 1
