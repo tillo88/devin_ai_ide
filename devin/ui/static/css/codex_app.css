@@ -6169,3 +6169,12 @@ body.codex-shell {
   vertical-align: top;
 }
 .chat-message-body.md th { background: rgba(148, 163, 184, 0.10); }
+
+/* "↓ Torna in fondo": compare quando si rilegge piu' su mentre DEVIN scrive */
+.chat-jump {
+  position: fixed; left: 50%; bottom: 170px; transform: translateX(-50%);
+  z-index: 5; padding: 6px 14px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, .35);
+  background: rgba(30, 41, 59, .92); color: #e2e8f0; font-size: 12.5px; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+}
+.chat-jump[hidden] { display: none; }
