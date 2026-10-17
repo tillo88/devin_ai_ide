@@ -66,6 +66,15 @@ def adatta_argomenti(argomenti: Dict[str, Any], schema: Dict[str, Any]) -> Dict[
     return argomenti
 
 
+def risolvi_nome(nome: str, schemi: Dict[str, Any]) -> str:
+    """Nome esatto, oppure l'unico strumento che corrisponde senza prefisso/maiuscole."""
+    if nome in schemi:
+        return nome
+    corto = nome.split("__")[-1].lower()
+    candidati = [n for n in schemi if n.lower() == nome.lower() or n.split("__")[-1].lower() == corto]
+    return candidati[0] if len(candidati) == 1 else nome
+
+
 def estrai_chiamate(testo: str, tools) -> Tuple[str, List[Dict[str, Any]]]:
     """(testo senza i blocchi riconosciuti, chiamate nel formato tool_calls dell'API)."""
     schemi = _schemi(tools)
@@ -83,6 +92,14 @@ def estrai_chiamate(testo: str, tools) -> Tuple[str, List[Dict[str, Any]]]:
             proprieta = schema.get("properties") or {}
             argomenti = {m.group(1).strip(): _valore(m.group(2).strip(), proprieta.get(m.group(1).strip()))
                          for m in _PARAMETRO_XML.finditer(funzione.group(2))}
+            if not argomenti:
+                # <function=x>{"a": 1}</function> o argomenti vuoti scritti come {}
+                corpo_json = re.sub(r"</?parameter[^>]*>", "", funzione.group(2)).strip()
+                try:
+                    dati_json = json.loads(corpo_json) if corpo_json else {}
+                    argomenti = dati_json if isinstance(dati_json, dict) else {}
+                except ValueError:
+                    argomenti = {}
         else:
             try:
                 dati = json.loads(corpo)
@@ -96,9 +113,15 @@ def estrai_chiamate(testo: str, tools) -> Tuple[str, List[Dict[str, Any]]]:
                         argomenti = json.loads(argomenti)
                     except ValueError:
                         argomenti = None
-        if nome not in schemi or not isinstance(argomenti, dict):
+        if not nome or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", nome):
             continue
-        argomenti = adatta_argomenti(argomenti, schemi[nome])
+        nome = risolvi_nome(nome, schemi)
+        if not isinstance(argomenti, dict):
+            argomenti = {}
+        # Anche un nome inesistente diventa una chiamata: chi la esegue risponde
+        # "non esiste, ecco quelli disponibili" e il modello si corregge, invece
+        # di lasciare il markup in chat (17/10: github__get_user al posto di get_me).
+        argomenti = adatta_argomenti(argomenti, schemi.get(nome, {}))
         chiamate.append({"id": f"call_testo_{len(chiamate)}", "type": "function",
                          "function": {"name": nome, "arguments": json.dumps(argomenti, ensure_ascii=False)}})
         tagli.append(blocco.span())

@@ -1284,9 +1284,10 @@ async def api_chat(req: ChatRequest):
                 collegati = ", ".join(f"{nome} ({esito})" for nome, esito in mcp.esiti.items()
                                       if esito.startswith("connesso:"))
                 messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + (
-                    f"\n\nSERVIZI COLLEGATI: {collegati}. Hai i loro strumenti (nome servizio__strumento): "
-                    "usali quando la domanda riguarda quel servizio (es. per GitHub: chi e' l'utente, "
-                    "repository, file, issue, pull request) invece di dire che non puoi.")}] + list(messaggi[1:])
+                    f"\n\nSERVIZI COLLEGATI: {collegati}. Hai i loro strumenti, con questi nomi esatti: "
+                    + ", ".join(s["function"]["name"] for s in strumenti_mcp)
+                    + ". Usali quando la domanda riguarda quel servizio invece di dire che non puoi; "
+                    "usa solo questi nomi.")}] + list(messaggi[1:])
             strumenti_web = [] if req.use_web_search else [STRUMENTO_CERCA_WEB]
             strumenti = (strumenti_web + strumenti_mcp) or None
             conversazione = list(messaggi)
@@ -1346,7 +1347,10 @@ async def api_chat(req: ChatRequest):
                     except ValueError:
                         domanda = ""
                     if funzione.get("name") != "cerca_web" or not domanda:
-                        risultato = "ERRORE: strumento o argomenti non validi (serve cerca_web con 'domanda')"
+                        offerti = [s["function"]["name"] for s in (strumenti or [])]
+                        risultato = (f"ERRORE: lo strumento {funzione.get('name')!r} non esiste o mancano gli "
+                                     f"argomenti. Strumenti disponibili: {', '.join(offerti) or 'nessuno'} "
+                                     "(cerca_web vuole 'domanda'). Riprova con un nome esatto.")
                     else:
                         yield f"event: info\ndata: {json.dumps({'message': f'🌐 Cerco sul web: {domanda[:160]}'})}\n\n"
                         try:
