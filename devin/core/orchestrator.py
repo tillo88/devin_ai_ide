@@ -730,6 +730,7 @@ class Orchestrator:
             note=self._note_del_run,
             mcp=mcp,
             risolvi=self._risolutore(),
+            guarda=self._occhi(),
             contesto_token=contesto_token,
             max_turni=int(cfg.get("agent_max_turns", 60) or 60),
         )
@@ -797,6 +798,15 @@ class Orchestrator:
             self._log(f"Risolutore di vincoli non disponibile: {motivo}", "info")
             return None
         return lambda codice, secondi=120: risolutore.esegui(codice, secondi, self.config or {})
+
+    def _occhi(self):
+        """Il browser per guardare le pagine (anche dell'app in costruzione), se installato."""
+        from devin.core import occhi
+        pronto, motivo = occhi.disponibile(self.config or {})
+        if not pronto:
+            self._log(f"Browser per guardare le pagine non disponibile: {motivo}", "info")
+            return None
+        return lambda url, **kw: occhi.guarda(url, config=self.config or {}, consenti_locale=True, **kw)
 
     def _note_del_run(self) -> List[str]:
         """Note che l'utente ha scritto per questo run mentre l'agente lavora."""

@@ -111,6 +111,7 @@ class AgenteStrumenti:
                  note: Optional[Callable[[], List[str]]] = None,
                  mcp=None,
                  risolvi: Optional[Callable[[str, int], str]] = None,
+                 guarda: Optional[Callable[..., str]] = None,
                  contesto_token: int = 131_072, max_turni: int = MAX_TURNI,
                  max_tokens_turno: int = MAX_TOKENS_TURNO, sforzo: str = ""):
         self.ai = ai
@@ -124,6 +125,7 @@ class AgenteStrumenti:
         # Registro MCP gia' connesso (gestisce/chiama/strumenti): strumenti esterni, es. GitHub.
         self._mcp = mcp
         self._risolvi = risolvi
+        self._guarda = guarda
         self.strumenti: List[Dict[str, Any]] = STRUMENTI + list(getattr(mcp, "strumenti", None) or [])
         self.contesto_token = int(contesto_token)
         self.max_turni = int(max_turni)
@@ -134,6 +136,11 @@ class AgenteStrumenti:
             from devin.core.risolutore import NOTA_PROMPT, STRUMENTO
             self.strumenti.append(STRUMENTO)
             self.messaggi[0]["content"] += "\n\n" + NOTA_PROMPT
+        if guarda is not None:
+            from devin.core.occhi import STRUMENTO_AGENTE
+            self.strumenti.append(STRUMENTO_AGENTE)
+            self.messaggi[0]["content"] += ("\n\nAPP WEB: per un'app con pagine usa guarda_pagina (con 'avvia' "
+                                            "per il server) e controlla testo ed errori della console prima di finire.")
         self.ultima_verifica: Optional[Dict[str, Any]] = None
 
     # --- percorsi -----------------------------------------------------------------
@@ -284,6 +291,10 @@ class AgenteStrumenti:
             if not self._soluzioni:
                 return "memoria non disponibile"
             return self._soluzioni(str(args["errore"])) or "nessuna soluzione verificata per un errore simile"
+        if nome == "guarda_pagina" and self._guarda is not None:
+            return self._guarda(str(args["url"]), avvia=args.get("avvia"), cartella=self.radice,
+                                aspetta_secondi=args.get("aspetta_secondi") or 1,
+                                cartella_screenshot=self.radice / ".casa" / "screenshot")
         if nome == "risolvi_vincoli" and self._risolvi is not None:
             return self._risolvi(str(args["codice"]), int(args.get("secondi") or 120))
         if self._mcp is not None and self._mcp.gestisce(nome):
@@ -412,4 +423,6 @@ class AgenteStrumenti:
             return str(args.get("domanda", ""))[:120]
         if nome == "lista_file":
             return str(args.get("cartella") or ".")
+        if nome == "guarda_pagina":
+            return str(args.get("url", ""))[:160]
         return ""

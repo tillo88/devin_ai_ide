@@ -1325,6 +1325,11 @@ async def api_chat(req: ChatRequest):
                 if messaggi and messaggi[0].get("role") == "system":
                     messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + "\n\n"
                                  + risolutore.NOTA_PROMPT}] + list(messaggi[1:])
+            from devin.core import occhi
+            occhi_pronti, motivo_occhi = occhi.disponibile(ai.config)
+            print(f"[Chat] browser per guardare le pagine: {motivo_occhi}")
+            if occhi_pronti:
+                strumenti_mcp = strumenti_mcp + [occhi.STRUMENTO]
             strumenti_web = [] if req.use_web_search else [STRUMENTO_CERCA_WEB]
             strumenti = (strumenti_web + strumenti_mcp) or None
             conversazione = list(messaggi)
@@ -1368,6 +1373,19 @@ async def api_chat(req: ChatRequest):
                 conversazione.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
                 for chiamata in chiamate:
                     funzione = chiamata.get("function") or {}
+                    if funzione.get("name") == "guarda_pagina" and occhi_pronti:
+                        try:
+                            argomenti = json.loads(funzione.get("arguments") or "{}")
+                            indirizzo = str(argomenti.get("url") or "")
+                            yield f"event: info\ndata: {json.dumps({'message': f'👁 Guardo la pagina: {indirizzo[:160]}'})}\n\n"
+                            risultato = await run_in_threadpool(
+                                lambda: occhi.guarda(indirizzo, config=ai.config,
+                                                     aspetta_secondi=argomenti.get("aspetta_secondi") or 1))
+                        except (ValueError, TypeError) as exc:
+                            risultato = f"ERRORE: argomenti non validi ({exc})"
+                        conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
+                                              "content": risultato})
+                        continue
                     if funzione.get("name") == "risolvi_vincoli" and risolutore_pronto:
                         yield f"event: info\ndata: {json.dumps({'message': '🧮 Risolvo con il solver di vincoli'})}\n\n"
                         try:
