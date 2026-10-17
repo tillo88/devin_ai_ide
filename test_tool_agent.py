@@ -186,3 +186,32 @@ def test_lo_scaffold_con_l_agente_ripassa_dal_gate_impara_e_applica(tmp_path):
     assert orch.ultimo_riassunto_agente == "Somma corretta, test verdi."
     memoria = (tmp_path / "mem.jsonl").read_text()
     assert "SOLUZIONE VERIFICATA" in memoria and "+    return a + b" in memoria
+
+
+def test_se_l_agente_risponde_a_parole_senza_scrivere_si_insiste(tmp_path):
+    """17/10: lista_file, poi una risposta a parole: il run finiva con 0/0 file scritti."""
+    from test_orchestrator_wholefile_scaffold import _make_orchestrator, _make_project
+
+    project = _make_project(str(tmp_path))
+    orch, lp, ap = _make_orchestrator(project, lambda messages, **kw: "OK")
+    turni = [
+        [chiamata("lista_file")],
+        "Ecco come lo farei: ... vuoi che proceda?",
+        [chiamata("scrivi_file", percorso="calc.py", contenuto=CALC_ROTTO.replace("a - b", "a + b")),
+         chiamata("scrivi_file", percorso="test_calc.py", contenuto=TEST_CALC)],
+        [chiamata("fine", riassunto="Fatto.")],
+    ]
+    ai = AIFinta(turni)
+    try:
+        orch.ai_client.chiama_con_strumenti = ai.chiama_con_strumenti
+        orch.agent_mode = True
+        orch.change_application_mode = "review"
+        orch.auto_apply_verified = False
+        result = orch.run_scaffold("Calcolatrice con somma", project_path=str(project), run_id="run_parole")
+    finally:
+        lp.stop()
+        ap.stop()
+    spinta = [m for m in ai.visti[2] if m["role"] == "user"][-1]["content"]
+    # nella sandbox di prova ci sono gia' file del progetto: scatta la spinta "scrivi i test"
+    assert spinta.startswith(("Non hai scritto nessun file", "La verifica non ha trovato test"))
+    assert result["verified"] is True and result["status"] == "awaiting_approval", result

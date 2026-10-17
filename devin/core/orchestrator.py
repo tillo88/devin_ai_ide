@@ -729,6 +729,7 @@ class Orchestrator:
             soluzioni=lambda errore: self._soluzioni_passate(errore),
             note=self._note_del_run,
             mcp=mcp,
+            risolvi=self._risolutore(),
             contesto_token=contesto_token,
             max_turni=int(cfg.get("agent_max_turns", 60) or 60),
         )
@@ -749,7 +750,27 @@ class Orchestrator:
                 if esito.errore:
                     quality.setdefault("errors", []).append(f"agente: {esito.errore}")
                 break
+            if not scritti():
+                # 17/10: l'agente ha guardato la cartella e ha risposto a parole,
+                # senza scrivere nulla: il run finiva "0/0 file scritti". Finche'
+                # ci sono giri, glielo si dice e si continua.
+                quality = {"status": "verified_failure",
+                           "errors": ["nessun file scritto: il compito non e' stato eseguito"]}
+                if giro < giri:
+                    self._log(f"Giro {giro}: l'agente non ha scritto nessun file, gli chiedo di farlo", "warning")
+                    messaggio = ("Non hai scritto nessun file. Il compito va ESEGUITO con gli strumenti, non "
+                                 "descritto: crea i file del programma e i test con scrivi_file, provali con "
+                                 "esegui, poi chiama verifica e infine fine. Non fare domande: decidi tu i "
+                                 "dettagli mancanti in modo ragionevole e dichiarali nel riassunto.")
+                    continue
+                break
             quality = gate()
+            if quality.get("status") == "syntax_only" and giro < giri:
+                # senza test eseguibili "verificato" non vuol dire niente: un altro giro per scriverli
+                self._log(f"Giro {giro}: nessun test eseguibile, chiedo all'agente di scriverli", "warning")
+                messaggio = ("La verifica non ha trovato test eseguibili. Scrivi test pytest (test_*.py) che "
+                             "provino il comportamento richiesto, eseguili, poi richiama verifica e fine.")
+                continue
             if quality.get("status") != "verified_failure":
                 if prima_rosso is not None and quality.get("status") == "verified_success":
                     correzione = diff_correzione(prima_rosso, agente.file_del_progetto())
@@ -767,6 +788,15 @@ class Orchestrator:
         if esito.motivo == "errore":
             failed.append({"filename": "<agente>", "error": esito.errore, "critic_feedback": ""})
         return written, failed, quality, riassunto
+
+    def _risolutore(self):
+        """Il risolutore di vincoli per l'agente, se l'ambiente strumenti e' installato."""
+        from devin.core import risolutore
+        pronto, motivo = risolutore.disponibile(self.config or {})
+        if not pronto:
+            self._log(f"Risolutore di vincoli non disponibile: {motivo}", "info")
+            return None
+        return lambda codice, secondi=120: risolutore.esegui(codice, secondi, self.config or {})
 
     def _note_del_run(self) -> List[str]:
         """Note che l'utente ha scritto per questo run mentre l'agente lavora."""

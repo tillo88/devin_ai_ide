@@ -1307,6 +1307,14 @@ async def api_chat(req: ChatRequest):
                     + ", ".join(s["function"]["name"] for s in strumenti_mcp)
                     + ". Usali quando la domanda riguarda quel servizio invece di dire che non puoi; "
                     "usa solo questi nomi.")}] + list(messaggi[1:])
+            # Risolutore di vincoli (turni, orari, incastri): se l'ambiente strumenti c'e'.
+            from devin.core import risolutore
+            risolutore_pronto, _ = risolutore.disponibile(ai.config)
+            if risolutore_pronto:
+                strumenti_mcp = strumenti_mcp + [risolutore.STRUMENTO]
+                if messaggi and messaggi[0].get("role") == "system":
+                    messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + "\n\n"
+                                 + risolutore.NOTA_PROMPT}] + list(messaggi[1:])
             strumenti_web = [] if req.use_web_search else [STRUMENTO_CERCA_WEB]
             strumenti = (strumenti_web + strumenti_mcp) or None
             conversazione = list(messaggi)
@@ -1347,6 +1355,18 @@ async def api_chat(req: ChatRequest):
                 conversazione.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
                 for chiamata in chiamate:
                     funzione = chiamata.get("function") or {}
+                    if funzione.get("name") == "risolvi_vincoli" and risolutore_pronto:
+                        yield f"event: info\ndata: {json.dumps({'message': '🧮 Risolvo con il solver di vincoli'})}\n\n"
+                        try:
+                            argomenti = json.loads(funzione.get("arguments") or "{}")
+                            risultato = await run_in_threadpool(
+                                risolutore.esegui, str(argomenti.get("codice") or ""),
+                                int(argomenti.get("secondi") or 120), ai.config)
+                        except (ValueError, TypeError) as exc:
+                            risultato = f"ERRORE: argomenti non validi ({exc})"
+                        conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
+                                              "content": risultato})
+                        continue
                     if mcp and mcp.gestisce(funzione.get("name", "")):
                         server, nome_mcp = mcp.mappa[funzione["name"]]
                         yield f"event: info\ndata: {json.dumps({'message': f'🔌 {server}: {nome_mcp}'})}\n\n"
