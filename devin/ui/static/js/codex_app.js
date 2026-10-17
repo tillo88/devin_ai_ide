@@ -1546,9 +1546,10 @@ function showRunStatus(runId, status, { updateBadge = true, completed = false } 
 // solo se quella chat e' aperta, e una volta sola anche se l'evento torna.
 function esitoInChat(event) {
   const partenza = state.chatBuildRuns?.[event.run_id];
-  const testo = event.data?.summary?.chat_message;
-  if (!partenza || !testo) return;
+  if (!partenza) return;
   delete state.chatBuildRuns[event.run_id];
+  const testo = event.data?.summary?.chat_message;
+  if (!testo) return;
   if (partenza.project !== state.selectedProjectPath || partenza.chat !== (state.selectedChatId || null)) return;
   appendChatMessage("assistant", testo);
 }
@@ -2609,9 +2610,17 @@ async function loadChatHistory() {
 }
 
 function setChatBusy(isBusy) {
-  $("chat-send").disabled = isBusy;
-  $("chat-input").disabled = isBusy;
-  setText("chat-send", isBusy ? "..." : "Invia");
+  // Mentre DEVIN risponde si puo' scrivere lo stesso: quello che scrivi
+  // diventa una nota che lo interrompe e lo fa ripartire tenendone conto.
+  $("chat-send").disabled = false;
+  $("chat-input").disabled = false;
+  setText("chat-send", isBusy ? "Nota" : "Invia");
+  const input = $("chat-input");
+  if (input) {
+    input.placeholder = isBusy
+      ? "Scrivi a DEVIN mentre lavora: correggi la rotta o aggiungi informazioni…"
+      : "Chiedi a DEVIN...";
+  }
   const stop = $("chat-stop");
   if (stop) {
     stop.hidden = !isBusy;
@@ -2922,6 +2931,13 @@ function applyChatEvent(event, assistantNode) {
     return;
   }
 
+  if (event.type === "nota") {
+    // il backend ha interrotto e riparte con la nota: lo si dice in una riga
+    assistantNode._raw = (assistantNode._raw || "") + "_DEVIN ha letto la nota e riparte tenendone conto._\n\n";
+    renderAssistantStream(assistantNode, assistantNode._raw);
+    return;
+  }
+
   if (event.type === "info" || event.type === "warning") {
     // un'informazione (es. "🌐 Cerco sul web: ...") e' una riga in corsivo,
     // non un pezzo della risposta con l'etichetta tecnica davanti
@@ -3222,6 +3238,7 @@ async function runLocalWorkspaceAgent(task, workspace, assistantNode) {
 async function sendChatMessage(message) {
   appendChatMessage("user", message);
   const assistantNode = appendChatMessage("assistant", "");
+  state.chatAssistantNode = assistantNode;
   setChatBusy(true);
 
   state.chatAbort = new AbortController();
@@ -3316,6 +3333,7 @@ async function sendChatMessage(message) {
     if (err?.name !== "AbortError") assistantNode.textContent += `\n[error] ${errorMessage(err, "Stream interrotto")}`;
   } finally {
     state.chatAbort = null;
+    state.chatAssistantNode = null;
     if ($("chat-file")) $("chat-file").value = "";
     setText("chat-file-label", "no files");
     const labelNode = $("chat-file-label");
@@ -3578,12 +3596,54 @@ function setupCommandPalette() {
   });
 }
 
+// Il run «Costruisci da questa chat» ancora al lavoro per la chat aperta, se c'e'.
+function runAttivoDellaChat() {
+  const runs = state.chatBuildRuns || {};
+  return Object.keys(runs).find((id) => runs[id].project === state.selectedProjectPath
+    && runs[id].chat === (state.selectedChatId || null)) || null;
+}
+
+async function inviaNota(testo) {
+  const runId = state.chatAbort ? null : runAttivoDellaChat();
+  const url = runId ? `/api/run/${encodeURIComponent(runId)}/nota` : "/api/chat/nota";
+  const esito = await postJson(url, {
+    testo,
+    project_path: state.selectedProjectPath || null,
+    chat_id: state.selectedChatId || null,
+  });
+  if (esito?.error) {
+    if (runId) {
+      // il run e' gia' finito: non c'e' piu' nessuno a leggere la nota,
+      // il testo diventa un messaggio normale
+      delete state.chatBuildRuns[runId];
+      return "run_finito";
+    }
+    appendChatMessage("assistant", `Nota non consegnata: ${esito.error}`);
+    return "errore";
+  }
+  if (runId) {
+    appendChatMessage("user", `📝 ${testo}`);
+  } else if (state.chatAssistantNode) {
+    const nodo = state.chatAssistantNode;
+    nodo._raw = (nodo._raw || "") + `\n\n> 📝 **Tu:** ${testo}\n\n`;
+    renderAssistantStream(nodo, nodo._raw);
+  }
+  return "ok";
+}
+
 function setupChatComposer() {
-  $("chat-form")?.addEventListener("submit", (event) => {
+  $("chat-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = $("chat-input");
     const message = input.value.trim();
     const files = selectedChatFiles();
+    if (state.chatAbort || runAttivoDellaChat()) {
+      if (!message) return;
+      input.value = "";
+      const esito = await inviaNota(message);
+      if (esito === "errore") input.value = message;
+      if (esito !== "run_finito") return;
+    }
     if (!message && !files.length) return;
     input.value = "";
     sendChatMessage(message || `Analizza ${files.length} allegat${files.length === 1 ? "o" : "i"}.`);

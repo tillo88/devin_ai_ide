@@ -714,6 +714,7 @@ class Orchestrator:
             self.ai_client, root, log=self._log, should_stop=lambda: self._should_stop,
             verifica=gate, cerca_web=web,
             soluzioni=lambda errore: self._soluzioni_passate(errore),
+            note=self._note_del_run,
             contesto_token=contesto_token,
             max_turni=int(cfg.get("agent_max_turns", 60) or 60),
         )
@@ -752,6 +753,12 @@ class Orchestrator:
         if esito.motivo == "errore":
             failed.append({"filename": "<agente>", "error": esito.errore, "critic_feedback": ""})
         return written, failed, quality, riassunto
+
+    def _note_del_run(self) -> List[str]:
+        """Note che l'utente ha scritto per questo run mentre l'agente lavora."""
+        from devin.core import note_utente
+        run_id = getattr(self, "_run_id_corrente", "")
+        return note_utente.prendi(note_utente.chiave_run(run_id)) if run_id else []
 
     def _applica_verificato(self, project: Path | str, run_id: str,
                             change_manifest: Dict[str, Any], task: str, patch: str = ""):
@@ -961,6 +968,7 @@ class Orchestrator:
         self._piano_prova = None
         self._motivo_piano = ""
         self._task_corrente = task
+        self._run_id_corrente = run_id or ""
         if project_path:
             self.project_path = project_path
             self.git_ops.project_path = project_path

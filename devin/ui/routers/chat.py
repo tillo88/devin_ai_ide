@@ -45,7 +45,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from starlette.concurrency import iterate_in_threadpool
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from pydantic import BaseModel
 
 from devin.ai.document_extract import extract_text as extract_document_text
@@ -54,6 +54,7 @@ from devin.ai.web_search import (
     format_results_as_context,
     get_web_search_provider,
 )
+from devin.core import note_utente
 from devin.core.chat_persistence import ChatPersistence
 from devin.core.chat_continuity import (
     accept_checkpoint_proposal,
@@ -1156,7 +1157,7 @@ async def api_chat(req: ChatRequest):
         "retrieval_ephemeral": prompt_layout["retrieval_ephemeral"],
     }
 
-    async def generate_sse(model_name: str, model_detail: dict):
+    async def _genera_sse(model_name: str, model_detail: dict):
         token_count = 0
         # Il ragionamento si conta a parte dalla risposta. Tenerli insieme
         # renderebbe `tps` una cifra senza significato: con un modello che
@@ -1248,13 +1249,15 @@ async def api_chat(req: ChatRequest):
             # al modello e la risposta continua. Al massimo 3 ricerche.
             strumenti = None if req.use_web_search else [STRUMENTO_CERCA_WEB]
             conversazione = list(messaggi)
-            for _giro in range(4):
+            ricerche = 0
+            for _giro in range(12):
                 chiamate = []
                 testo_giro = ""
-                async for evento in iterate_in_threadpool(
-                        ai.stream_eventi(conversazione, mode=selected_mode,
-                                         sforzo=req.reasoning_effort or "",
-                                         tools=strumenti)):
+                note: list[str] = []
+                flusso = ai.stream_eventi(conversazione, mode=selected_mode,
+                                          sforzo=req.reasoning_effort or "",
+                                          tools=strumenti)
+                async for evento in iterate_in_threadpool(flusso):
                     if evento["tipo"] == "chiamate":
                         chiamate = evento.get("chiamate") or []
                         continue
@@ -1262,6 +1265,21 @@ async def api_chat(req: ChatRequest):
                         yield uscita
                     if evento["tipo"] == "risposta":
                         testo_giro += evento["testo"]
+                    # Una nota dell'utente interrompe la generazione: chiudere
+                    # lo stream chiude la connessione e il server smette; si
+                    # riparte col prefisso gia' in cache e la nota in coda.
+                    note = note_utente.prendi(chiave_note)
+                    if note:
+                        break
+                if note:
+                    await run_in_threadpool(flusso.close)
+                    if testo_giro.strip():
+                        conversazione.append({"role": "assistant", "content": testo_giro})
+                    conversazione.append({"role": "user", "content": note_utente.formatta(note)})
+                    for nota in note:
+                        chat_persistence.append("user", f"📝 {nota}")
+                    yield f"event: nota\ndata: {json.dumps({'note': note})}\n\n"
+                    continue
                 if not chiamate:
                     break
                 conversazione.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
@@ -1282,7 +1300,8 @@ async def api_chat(req: ChatRequest):
                             yield f"event: warning\ndata: {json.dumps({'message': f'Ricerca web non riuscita: {exc}'})}\n\n"
                     conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
                                           "content": risultato or "nessun risultato"})
-                if _giro == 2:
+                ricerche += 1
+                if ricerche >= 3:
                     strumenti = None   # dopo tre ricerche si risponde con quello che c'e'
 
 
@@ -1323,6 +1342,17 @@ async def api_chat(req: ChatRequest):
 
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    chiave_note = note_utente.chiave_chat(persistence_key, req.chat_id)
+
+    async def generate_sse(model_name: str, model_detail: dict):
+        # mentre DEVIN risponde, l'utente puo' scrivergli (/api/chat/nota)
+        note_utente.apri(chiave_note)
+        try:
+            async for pezzo in _genera_sse(model_name, model_detail):
+                yield pezzo
+        finally:
+            note_utente.chiudi(chiave_note)
 
     return StreamingResponse(
         generate_sse(model_name, model_detail),
@@ -1598,6 +1628,35 @@ def esito_run_da_chat(mode: str, status: str, result: dict, run_id: str) -> dict
     }
 
 
+class NotaRequest(BaseModel):
+    testo: str
+    project_path: Optional[str] = None
+    chat_id: Optional[str] = None
+
+
+@router.post("/api/chat/nota")
+async def api_chat_nota(req: NotaRequest):
+    """Una nota per DEVIN mentre risponde in questa chat: interrompe e riprende."""
+    from devin.ui.fast_app import GENERAL_CHAT_PROJECT_KEY, _validated_project_path
+    progetto = (_validated_project_path(req.project_path, allow_general=False)
+                if req.project_path else GENERAL_CHAT_PROJECT_KEY)
+    try:
+        in_coda = note_utente.aggiungi(note_utente.chiave_chat(progetto, req.chat_id), req.testo)
+    except note_utente.NotaRifiutata as exc:
+        return {"error": str(exc)}
+    return {"status": "in_coda", "in_coda": in_coda}
+
+
+@router.post("/api/run/{run_id}/nota")
+async def api_run_nota(run_id: str, req: NotaRequest):
+    """Una nota per l'agente mentre lavora a un run: la legge al turno dopo."""
+    try:
+        in_coda = note_utente.aggiungi(note_utente.chiave_run(run_id), req.testo)
+    except note_utente.NotaRifiutata as exc:
+        return {"error": str(exc)}
+    return {"status": "in_coda", "in_coda": in_coda}
+
+
 @router.post("/api/chat/generate_patch")
 async def api_chat_generate_patch(request: Request):
     """
@@ -1660,6 +1719,8 @@ async def api_chat_generate_patch(request: Request):
     applica = str(data.get("applica") or "auto").strip().lower()
     if applica not in {"auto", "revisione"}:
         return {"error": f"applica deve essere 'auto' o 'revisione', non {applica!r}"}
+
+    note_utente.apri(note_utente.chiave_run(run_id))
 
     def _bg():
         from devin.ui.fast_app import (  # lazy: risolti a thread-run time
@@ -1727,6 +1788,8 @@ async def api_chat_generate_patch(request: Request):
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[FATAL] {e}\nstatus: failed\n")
             _concludi("failed", {"error": f"{type(e).__name__}: {e}"})
+        finally:
+            note_utente.chiudi(note_utente.chiave_run(run_id))
 
     threading.Thread(target=_bg, daemon=True).start()
     return {"run_id": run_id, "status": "started", "mode": mode, "applica": applica}

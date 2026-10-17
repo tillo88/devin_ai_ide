@@ -105,6 +105,7 @@ class AgenteStrumenti:
                  verifica: Optional[Callable[[], Dict[str, Any]]] = None,
                  cerca_web: Optional[Callable[[str], str]] = None,
                  soluzioni: Optional[Callable[[str], str]] = None,
+                 note: Optional[Callable[[], List[str]]] = None,
                  contesto_token: int = 131_072, max_turni: int = MAX_TURNI,
                  max_tokens_turno: int = MAX_TOKENS_TURNO, sforzo: str = ""):
         self.ai = ai
@@ -114,6 +115,7 @@ class AgenteStrumenti:
         self._verifica = verifica
         self._cerca_web = cerca_web
         self._soluzioni = soluzioni
+        self._note = note
         self.contesto_token = int(contesto_token)
         self.max_turni = int(max_turni)
         self.max_tokens_turno = int(max_tokens_turno)
@@ -312,6 +314,7 @@ class AgenteStrumenti:
             if self.should_stop():
                 esito.motivo = "stop"
                 return esito
+            self._leggi_note()
             self._alleggerisci()
             try:
                 risposta = self.ai.chiama_con_strumenti(
@@ -367,6 +370,18 @@ class AgenteStrumenti:
                 return esito
         self.log(f"Agente: raggiunto il limite di {self.max_turni} turni", "warning")
         return esito
+
+    def _leggi_note(self) -> None:
+        """Le note dell'utente arrivate nel frattempo entrano nella conversazione."""
+        if not self._note:
+            return
+        note = self._note()
+        if not note:
+            return
+        from devin.core.note_utente import formatta
+        self.messaggi.append({"role": "user", "content": formatta(note)})
+        for nota in note:
+            self.log(f"📝 Nota dell'utente: {nota[:300]}", "info")
 
     @staticmethod
     def _etichetta(nome: str, args: Dict[str, Any]) -> str:
