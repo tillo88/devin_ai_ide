@@ -506,3 +506,23 @@ def test_contesto_corto_intero_e_non_python_tagliato_dichiarato():
     assert lungo.endswith("(tagliato: 6000 caratteri in tutto)")
     rotto = contesto_file("b.py", "def (\n" * 2000)
     assert "tagliato" in rotto
+
+
+def test_lo_stream_consegna_le_chiamate_di_strumenti_alla_fine(client):
+    righe = ["data: " + json.dumps({"choices": [{"delta": p}]}) for p in [
+        {"reasoning_content": "cerco"},
+        {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "cerca_web", "arguments": "{\"domanda\""}}]},
+        {"tool_calls": [{"index": 0, "function": {"arguments": ": \"turni 1/21\"}"}}]},
+    ]] + ["data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    strumento = {"type": "function", "function": {"name": "cerca_web", "parameters": {"type": "object"}}}
+    eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[strumento]))
+    assert client._stato["corpi"][-1]["tools"] == [strumento]
+    assert client._stato["corpi"][-1]["tool_choice"] == "auto"
+    chiamate = [e for e in eventi if e["tipo"] == "chiamate"][0]["chiamate"]
+    assert chiamate[0]["function"] == {"name": "cerca_web", "arguments": "{\"domanda\": \"turni 1/21\"}"}
+
+
+def test_senza_strumenti_il_corpo_non_li_contiene(client):
+    _stream(client, [{"content": "ciao"}])
+    assert "tools" not in client._stato["corpi"][-1]

@@ -22,6 +22,7 @@ class FintoAI:
         self.ultima_fine = "stop"
         self.chiamate_local = []
         self.inviati = []
+        self.copione = []
 
     def _get_endpoints(self, mode):
         return "http://rig", "devin-model"
@@ -30,8 +31,12 @@ class FintoAI:
         self.chiamate_local.append({"messages": messages, "sforzo": sforzo, "max_tokens": max_tokens})
         return self.riassunto
 
-    def stream_eventi(self, messages, mode="reasoning", sforzo=""):
+    def stream_eventi(self, messages, mode="reasoning", sforzo="", tools=None, **kwargs):
         self.inviati.append(messages)
+        self.strumenti = tools
+        if self.copione:
+            yield from self.copione.pop(0)
+            return
         yield {"tipo": "risposta", "testo": "fatto"}
 
 
@@ -113,3 +118,38 @@ def test_tetto_raggiunto_dal_riassunto_si_dice(tmp_path, monkeypatch):
     ai.ultima_fine = "length"
     sse, _ = _chiama(tmp_path, monkeypatch, ai, _storia(16, 1500))
     assert "tetto di 6144 token" in _evento(sse, "compaction")["rejected_reason"]
+
+
+def test_con_il_web_su_auto_devin_cerca_da_solo_e_la_ricerca_si_vede(tmp_path, monkeypatch):
+    ai = FintoAI("non usato")
+    ai.copione = [
+        [{"tipo": "ragionamento", "testo": "non so il turno 1/21, cerco"},
+         {"tipo": "chiamate", "testo": "", "chiamate": [{"id": "c1", "type": "function", "function": {
+             "name": "cerca_web", "arguments": json.dumps({"domanda": "turno 1/21 quattro squadre"})}}]}],
+        [{"tipo": "risposta", "testo": "Il ciclo 1/21 funziona cosi'."}],
+    ]
+    cercate = []
+
+    async def finta_ricerca(domanda, ai_client):
+        cercate.append(domanda)
+        return "Ciclo continuo 4 squadre: 7 mattine, 7 pomeriggi, 7 notti..."
+
+    monkeypatch.setattr(chat_router, "_scaffold_web_reference", finta_ricerca)
+    sse, persist = _chiama(tmp_path, monkeypatch, ai, _storia(2, 10))
+    assert cercate == ["turno 1/21 quattro squadre"]
+    assert "Cerco sul web: turno 1/21 quattro squadre" in sse
+    # il secondo giro riceve la chiamata e il risultato, poi risponde
+    secondo = ai.inviati[1]
+    assert secondo[-2]["role"] == "assistant" and secondo[-2]["tool_calls"][0]["id"] == "c1"
+    assert secondo[-1] == {"role": "tool", "tool_call_id": "c1",
+                           "content": "Ciclo continuo 4 squadre: 7 mattine, 7 pomeriggi, 7 notti..."}
+    assert persist.load()[-1]["content"] == "Il ciclo 1/21 funziona cosi'."
+    # la nota di sistema non dice piu' "NON hai accesso a internet"
+    assert "cerca_web" in ai.inviati[0][0]["content"]
+    assert "NON hai accesso a internet" not in ai.inviati[0][0]["content"]
+
+
+def test_lo_strumento_web_e_offerto_solo_in_auto(tmp_path, monkeypatch):
+    ai = FintoAI("non usato")
+    _chiama(tmp_path, monkeypatch, ai, _storia(2, 10))
+    assert ai.strumenti and ai.strumenti[0]["function"]["name"] == "cerca_web"

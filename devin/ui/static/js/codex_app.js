@@ -2923,7 +2923,10 @@ function applyChatEvent(event, assistantNode) {
   }
 
   if (event.type === "info" || event.type === "warning") {
-    assistantNode._raw = (assistantNode._raw || "") + `[${event.type}] ${payload.message ?? ""}\n`;
+    // un'informazione (es. "🌐 Cerco sul web: ...") e' una riga in corsivo,
+    // non un pezzo della risposta con l'etichetta tecnica davanti
+    const riga = event.type === "info" ? `_${payload.message ?? ""}_\n\n` : `[warning] ${payload.message ?? ""}\n`;
+    assistantNode._raw = (assistantNode._raw || "") + riga;
     renderAssistantStream(assistantNode, assistantNode._raw);
     return;
   }

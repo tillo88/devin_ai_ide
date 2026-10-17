@@ -983,7 +983,7 @@ class AIClient:
         return 0
 
     def stream_eventi(self, messages, mode="reasoning", sforzo="", max_attempts=None,
-                      response_format=None, max_tokens=None):
+                      response_format=None, max_tokens=None, tools=None):
         """Streaming che DISTINGUE il ragionamento dalla risposta.
 
         Produce dizionari {"tipo": ..., "testo": ...} con tipo fra
@@ -1020,6 +1020,7 @@ class AIClient:
             dentro_il_pensiero = False
             coda = ""
             finish_reason = None
+            chiamate = {}
 
             try:
                 url, model = self._get_endpoints(mode)
@@ -1032,7 +1033,8 @@ class AIClient:
                         stream=True,
                         max_tokens=max_tokens,
                         response_format=response_format,
-                    ), "return_progress": True},
+                    ), "return_progress": True,
+                       **({"tools": tools, "tool_choice": "auto"} if tools else {})},
                     timeout=timeout,
                     stream=True,
                     headers=self._auth_headers(url)
@@ -1089,6 +1091,18 @@ class AIClient:
                         finish_reason = choice.get('finish_reason') or finish_reason
                         delta = choice.get('delta') or {}
 
+                        # Chiamate di strumenti (solo se ne sono stati offerti):
+                        # arrivano a pezzi per indice, si consegnano a fine stream.
+                        for parte in delta.get('tool_calls') or []:
+                            indice = int(parte.get('index', len(chiamate)))
+                            voce = chiamate.setdefault(indice, {
+                                "id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                            if parte.get('id'):
+                                voce["id"] = parte['id']
+                            funzione = parte.get('function') or {}
+                            voce["function"]["name"] += funzione.get('name') or ""
+                            voce["function"]["arguments"] += funzione.get('arguments') or ""
+
                         # 1) La via pulita: il server ha separato lui il pensiero.
                         pensiero = delta.get('reasoning_content')
                         if pensiero:
@@ -1136,6 +1150,11 @@ class AIClient:
                     if coda:
                         yield {"tipo": "ragionamento" if dentro_il_pensiero else "risposta",
                                "testo": coda}
+                    if chiamate:
+                        lista = [chiamate[i] for i in sorted(chiamate)]
+                        for i, voce in enumerate(lista):
+                            voce["id"] = voce["id"] or f"call_{i}"
+                        yield {"tipo": "chiamate", "testo": "", "chiamate": lista}
                     if finish_reason in {"length", "max_tokens"}:
                         yield {
                             "tipo": "avviso",
