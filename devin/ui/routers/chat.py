@@ -1316,7 +1316,8 @@ async def api_chat(req: ChatRequest):
                     "usa solo questi nomi.")}] + list(messaggi[1:])
             # Risolutore di vincoli (turni, orari, incastri): se l'ambiente strumenti c'e'.
             from devin.core import risolutore
-            risolutore_pronto, _ = risolutore.disponibile(ai.config)
+            risolutore_pronto, motivo_risolutore = risolutore.disponibile(ai.config)
+            print(f"[Chat] risolutore di vincoli: {motivo_risolutore}")
             if risolutore_pronto:
                 strumenti_mcp = strumenti_mcp + [risolutore.STRUMENTO]
                 if messaggi and messaggi[0].get("role") == "system":
