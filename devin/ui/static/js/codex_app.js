@@ -2756,12 +2756,21 @@ function seguiFondo(el, eraInFondo) {
   if (el && eraInFondo) el.scrollTop = el.scrollHeight;
 }
 
+// Il ragionamento aperto ha la sua barra: "Torna in fondo" deve riportare
+// giu' anche quella, se no mentre pensa lo si scorre a mano (17/10).
+function ragionamentoAperto(thread) {
+  const pannelli = thread.querySelectorAll(".reasoning-panel[open]:not(.compaction-marker) > pre");
+  return pannelli.length ? pannelli[pannelli.length - 1] : null;
+}
+
 function aggiornaTornaInFondo() {
   const thread = $("chat-thread");
   if (!thread) return;
   let bottone = $("chat-jump");
+  const pre = ragionamentoAperto(thread);
   // solo se la chat si vede (un'altra vista aperta la nasconde)
-  const serve = thread.offsetParent !== null && thread.clientHeight > 0 && !inFondo(thread, 160);
+  const serve = thread.offsetParent !== null && thread.clientHeight > 0
+    && (!inFondo(thread, 160) || (pre !== null && !inFondo(pre, 40)));
   if (!bottone && serve) {
     bottone = document.createElement("button");
     bottone.type = "button";
@@ -2770,6 +2779,8 @@ function aggiornaTornaInFondo() {
     bottone.textContent = "↓ Torna in fondo";
     bottone.addEventListener("click", () => {
       thread.scrollTop = thread.scrollHeight;
+      const aperto = ragionamentoAperto(thread);
+      if (aperto) aperto.scrollTop = aperto.scrollHeight;
       aggiornaTornaInFondo();
     });
     document.body.appendChild(bottone);
@@ -2793,12 +2804,34 @@ function renderAssistantStream(node, raw) {
     // DEVIN sembra piantato), richiuso appena comincia a rispondere.
     panel.open = !node._reasoningDone;
     article.insertBefore(panel, node);
+    panel.querySelector("pre")?.addEventListener?.("scroll", () => aggiornaTornaInFondo(), { passive: true });
   }
   panel.querySelector("summary").textContent = testoRiepilogo(node);
   const pre = panel.querySelector("pre");
   const preInFondo = inFondo(pre, 40);
   pre.textContent = reasoning;
   if (panel.open && !node._reasoningDone) seguiFondo(pre, preInFondo);
+  renderNote(node);
+}
+
+// Le note scritte mentre DEVIN lavora: una riga richiudibile come il
+// ragionamento, invece di blocchi che si prendono tutta la risposta (17/10).
+function renderNote(node) {
+  const note = node._note || [];
+  const article = node.parentElement;
+  if (!article || !note.length) return;
+  let panel = article.querySelector(".note-panel");
+  if (!panel) {
+    panel = document.createElement("details");
+    panel.className = "note-panel";
+    panel.innerHTML = "<summary></summary><ul></ul>";
+    article.insertBefore(panel, node);
+  }
+  const lette = note.filter((n) => n.letta).length;
+  panel.querySelector("summary").textContent = `📝 ${note.length} ${note.length === 1 ? "nota inserita" : "note inserite"}`
+    + (lette === note.length ? " · lette da DEVIN" : ` · ${note.length - lette} in attesa`);
+  panel.querySelector("ul").innerHTML = note.map((n) =>
+    `<li${n.letta ? "" : ' class="in-attesa"'}>${escapeHtml(n.testo)}</li>`).join("");
 }
 
 // Avanzamento della lettura del contesto (prefill), dal campo prompt_progress
@@ -2990,9 +3023,9 @@ function applyChatEvent(event, assistantNode) {
   }
 
   if (event.type === "nota") {
-    // il backend ha interrotto e riparte con la nota: lo si dice in una riga
-    assistantNode._raw = (assistantNode._raw || "") + "_DEVIN ha letto la nota e riparte tenendone conto._\n\n";
-    renderAssistantStream(assistantNode, assistantNode._raw);
+    // il backend ha interrotto e riparte con la nota: si segna come letta
+    (assistantNode._note || []).forEach((n) => { n.letta = true; });
+    renderNote(assistantNode);
     return;
   }
 
@@ -3683,8 +3716,8 @@ async function inviaNota(testo) {
     appendChatMessage("user", `📝 ${testo}`);
   } else if (state.chatAssistantNode) {
     const nodo = state.chatAssistantNode;
-    nodo._raw = (nodo._raw || "") + `\n\n> 📝 **Tu:** ${testo}\n\n`;
-    renderAssistantStream(nodo, nodo._raw);
+    (nodo._note ||= []).push({ testo, letta: false });
+    renderNote(nodo);
   }
   return "ok";
 }

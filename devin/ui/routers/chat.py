@@ -261,12 +261,31 @@ def _requires_verified_web_sources(message: str) -> bool:
     return any(phrase in msg for phrase in strict_phrases)
 
 
+def _varianti_ricerca(domanda: str) -> list[str]:
+    """La domanda, poi senza operatori/virgolette, poi accorciata: senza doppioni."""
+    semplice = re.sub(r'["“”]|\b(OR|AND|NOT)\b|(?<!\w)[-+](?=\w)', " ", domanda)
+    semplice = " ".join(semplice.split())
+    corta = " ".join(semplice.split()[:8])
+    varianti = []
+    for v in (domanda.strip(), semplice, corta):
+        if v and v not in varianti:
+            varianti.append(v)
+    return varianti
+
+
 async def _scaffold_web_reference(message: str, ai) -> str:
     """Collect compact real web evidence before a scaffold plan is generated."""
     provider = get_web_search_provider(ai.config)
-    results = await asyncio.to_thread(provider.search, message, max_results=5)
+    results = []
+    # 17/10: le domande scritte dal modello con virgolette e OR ("20 turni" OR
+    # "21 turni" ...) non trovavano nulla. Se la prima non trova, si riprova
+    # con le parole semplici e poi con le prime otto.
+    for domanda in _varianti_ricerca(message):
+        results = await asyncio.to_thread(provider.search, domanda, max_results=5)
+        if results:
+            break
     if not results:
-        raise RuntimeError("nessun risultato web disponibile")
+        raise RuntimeError("nessun risultato web disponibile (anche con parole piu' semplici)")
 
     web_context = format_results_as_context(results)
     ws_cfg = ai.config.get("web_search", {})

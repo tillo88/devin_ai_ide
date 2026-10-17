@@ -6178,3 +6178,16 @@ body.codex-shell {
   box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
 }
 .chat-jump[hidden] { display: none; }
+
+/* Note scritte mentre DEVIN lavora: richiudibili come il ragionamento. */
+.note-panel {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.8rem;
+  opacity: 0.8;
+  border-left: 2px solid rgba(240, 168, 104, 0.7);
+  padding-left: 0.6rem;
+}
+.note-panel > summary { cursor: pointer; user-select: none; }
+.note-panel > ul { margin: 0.4rem 0 0 0; padding-left: 1.1rem; max-height: 12rem; overflow-y: auto; }
+.note-panel li { white-space: pre-wrap; margin-bottom: 0.25rem; }
+.note-panel li.in-attesa { opacity: 0.6; font-style: italic; }

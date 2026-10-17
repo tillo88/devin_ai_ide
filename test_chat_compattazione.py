@@ -171,3 +171,12 @@ def test_l_app_mette_la_x_ai_messaggi_appena_scritti():
     assert "aggiungiCancella(state.chatUserNode?.parentElement, payload.user_index)" in js
     assert "aggiungiCancella(assistantNode.parentElement, payload.assistant_index)" in js
     assert 'state.chatUserNode = appendChatMessage("user", message)' in js
+
+
+def test_varianti_della_ricerca_web():
+    from devin.ui.routers.chat import _varianti_ricerca
+    v = _varianti_ricerca('"20 turni" OR "21 turni" 4 squadre tabella schema M P N riposo esempio settimana')
+    assert v[0].startswith('"20 turni"')
+    assert v[1] == "20 turni 21 turni 4 squadre tabella schema M P N riposo esempio settimana"
+    assert v[2] == "20 turni 21 turni 4 squadre tabella schema"
+    assert _varianti_ricerca("eclissi 2027") == ["eclissi 2027"]

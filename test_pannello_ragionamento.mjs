@@ -80,7 +80,7 @@ const sorgente = fs.readFileSync(SORGENTE, "utf8");
 const NOMI = ["splitReasoning", "reasoningCompleto", "formatDurata", "testoRiepilogo",
   "fermaCronometroRagionamento", "avviaCronometroRagionamento", "rendiRispostaInCorso",
   "renderAssistantStream", "testoLettura", "testoCompattazione", "marcatoreCompattazione",
-  "inFondo", "seguiFondo"];
+  "inFondo", "seguiFondo", "renderNote"];
 const corpo = NOMI.map((n) => estrai(sorgente, n)).join("\n");
 
 const fabbrica = new Function("document", "THINK_OPEN", "THINK_CLOSE", "setInterval", "clearInterval",
