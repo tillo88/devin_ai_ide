@@ -3020,7 +3020,9 @@ function applyChatEvent(event, assistantNode) {
       misura.textContent = `${payload.tps} tok/s`;
       misura.title = `${payload.tokens} token di risposta in ${formatDurata(
         (payload.elapsed || 0) - (payload.reasoning_seconds || 0))}`
-        + (payload.reasoning_seconds ? `; ${formatDurata(payload.reasoning_seconds)} di ragionamento` : "");
+        + (payload.reasoning_seconds ? `; ${formatDurata(payload.reasoning_seconds)} di ragionamento` : "")
+        + (payload.prompt_tokens ? `; prompt ${payload.prompt_tokens} token` : "")
+        + (payload.tools_offered !== undefined ? `, ${payload.tools_offered} strumenti offerti` : "");
     }
     return;
   }

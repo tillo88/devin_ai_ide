@@ -1099,6 +1099,7 @@ class AIClient:
             coda = ""
             finish_reason = None
             chiamate = {}
+            uso = {}
 
             try:
                 url, model = self._get_endpoints(mode)
@@ -1165,6 +1166,10 @@ class AIClient:
                             yield {"tipo": "lettura", "testo": "",
                                    **{k: lettura.get(k) for k in ("total", "cache", "processed", "time_ms")}}
 
+                        # quanto e' stato davvero il prompt (strumenti compresi): llama-server
+                        # lo mette in "timings" nell'ultimo pezzo
+                        if isinstance(pezzo.get('timings'), dict):
+                            uso = pezzo['timings']
                         choice = (pezzo.get('choices') or [{}])[0]
                         finish_reason = choice.get('finish_reason') or finish_reason
                         delta = choice.get('delta') or {}
@@ -1233,6 +1238,10 @@ class AIClient:
                         for i, voce in enumerate(lista):
                             voce["id"] = voce["id"] or f"call_{i}"
                         yield {"tipo": "chiamate", "testo": "", "chiamate": lista}
+                    if uso:
+                        yield {"tipo": "uso", "testo": "",
+                               "prompt_tokens": int(uso.get("prompt_n") or 0) + int(uso.get("cache_n") or 0),
+                               "cache_tokens": int(uso.get("cache_n") or 0)}
                     if finish_reason in {"length", "max_tokens"}:
                         yield {
                             "tipo": "avviso",
