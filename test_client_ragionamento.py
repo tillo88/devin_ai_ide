@@ -612,3 +612,18 @@ def test_lo_stream_dice_quanto_era_lungo_il_prompt(client):
     eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[CERCA]))
     uso = [e for e in eventi if e["tipo"] == "uso"][0]
     assert uso["prompt_tokens"] == 4300 and uso["cache_tokens"] == 4000
+
+
+def test_il_catalogo_degli_strumenti_va_nel_prompt(client):
+    """17/10: il modello in produzione non vedeva gli schemi; ora li legge anche nel testo."""
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}), "data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    list(client.stream_eventi([{"role": "system", "content": "Sei DEVIN."},
+                               {"role": "user", "content": "x"}], tools=[CERCA]))
+    sistema = client._stato["corpi"][-1]["messages"][0]["content"]
+    assert sistema.startswith("Sei DEVIN.") and "- cerca_web(domanda: string) — " in sistema
+    assert "<function=NOME>" in sistema
+    from devin.ai.tool_text import con_catalogo
+    doppio = con_catalogo(client._stato["corpi"][-1]["messages"], [CERCA])
+    assert doppio[0]["content"].count("STRUMENTI DISPONIBILI") == 1
+    assert con_catalogo([{"role": "user", "content": "x"}], [CERCA])[0]["role"] == "system"

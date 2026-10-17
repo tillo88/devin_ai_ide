@@ -128,3 +128,50 @@ def estrai_chiamate(testo: str, tools) -> Tuple[str, List[Dict[str, Any]]]:
     for inizio, fine in reversed(tagli):
         testo = testo[:inizio] + testo[fine:]
     return testo.strip() if tagli else testo, chiamate
+
+
+def catalogo(tools, max_descrizione: int = 220) -> str:
+    """Gli strumenti scritti nel prompt, con il formato esatto per chiamarli.
+
+    17/10, dal vivo: con la richiesta in streaming il modello di produzione
+    non vede gli schemi degli strumenti (prompt di ~1.200 token con 23
+    strumenti offerti; il modello dice "i miei strumenti sono quelli elencati
+    nel testo" e inventa nomi e parametri). Scritti qui, li vede comunque; e le
+    chiamate in questo formato le riconosce ``estrai_chiamate``. Se il server
+    li passa anche nativamente, nessun danno.
+    """
+    righe = []
+    for nome, schema in _schemi(tools).items():
+        descrizione = ""
+        for tool in tools:
+            funzione = (tool or {}).get("function") or {}
+            if funzione.get("name") == nome:
+                descrizione = " ".join(str(funzione.get("description") or "").split())
+        if len(descrizione) > max_descrizione:
+            descrizione = descrizione[:max_descrizione].rsplit(" ", 1)[0] + "…"
+        richiesti = set(schema.get("required") or [])
+        parametri = []
+        for parametro, spec in (schema.get("properties") or {}).items():
+            tipo = (spec or {}).get("type", "string") if isinstance(spec, dict) else "string"
+            parametri.append(f"{parametro}: {tipo}{'' if parametro in richiesti else ' (facoltativo)'}")
+        righe.append(f"- {nome}({', '.join(parametri)}) — {descrizione}")
+    if not righe:
+        return ""
+    return ("STRUMENTI DISPONIBILI (solo questi, con questi nomi e parametri esatti):\n"
+            + "\n".join(righe)
+            + "\n\nPer usarne uno scrivi esattamente, e poi fermati (il risultato arriva nel messaggio "
+            "successivo):\n<tool_call>\n<function=NOME>\n<parameter=PARAMETRO>\nvalore\n</parameter>\n"
+            "</function>\n</tool_call>\nNon inventare mai il risultato di uno strumento: chiamalo e aspetta.")
+
+
+def con_catalogo(messages, tools):
+    """I messaggi con il catalogo degli strumenti in coda al messaggio di sistema."""
+    testo = catalogo(tools)
+    if not testo:
+        return messages
+    messaggi = list(messages or [])
+    if messaggi and messaggi[0].get("role") == "system" and isinstance(messaggi[0].get("content"), str):
+        if "STRUMENTI DISPONIBILI (solo questi" in messaggi[0]["content"]:
+            return messaggi
+        return [{**messaggi[0], "content": messaggi[0]["content"] + "\n\n" + testo}] + messaggi[1:]
+    return [{"role": "system", "content": testo}] + messaggi

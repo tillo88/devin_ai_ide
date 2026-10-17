@@ -785,6 +785,9 @@ class AIClient:
         (richiesta rifiutata, es. contesto pieno) e' un ValueError col motivo
         del server; la rete che cade si ritenta come in local().
         """
+        from devin.ai.tool_text import con_catalogo
+
+        messages = con_catalogo(messages, tools)
         sforzo = self._sforzo(sforzo)
         timeout = self._timeout_ragionato(sforzo, timeout, messages)
         ultimo = None
@@ -1011,8 +1014,10 @@ class AIClient:
         testo non si mostra: a fine stream diventa una chiamata vera (se e' di
         uno strumento offerto) oppure, se non si riconosce, si consegna com'e'.
         """
-        from devin.ai.tool_text import APRE, estrai_chiamate
+        from devin.ai.tool_text import APRE, con_catalogo, estrai_chiamate
 
+        if tools:
+            messages = con_catalogo(messages, tools)
         grezzo = self._stream_eventi_grezzo(messages, mode=mode, sforzo=sforzo, max_attempts=max_attempts,
                                             response_format=response_format, max_tokens=max_tokens,
                                             tools=tools)
