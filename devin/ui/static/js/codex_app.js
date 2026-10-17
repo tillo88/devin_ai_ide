@@ -1306,7 +1306,8 @@ function renderCentralGovernance(knowledge, council, routing, tools, operations)
       ? [`${externalMcp.registered_count ?? 0} registrati · ${externalMcp.status}`,
         ...(externalMcp.servers ?? []).map((server) => `${server.name}: ${server.connection || server.status}`),
         ...(tools?.constraint_solver ? [`solver: ${tools.constraint_solver.detail || tools.constraint_solver.status}`] : []),
-        ...(tools?.page_viewer ? [`browser: ${tools.page_viewer.detail || tools.page_viewer.status}`] : [])].join(" · ")
+        ...(tools?.page_viewer ? [`browser: ${tools.page_viewer.detail || tools.page_viewer.status}`] : []),
+        ...(tools?.cad_3d ? [`3D: ${tools.cad_3d.detail || tools.cad_3d.status}`] : [])].join(" · ")
       : "registry non disponibile",
   );
 

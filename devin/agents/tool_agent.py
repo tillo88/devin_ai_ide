@@ -112,6 +112,7 @@ class AgenteStrumenti:
                  mcp=None,
                  risolvi: Optional[Callable[[str, int], str]] = None,
                  guarda: Optional[Callable[..., str]] = None,
+                 modella: Optional[Callable[..., str]] = None,
                  contesto_token: int = 131_072, max_turni: int = MAX_TURNI,
                  max_tokens_turno: int = MAX_TOKENS_TURNO, sforzo: str = ""):
         self.ai = ai
@@ -126,6 +127,7 @@ class AgenteStrumenti:
         self._mcp = mcp
         self._risolvi = risolvi
         self._guarda = guarda
+        self._modella = modella
         self.strumenti: List[Dict[str, Any]] = STRUMENTI + list(getattr(mcp, "strumenti", None) or [])
         self.contesto_token = int(contesto_token)
         self.max_turni = int(max_turni)
@@ -141,6 +143,11 @@ class AgenteStrumenti:
             self.strumenti.append(STRUMENTO_AGENTE)
             self.messaggi[0]["content"] += ("\n\nAPP WEB: per un'app con pagine usa guarda_pagina (con 'avvia' "
                                             "per il server) e controlla testo ed errori della console prima di finire.")
+        if modella is not None:
+            from devin.core.modella3d import STRUMENTO as STRUMENTO_3D
+            self.strumenti.append(STRUMENTO_3D)
+            self.messaggi[0]["content"] += ("\n\nPEZZI 3D: modellali con modella_3d (build123d) e confronta "
+                                            "le misure restituite con quelle richieste prima di finire.")
         self.ultima_verifica: Optional[Dict[str, Any]] = None
 
     # --- percorsi -----------------------------------------------------------------
@@ -291,6 +298,8 @@ class AgenteStrumenti:
             if not self._soluzioni:
                 return "memoria non disponibile"
             return self._soluzioni(str(args["errore"])) or "nessuna soluzione verificata per un errore simile"
+        if nome == "modella_3d" and self._modella is not None:
+            return self._modella(str(args["codice"]), str(args.get("nome") or "pezzo"), self.radice / "modelli")
         if nome == "guarda_pagina" and self._guarda is not None:
             return self._guarda(str(args["url"]), avvia=args.get("avvia"), cartella=self.radice,
                                 aspetta_secondi=args.get("aspetta_secondi") or 1,
