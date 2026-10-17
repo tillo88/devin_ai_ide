@@ -2146,6 +2146,7 @@ function renderStructuredFaults() {
 function renderRunLog(payload = state.runLogPayload) {
   const output = $("run-log-output");
   if (!output) return;
+  const logInFondo = inFondo(output);
 
   renderStructuredFaults();
   const badge = $("run-log-status");
@@ -2197,7 +2198,7 @@ function renderRunLog(payload = state.runLogPayload) {
       ? "Vista limitata alla coda più recente (max 1000 righe / 512 KiB). I fault sopra arrivano dallo stream strutturato."
       : "I fault sopra arrivano dall'event store; il testo sotto resta contesto tecnico filtrabile.",
   );
-  output.scrollTop = output.scrollHeight;
+  seguiFondo(output, logInFondo);
 }
 
 function appendTimelineEvent(event) {
@@ -2732,6 +2733,38 @@ function rendiRispostaInCorso(node, answer) {
   else node.textContent = "";
 }
 
+// Autoscroll gentile: si segue il fondo solo se chi legge e' gia' in fondo.
+// Se ha scrollato su per rileggere, resta dov'e' (prima veniva ributtato giu'
+// a ogni token) e compare "↓ Torna in fondo".
+function inFondo(el, margine = 80) {
+  return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= margine;
+}
+
+function seguiFondo(el, eraInFondo) {
+  if (el && eraInFondo) el.scrollTop = el.scrollHeight;
+}
+
+function aggiornaTornaInFondo() {
+  const thread = $("chat-thread");
+  if (!thread) return;
+  let bottone = $("chat-jump");
+  // solo se la chat si vede (un'altra vista aperta la nasconde)
+  const serve = thread.offsetParent !== null && thread.clientHeight > 0 && !inFondo(thread, 160);
+  if (!bottone && serve) {
+    bottone = document.createElement("button");
+    bottone.type = "button";
+    bottone.id = "chat-jump";
+    bottone.className = "chat-jump";
+    bottone.textContent = "↓ Torna in fondo";
+    bottone.addEventListener("click", () => {
+      thread.scrollTop = thread.scrollHeight;
+      aggiornaTornaInFondo();
+    });
+    document.body.appendChild(bottone);
+  }
+  if (bottone) bottone.hidden = !serve;
+}
+
 function renderAssistantStream(node, raw) {
   const answer = splitReasoning(raw).answer;
   const reasoning = reasoningCompleto(node, raw);
@@ -2751,8 +2784,9 @@ function renderAssistantStream(node, raw) {
   }
   panel.querySelector("summary").textContent = testoRiepilogo(node);
   const pre = panel.querySelector("pre");
+  const preInFondo = inFondo(pre, 40);
   pre.textContent = reasoning;
-  if (panel.open && !node._reasoningDone) pre.scrollTop = pre.scrollHeight;
+  if (panel.open && !node._reasoningDone) seguiFondo(pre, preInFondo);
 }
 
 // Avanzamento della lettura del contesto (prefill), dal campo prompt_progress
@@ -2812,9 +2846,12 @@ function applyChatEvent(event, assistantNode) {
   }
 
   if (event.type === "message" && payload.token) {
+    const thread = $("chat-thread");
+    const giu = inFondo(thread);
     assistantNode._raw = (assistantNode._raw || "") + payload.token;
     renderAssistantStream(assistantNode, assistantNode._raw);
-    $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+    seguiFondo(thread, giu);
+    aggiornaTornaInFondo();
     return;
   }
 
@@ -2861,8 +2898,11 @@ function applyChatEvent(event, assistantNode) {
     assistantNode._reasoning = (assistantNode._reasoning || "") + payload.token;
     assistantNode._reasoningStart = assistantNode._reasoningStart || Date.now();
     avviaCronometroRagionamento(assistantNode);
+    const thread = $("chat-thread");
+    const giu = inFondo(thread);
     renderAssistantStream(assistantNode, assistantNode._raw || "");
-    $("chat-thread").scrollTop = $("chat-thread").scrollHeight;
+    seguiFondo(thread, giu);
+    aggiornaTornaInFondo();
     return;
   }
 
@@ -3631,7 +3671,12 @@ async function inviaNota(testo) {
   return "ok";
 }
 
+function setupChatScroll() {
+  $("chat-thread")?.addEventListener("scroll", () => aggiornaTornaInFondo(), { passive: true });
+}
+
 function setupChatComposer() {
+  setupChatScroll();
   $("chat-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = $("chat-input");

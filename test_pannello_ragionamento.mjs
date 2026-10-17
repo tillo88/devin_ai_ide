@@ -79,14 +79,15 @@ function estrai(sorgente, nome) {
 const sorgente = fs.readFileSync(SORGENTE, "utf8");
 const NOMI = ["splitReasoning", "reasoningCompleto", "formatDurata", "testoRiepilogo",
   "fermaCronometroRagionamento", "avviaCronometroRagionamento", "rendiRispostaInCorso",
-  "renderAssistantStream", "testoLettura", "testoCompattazione", "marcatoreCompattazione"];
+  "renderAssistantStream", "testoLettura", "testoCompattazione", "marcatoreCompattazione",
+  "inFondo", "seguiFondo"];
 const corpo = NOMI.map((n) => estrai(sorgente, n)).join("\n");
 
 const fabbrica = new Function("document", "THINK_OPEN", "THINK_CLOSE", "setInterval", "clearInterval",
   "renderMarkdownBody",
   `${corpo}\nreturn { splitReasoning, reasoningCompleto, formatDurata, testoRiepilogo,
      fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream, testoLettura,
-     testoCompattazione, marcatoreCompattazione };`);
+     testoCompattazione, marcatoreCompattazione, inFondo, seguiFondo };`);
 
 let intervalliVivi = 0;
 // il markdown vero lo prova test_chat_markdown.mjs: qui conta chi lo chiama e con cosa
@@ -110,6 +111,19 @@ const prove = [];
 function prova(nome, fn) { prove.push([nome, fn]); }
 
 // --- le prove ---------------------------------------------------------------
+
+prova("autoscroll gentile: segue il fondo solo se eri gia' in fondo", () => {
+  const giu = { scrollHeight: 1000, scrollTop: 600, clientHeight: 380 };
+  assert.equal(F.inFondo(giu), true);
+  giu.scrollHeight = 1400;            // arriva testo nuovo
+  F.seguiFondo(giu, true);
+  assert.equal(giu.scrollTop, 1400);
+  const rileggo = { scrollHeight: 1000, scrollTop: 100, clientHeight: 380 };
+  assert.equal(F.inFondo(rileggo), false);
+  rileggo.scrollHeight = 1400;
+  F.seguiFondo(rileggo, false);
+  assert.equal(rileggo.scrollTop, 100, "chi rilegge non deve essere ributtato giu'");
+});
 
 prova("compattazione riuscita: segno con il riassunto da aprire", () => {
   const m = F.marcatoreCompattazione({ generation: "model", summarized_messages: 14,
