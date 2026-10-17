@@ -9,7 +9,8 @@ def _client():
     return TestClient(app, client=("127.0.0.1", 5000))
 
 
-def test_tool_registry_is_deny_by_default_and_does_not_invent_mcp_servers():
+def test_tool_registry_is_deny_by_default_and_does_not_invent_mcp_servers(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))      # nessun token: il server c'e' ma non e' pronto
     response = _client().get("/api/tools/status")
     assert response.status_code == 200
     payload = response.json()
@@ -20,12 +21,21 @@ def test_tool_registry_is_deny_by_default_and_does_not_invent_mcp_servers():
         "mutations": "explicit_human_action",
         "model_execution": False,
     }
-    assert payload["external_mcp"] == {
-        "status": "unconfigured",
-        "registered_count": 0,
-        "servers": [],
-        "invocation_enabled": False,
-    }
+    mcp = payload["external_mcp"]
+    assert mcp["status"] == "configured"
+    assert mcp["invocation_enabled"] is False
+    assert [server["name"] for server in mcp["servers"]] == ["github"]
+    assert mcp["servers"][0]["status"].startswith("non pronto: manca il file")
+
+
+def test_mcp_server_with_its_token_file_is_ready(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".config" / "devin").mkdir(parents=True)
+    (tmp_path / ".config" / "devin" / "github-token").write_text("finto\n")
+    mcp = _client().get("/api/tools/status").json()["external_mcp"]
+    assert mcp["status"] == "enabled" and mcp["invocation_enabled"] is True
+    assert mcp["servers"][0]["status"] == "pronto"
+    assert "finto" not in str(mcp)          # il segreto non esce mai
 
 
 def test_tool_registry_reports_real_guards_budgets_and_disabled_terminal_input():

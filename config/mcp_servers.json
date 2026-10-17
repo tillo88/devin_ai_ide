@@ -1,0 +1,42 @@
+{
+  "_nota": "Server MCP che DEVIN usa come strumenti. Niente segreti qui: '@file:PERCORSO' legge il valore da un file sul rig (permessi 600, utente tillo). 'tools' e' l'allowlist: solo questi strumenti arrivano al modello.",
+  "servers": {
+    "github": {
+      "enabled": true,
+      "transport": "http",
+      "description": "GitHub (server MCP ufficiale ospitato da GitHub): repository, file, branch, issue, pull request, Actions.",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer @file:~/.config/devin/github-token"
+      },
+      "timeout": 60,
+      "tools": [
+        "get_me",
+        "search_repositories",
+        "get_repository_tree",
+        "get_file_contents",
+        "search_code",
+        "list_branches",
+        "create_branch",
+        "list_commits",
+        "get_commit",
+        "create_or_update_file",
+        "push_files",
+        "create_repository",
+        "list_issues",
+        "issue_read",
+        "issue_write",
+        "add_issue_comment",
+        "search_issues",
+        "list_pull_requests",
+        "pull_request_read",
+        "create_pull_request",
+        "update_pull_request",
+        "merge_pull_request",
+        "actions_list",
+        "actions_get",
+        "get_job_logs"
+      ]
+    }
+  }
+}

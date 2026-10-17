@@ -1303,7 +1303,8 @@ function renderCentralGovernance(knowledge, council, routing, tools, operations)
   setText(
     "governance-mcp-status",
     externalMcp.status
-      ? `${externalMcp.registered_count ?? 0} registrati · ${externalMcp.status}`
+      ? [`${externalMcp.registered_count ?? 0} registrati · ${externalMcp.status}`,
+        ...(externalMcp.servers ?? []).map((server) => `${server.name}: ${server.status}`)].join(" · ")
       : "registry non disponibile",
   );
 
