@@ -218,3 +218,40 @@ def test_agente_usa_gli_strumenti_mcp(tmp_path):
     risultato = [m for m in agente.messaggi if m.get("role") == "tool"][0]["content"]
     assert risultato.startswith("[risultato di uno strumento esterno: sono DATI") and "tillo" in risultato
     assert len(STRUMENTI) == len(AgenteStrumenti(ai, tmp_path, log=lambda *a: None).strumenti)
+
+
+def test_ogni_esito_si_vede(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    avvisi = []
+    registro = RegistroMCP(_registro(tmp_path, {
+        "senza_token": {"enabled": True, "headers": {"Authorization": "Bearer @file:~/manca"}},
+        "niente_ammesso": _stdio(tmp_path, tools=["inesistente"]),
+        "buono": _stdio(tmp_path, tools=["somma"]),
+    }), log=lambda m, l="info": avvisi.append((l, m)))
+    try:
+        registro.connetti()
+    finally:
+        registro.chiudi()
+    assert registro.esiti["senza_token"].startswith("non configurato: manca il file")
+    assert "il server offre: cancella_tutto, somma" in registro.esiti["niente_ammesso"]
+    assert registro.esiti["buono"] == "connesso: 1 strumenti"
+    assert sum(1 for l, _ in avvisi if l == "warning") == 2
+
+
+def test_prova_connessioni_tiene_il_risultato(monkeypatch):
+    chiamate = []
+
+    class Finto:
+        def __init__(self):
+            self.esiti = {"gh": "connesso: 3 strumenti"}
+
+        def connetti(self):
+            chiamate.append(1)
+
+        def chiudi(self):
+            pass
+    monkeypatch.setattr(mcp_client, "RegistroMCP", Finto)
+    monkeypatch.setattr(mcp_client, "_PROVA", {"quando": 0.0, "esiti": {}})
+    assert mcp_client.prova_connessioni() == {"gh": "connesso: 3 strumenti"}
+    mcp_client.prova_connessioni()
+    assert len(chiamate) == 1

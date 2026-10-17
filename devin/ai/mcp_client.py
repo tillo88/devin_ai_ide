@@ -250,6 +250,21 @@ def carica_registro(percorso: Path | str | None = None) -> Dict[str, Dict[str, A
     return {str(k): v for k, v in servers.items() if isinstance(v, dict)}
 
 
+_PROVA: Dict[str, Any] = {"quando": 0.0, "esiti": {}}
+
+
+def prova_connessioni(massimo_eta: float = 300.0) -> Dict[str, str]:
+    """Connessione vera a ogni server acceso (risultato tenuto 5 minuti), per la UI."""
+    if time.time() - _PROVA["quando"] > massimo_eta:
+        registro = RegistroMCP()
+        try:
+            registro.connetti()
+        finally:
+            registro.chiudi()
+        _PROVA.update(quando=time.time(), esiti=dict(registro.esiti))
+    return dict(_PROVA["esiti"])
+
+
 def stato_registro(percorso: Path | str | None = None) -> List[Dict[str, Any]]:
     """Stato dichiarato dei server, senza connettersi (per la UI)."""
     righe = []
@@ -280,6 +295,7 @@ class RegistroMCP:
         self.server: Dict[str, ServerMCP] = {}
         self.mappa: Dict[str, Tuple[str, str]] = {}
         self.strumenti: List[Dict[str, Any]] = []
+        self.esiti: Dict[str, str] = {}      # server acceso -> com'e' andata la connessione
 
     def connetti(self) -> List[Dict[str, Any]]:
         try:
@@ -295,8 +311,9 @@ class RegistroMCP:
                 for valore in [*(config.get("headers") or {}).values(), *(config.get("env") or {}).values()]:
                     risolvi_valore(valore)
             except ErroreMCP as exc:
-                # non ancora configurato (es. token non messo): si vede nello stato, non e' un guasto
-                self.log(f"MCP {nome}: non configurato ({exc})", "info")
+                # acceso ma senza il suo segreto: si dice (o lo si spegne nel registro)
+                self.esiti[nome] = f"non configurato: {exc}"
+                self.log(f"MCP {nome}: non configurato ({exc})", "warning")
                 continue
             server = ServerMCP(nome, config)
             try:
@@ -304,6 +321,7 @@ class RegistroMCP:
                 disponibili = server.strumenti()
             except Exception as exc:
                 server.chiudi()
+                self.esiti[nome] = f"non disponibile: {exc}"
                 self.log(f"MCP {nome}: non disponibile ({exc})", "warning")
                 continue
             ammessi = config.get("tools") or []
@@ -321,6 +339,12 @@ class RegistroMCP:
                     "parameters": schema}})
                 self.mappa[funzione] = (nome, strumento["name"])
             self.server[nome] = server
+            if not scelti:
+                nomi = ", ".join(sorted(t["name"] for t in disponibili)[:12])
+                self.esiti[nome] = f"connesso ma nessuno strumento ammesso (il server offre: {nomi})"
+                self.log(f"MCP {nome}: {self.esiti[nome]}", "warning")
+                continue
+            self.esiti[nome] = f"connesso: {len(scelti)} strumenti"
             self.log(f"🔌 MCP {nome}: {len(scelti)} strumenti", "info")
         self.strumenti = strumenti
         return strumenti

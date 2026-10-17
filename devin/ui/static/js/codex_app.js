@@ -1304,7 +1304,7 @@ function renderCentralGovernance(knowledge, council, routing, tools, operations)
     "governance-mcp-status",
     externalMcp.status
       ? [`${externalMcp.registered_count ?? 0} registrati · ${externalMcp.status}`,
-        ...(externalMcp.servers ?? []).map((server) => `${server.name}: ${server.status}`)].join(" · ")
+        ...(externalMcp.servers ?? []).map((server) => `${server.name}: ${server.connection || server.status}`)].join(" · ")
       : "registry non disponibile",
   );
 
