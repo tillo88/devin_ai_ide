@@ -1325,6 +1325,10 @@ async def api_chat(req: ChatRequest):
                 if messaggi and messaggi[0].get("role") == "system":
                     messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + "\n\n"
                                  + risolutore.NOTA_PROMPT}] + list(messaggi[1:])
+            from devin.core import modella3d
+            modella_pronta, _ = modella3d.disponibile(ai.config)
+            if modella_pronta:
+                strumenti_mcp = strumenti_mcp + [modella3d.STRUMENTO]
             from devin.core import occhi
             occhi_pronti, motivo_occhi = occhi.disponibile(ai.config)
             print(f"[Chat] browser per guardare le pagine: {motivo_occhi}")
@@ -1373,6 +1377,19 @@ async def api_chat(req: ChatRequest):
                 conversazione.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
                 for chiamata in chiamate:
                     funzione = chiamata.get("function") or {}
+                    if funzione.get("name") == "modella_3d" and modella_pronta:
+                        yield f"event: info\ndata: {json.dumps({'message': '🧊 Modello il pezzo 3D'})}\n\n"
+                        try:
+                            argomenti = json.loads(funzione.get("arguments") or "{}")
+                            cartella_modelli = (Path(req.project_path) / "modelli") if req.project_path else None
+                            risultato = await run_in_threadpool(
+                                modella3d.modella, str(argomenti.get("codice") or ""),
+                                str(argomenti.get("nome") or "pezzo"), cartella_modelli, ai.config)
+                        except (ValueError, TypeError) as exc:
+                            risultato = f"ERRORE: argomenti non validi ({exc})"
+                        conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
+                                              "content": risultato})
+                        continue
                     if funzione.get("name") == "guarda_pagina" and occhi_pronti:
                         try:
                             argomenti = json.loads(funzione.get("arguments") or "{}")

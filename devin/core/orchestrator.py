@@ -731,6 +731,7 @@ class Orchestrator:
             mcp=mcp,
             risolvi=self._risolutore(),
             guarda=self._occhi(),
+            modella=self._modellatore(),
             contesto_token=contesto_token,
             max_turni=int(cfg.get("agent_max_turns", 60) or 60),
         )
@@ -798,6 +799,15 @@ class Orchestrator:
             self._log(f"Risolutore di vincoli non disponibile: {motivo}", "info")
             return None
         return lambda codice, secondi=120: risolutore.esegui(codice, secondi, self.config or {})
+
+    def _modellatore(self):
+        """La modellazione 3D (build123d + controlli mesh), se installata."""
+        from devin.core import modella3d
+        pronto, motivo = modella3d.disponibile(self.config or {})
+        if not pronto:
+            self._log(f"Modellazione 3D non disponibile: {motivo}", "info")
+            return None
+        return lambda codice, nome, cartella: modella3d.modella(codice, nome, cartella, config=self.config or {})
 
     def _occhi(self):
         """Il browser per guardare le pagine (anche dell'app in costruzione), se installato."""

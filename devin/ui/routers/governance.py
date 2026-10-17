@@ -27,6 +27,14 @@ def _stato_risolutore():
             "python": str(risolutore.interprete()), "tool": "risolvi_vincoli"}
 
 
+def _stato_3d():
+    """build123d + trimesh nell'ambiente strumenti?"""
+    from devin.core import modella3d
+
+    pronto, motivo = modella3d.disponibile()
+    return {"status": "enabled" if pronto else "unavailable", "detail": motivo, "tool": "modella_3d"}
+
+
 def _stato_occhi():
     """Il browser (Chromium di Playwright) per guardare le pagine c'e'?"""
     from devin.core import occhi
@@ -77,6 +85,7 @@ async def api_tools_status():
         "external_mcp": _stato_mcp(),
         "constraint_solver": _stato_risolutore(),
         "page_viewer": _stato_occhi(),
+        "cad_3d": _stato_3d(),
         "tools": [
             {
                 "tool_id": "project_files",
