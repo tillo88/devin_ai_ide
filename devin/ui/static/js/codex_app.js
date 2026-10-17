@@ -2810,7 +2810,10 @@ function renderAssistantStream(node, raw) {
   const pre = panel.querySelector("pre");
   const preInFondo = inFondo(pre, 40);
   pre.textContent = reasoning;
-  if (panel.open && !node._reasoningDone) seguiFondo(pre, preInFondo);
+  // Segue il fondo finche' e' aperto e chi legge e' in fondo. Prima solo
+  // finche' il "primo" pensiero non era finito: dopo una ricerca web o una
+  // nota il modello ripensa, ma il riquadro restava fermo (17/10).
+  if (panel.open) seguiFondo(pre, preInFondo);
   renderNote(node);
 }
 
