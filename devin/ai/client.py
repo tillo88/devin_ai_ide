@@ -755,6 +755,27 @@ class AIClient:
         return {"content": "".join(content), "reasoning": "".join(ragionamento),
                 "tool_calls": lista, "finish_reason": fine}
 
+    @staticmethod
+    def _chiamate_ripulite(risposta, tools):
+        """Chiamate scritte come testo -> chiamate vere; parametri col nome sbagliato -> schema."""
+        from devin.ai.tool_text import adatta_argomenti, estrai_chiamate, _schemi
+
+        if not risposta.get("tool_calls"):
+            testo, chiamate = estrai_chiamate(risposta.get("content") or "", tools)
+            if chiamate:
+                risposta = {**risposta, "content": testo, "tool_calls": chiamate}
+        schemi = _schemi(tools)
+        for chiamata in risposta.get("tool_calls") or []:
+            funzione = chiamata.get("function") or {}
+            try:
+                argomenti = json.loads(funzione.get("arguments") or "{}")
+            except ValueError:
+                continue
+            adattati = adatta_argomenti(argomenti, schemi.get(funzione.get("name"), {}))
+            if adattati is not argomenti:
+                funzione["arguments"] = json.dumps(adattati, ensure_ascii=False)
+        return risposta
+
     def chiama_con_strumenti(self, messages, tools, mode="reasoning", sforzo="", max_tokens=None,
                              timeout=None):
         """Un turno con tool calling nativo (API ``tools`` di llama-server).
@@ -780,7 +801,7 @@ class AIClient:
                         raise ValueError(f"richiesta rifiutata dal modello (HTTP {r.status_code}): "
                                          f"{(r.text or '')[:400]}")
                     r.raise_for_status()
-                    return self._raccogli_con_strumenti(r.iter_lines())
+                    return self._chiamate_ripulite(self._raccogli_con_strumenti(r.iter_lines()), tools)
                 finally:
                     chiudi = getattr(r, "close", None)
                     if callable(chiudi):
@@ -984,6 +1005,63 @@ class AIClient:
 
     def stream_eventi(self, messages, mode="reasoning", sforzo="", max_attempts=None,
                       response_format=None, max_tokens=None, tools=None):
+        """``_stream_eventi_grezzo`` piu' il recupero delle chiamate scritte come testo.
+
+        Con strumenti offerti, dal primo ``<tool_call>`` nella risposta in poi il
+        testo non si mostra: a fine stream diventa una chiamata vera (se e' di
+        uno strumento offerto) oppure, se non si riconosce, si consegna com'e'.
+        """
+        from devin.ai.tool_text import APRE, estrai_chiamate
+
+        grezzo = self._stream_eventi_grezzo(messages, mode=mode, sforzo=sforzo, max_attempts=max_attempts,
+                                            response_format=response_format, max_tokens=max_tokens,
+                                            tools=tools)
+        if not tools:
+            yield from grezzo
+            return
+        trattenuto = ""          # possibile inizio di <tool_call> o markup gia' iniziato
+        in_markup = False
+        native = None
+        try:
+            for evento in grezzo:
+                if evento.get("tipo") == "chiamate":
+                    native = evento
+                    continue
+                if evento.get("tipo") != "risposta":
+                    yield evento
+                    continue
+                trattenuto += evento.get("testo") or ""
+                if in_markup:
+                    continue
+                inizio = trattenuto.find(APRE)
+                if inizio != -1:
+                    if inizio:
+                        yield {"tipo": "risposta", "testo": trattenuto[:inizio]}
+                    trattenuto, in_markup = trattenuto[inizio:], True
+                    continue
+                tieni = self._quanto_trattenere(trattenuto, APRE)
+                if len(trattenuto) > tieni:
+                    yield {"tipo": "risposta", "testo": trattenuto[:len(trattenuto) - tieni]}
+                    trattenuto = trattenuto[len(trattenuto) - tieni:]
+        finally:
+            grezzo.close()
+        if native is not None:
+            if trattenuto:
+                yield {"tipo": "risposta", "testo": trattenuto}
+            yield self._evento_chiamate_ripulito(native, tools)
+            return
+        resto, chiamate = estrai_chiamate(trattenuto, tools) if in_markup else (trattenuto, [])
+        if resto:
+            yield {"tipo": "risposta", "testo": resto}
+        if chiamate:
+            yield {"tipo": "chiamate", "testo": "", "chiamate": chiamate, "da_testo": True}
+
+    def _evento_chiamate_ripulito(self, evento, tools):
+        ripulita = self._chiamate_ripulite({"tool_calls": evento.get("chiamate") or []}, tools)
+        return {**evento, "chiamate": ripulita["tool_calls"]}
+
+    def _stream_eventi_grezzo(self, messages, mode="reasoning", sforzo="", max_attempts=None,
+                              response_format=None, max_tokens=None, tools=None):
         """Streaming che DISTINGUE il ragionamento dalla risposta.
 
         Produce dizionari {"tipo": ..., "testo": ...} con tipo fra

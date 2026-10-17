@@ -526,3 +526,69 @@ def test_lo_stream_consegna_le_chiamate_di_strumenti_alla_fine(client):
 def test_senza_strumenti_il_corpo_non_li_contiene(client):
     _stream(client, [{"content": "ciao"}])
     assert "tools" not in client._stato["corpi"][-1]
+
+
+CERCA = {"type": "function", "function": {"name": "cerca_web", "parameters": {
+    "type": "object", "properties": {"domanda": {"type": "string"}}, "required": ["domanda"]}}}
+MARKUP_17_10 = ("Giusto, cerco adesso.\n\n<tool_call>\n<function=cerca_web>\n<parameter=query>\n"
+                "schema turni 4 squadre ciclo continuo\n</parameter>\n</function>\n</tool_call>\n"
+                "<tool_call>\n<function=cerca_web>\n<parameter=query>\nturnazione 1/21\n</parameter>\n"
+                "</function>\n</tool_call>")
+
+
+def test_le_chiamate_scritte_come_testo_diventano_vere_e_non_si_vedono(client):
+    # il caso del 17/10, spezzato a pezzetti come arriva dallo stream
+    pezzi = [{"content": MARKUP_17_10[i:i + 7]} for i in range(0, len(MARKUP_17_10), 7)]
+    righe = ["data: " + json.dumps({"choices": [{"delta": p}]}) for p in pezzi] + ["data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[CERCA]))
+    testo = "".join(e["testo"] for e in eventi if e["tipo"] == "risposta")
+    assert "<tool_call" not in testo and "<" not in testo
+    assert testo.strip() == "Giusto, cerco adesso."
+    chiamate = [e for e in eventi if e["tipo"] == "chiamate"][0]["chiamate"]
+    assert [json.loads(c["function"]["arguments"]) for c in chiamate] == [
+        {"domanda": "schema turni 4 squadre ciclo continuo"}, {"domanda": "turnazione 1/21"}]
+
+
+def test_markup_di_uno_strumento_non_offerto_resta_testo(client):
+    altro = "Ecco: <tool_call>\n<function=rm_rf>\n<parameter=x>\n1\n</parameter>\n</function>\n</tool_call>"
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"content": altro}}]}), "data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[CERCA]))
+    assert "".join(e["testo"] for e in eventi if e["tipo"] == "risposta") == altro
+    assert not [e for e in eventi if e["tipo"] == "chiamate"]
+
+
+def test_un_minore_nel_testo_normale_non_trattiene_nulla(client):
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"content": t}}]}) for t in ["3 <", " 5 e <t", "ag> ok"]]
+    client._stato["risposta"] = _FintaRisposta(righe + ["data: [DONE]"])
+    eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[CERCA]))
+    assert "".join(e["testo"] for e in eventi if e["tipo"] == "risposta") == "3 < 5 e <tag> ok"
+
+
+def test_chiamata_nativa_con_parametro_sbagliato_viene_adattata(client):
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"tool_calls": [
+        {"index": 0, "id": "c1", "function": {"name": "cerca_web", "arguments": "{\"query\": \"eclissi\"}"}}]}}]}),
+        "data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    eventi = list(client.stream_eventi([{"role": "user", "content": "x"}], tools=[CERCA]))
+    chiamata = [e for e in eventi if e["tipo"] == "chiamate"][0]["chiamate"][0]
+    assert json.loads(chiamata["function"]["arguments"]) == {"domanda": "eclissi"}
+
+
+def test_formato_json_hermes_e_adatta_argomenti():
+    from devin.ai.tool_text import adatta_argomenti, estrai_chiamate
+    testo, chiamate = estrai_chiamate(
+        'prima <tool_call>{"name": "cerca_web", "arguments": {"q": "x"}}</tool_call>', [CERCA])
+    assert testo == "prima" and json.loads(chiamate[0]["function"]["arguments"]) == {"domanda": "x"}
+    schema = CERCA["function"]["parameters"]
+    assert adatta_argomenti({"a": 1, "b": 2}, schema) == {"a": 1, "b": 2}     # ambiguo: non si tocca
+    assert adatta_argomenti({"domanda": "y"}, schema) == {"domanda": "y"}
+
+
+def test_l_agente_recupera_le_chiamate_scritte_come_testo():
+    from devin.ai.client import AIClient
+    risposta = AIClient._chiamate_ripulite(
+        {"content": MARKUP_17_10, "tool_calls": [], "reasoning": "", "finish_reason": "stop"}, [CERCA])
+    assert risposta["content"] == "Giusto, cerco adesso."
+    assert len(risposta["tool_calls"]) == 2
