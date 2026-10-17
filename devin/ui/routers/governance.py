@@ -18,6 +18,29 @@ from devin.ui.routers.explorer import (
 router = APIRouter()
 
 
+def _stato_mcp():
+    """I server MCP del registro (config/mcp_servers.json), senza connettersi.
+
+    "pronto" vuol dire acceso e con i suoi segreti presenti; la connessione vera
+    avviene all'inizio di un run o di un messaggio, e un errore li' si vede in chat.
+    """
+    from devin.ai.mcp_client import ErroreMCP, stato_registro
+
+    try:
+        servers = stato_registro()
+    except ErroreMCP as exc:
+        return {"status": "invalid", "error": str(exc), "registered_count": 0,
+                "servers": [], "invocation_enabled": False}
+    pronti = [s for s in servers if s["status"] == "pronto"]
+    return {
+        "status": "enabled" if pronti else ("configured" if servers else "unconfigured"),
+        "registered_count": len(servers),
+        "servers": servers,
+        "invocation_enabled": bool(pronti),
+        "policy": "allowlist per server (campo tools); risultati trattati come dati",
+    }
+
+
 @router.get("/api/tools/status")
 async def api_tools_status():
     """Return the bounded, deny-by-default tool inventory without probing models."""
@@ -29,12 +52,7 @@ async def api_tools_status():
             "mutations": "explicit_human_action",
             "model_execution": False,
         },
-        "external_mcp": {
-            "status": "unconfigured",
-            "registered_count": 0,
-            "servers": [],
-            "invocation_enabled": False,
-        },
+        "external_mcp": _stato_mcp(),
         "tools": [
             {
                 "tool_id": "project_files",

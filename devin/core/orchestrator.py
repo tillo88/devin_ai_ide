@@ -680,6 +680,19 @@ class Orchestrator:
         }
 
     def _costruisci_con_agente(self, task: str, root: Path, contesto: str = ""):
+        """Come ``_lavoro_agente``, con i server MCP accesi per la durata del run."""
+        mcp = None
+        if ((self.config or {}).get("execution", {}) or {}).get("mcp_enabled", True):
+            from devin.ai.mcp_client import RegistroMCP
+            mcp = RegistroMCP(log=self._log)
+            mcp.connetti()
+        try:
+            return self._lavoro_agente(task, root, contesto, mcp)
+        finally:
+            if mcp is not None:
+                mcp.chiudi()
+
+    def _lavoro_agente(self, task: str, root: Path, contesto: str = "", mcp=None):
         """Lo scaffold fatto da DEVIN con gli strumenti, finche' il gate e' verde.
 
         L'agente lavora nella sandbox; il suo "ho finito" non conta: si ripassa
@@ -715,6 +728,7 @@ class Orchestrator:
             verifica=gate, cerca_web=web,
             soluzioni=lambda errore: self._soluzioni_passate(errore),
             note=self._note_del_run,
+            mcp=mcp,
             contesto_token=contesto_token,
             max_turni=int(cfg.get("agent_max_turns", 60) or 60),
         )
