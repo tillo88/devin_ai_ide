@@ -80,14 +80,14 @@ const sorgente = fs.readFileSync(SORGENTE, "utf8");
 const NOMI = ["splitReasoning", "reasoningCompleto", "formatDurata", "testoRiepilogo",
   "fermaCronometroRagionamento", "avviaCronometroRagionamento", "rendiRispostaInCorso",
   "renderAssistantStream", "testoLettura", "testoCompattazione", "marcatoreCompattazione",
-  "inFondo", "seguiFondo", "renderNote", "dividiLavoro", "renderLavoro"];
+  "inFondo", "seguiFondo", "renderNote", "dividiLavoro", "renderLavoro", "riprendiRagionamento", "chiudiRipresaRagionamento"];
 const corpo = NOMI.map((n) => estrai(sorgente, n)).join("\n");
 
 const fabbrica = new Function("document", "THINK_OPEN", "THINK_CLOSE", "setInterval", "clearInterval",
   "renderMarkdownBody",
   `${corpo}\nreturn { splitReasoning, reasoningCompleto, formatDurata, testoRiepilogo,
      fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream, testoLettura,
-     testoCompattazione, marcatoreCompattazione, inFondo, seguiFondo, dividiLavoro };`);
+     testoCompattazione, marcatoreCompattazione, inFondo, seguiFondo, dividiLavoro, riprendiRagionamento, chiudiRipresaRagionamento };`);
 
 let intervalliVivi = 0;
 // il markdown vero lo prova test_chat_markdown.mjs: qui conta chi lo chiama e con cosa
@@ -161,6 +161,25 @@ prova("i passaggi con gli strumenti vanno nel riquadro, la risposta resta in vis
   const prima = nuovoMessaggio();
   F.renderAssistantStream(prima, "solo testo");
   assert.equal(prima.parentElement.querySelector(".work-panel"), null);
+});
+
+prova("il pensiero ripreso dopo uno strumento riapre il conteggio e lo somma", () => {
+  const n = nuovoMessaggio();
+  n._reasoning = "primo";
+  n._reasoningDone = { seconds: 575, tokens: 7798 };     // il "reasoning_done" unico del backend
+  F.renderAssistantStream(n, "");
+  F.riprendiRagionamento(n);                             // arriva altro pensiero
+  n._reasoningStart = Date.now() - 10000;
+  F.riprendiRagionamento(n);
+  const sommario = F.testoRiepilogo(n);
+  assert.match(sommario, /sta pensando/, sommario);
+  assert.match(sommario, /9m 4[45]s/, sommario);
+  assert.match(sommario, /7\.?800 token/, sommario);
+  F.chiudiRipresaRagionamento(n);                        // risposta o strumento: si richiude
+  assert.ok(n._reasoningDone && n._reasoningDone.tokens === 7800, JSON.stringify(n._reasoningDone));
+  assert.ok(n._reasoningDone.seconds >= 585 && n._reasoningDone.seconds < 587);
+  F.chiudiRipresaRagionamento(n);                        // due volte non cambia niente
+  assert.equal(n._reasoningDone.tokens, 7800);
 });
 
 prova("il pensiero dall'evento SSE finisce nel pannello", () => {

@@ -2722,8 +2722,36 @@ function testoRiepilogo(node) {
     const token = fatto.tokens ? ` · ${fatto.tokens.toLocaleString("it-IT")} token` : "";
     return `Ragionamento — ${formatDurata(fatto.seconds)}${token}`;
   }
-  const trascorsi = node._reasoningStart ? (Date.now() - node._reasoningStart) / 1000 : 0;
-  return `Ragionamento — sta pensando (${formatDurata(trascorsi)})`;
+  const base = node._reasoningBase;
+  const trascorsi = (base?.seconds || 0) + (node._reasoningStart ? (Date.now() - node._reasoningStart) / 1000 : 0);
+  const token = base ? ` · ${(base.tokens + (node._reasoningExtra || 0)).toLocaleString("it-IT")} token` : "";
+  return `Ragionamento — sta pensando (${formatDurata(trascorsi)})${token}`;
+}
+
+// 18/10: il backend manda "reasoning_done" una volta sola, alla prima parola della
+// risposta. Con gli strumenti il modello ripensa dopo ogni chiamata, e il riquadro
+// restava fermo sul primo conteggio ("9m 35s · 7798 token") mentre lavorava ancora.
+// Ora un nuovo pensiero riapre il conteggio sommandolo a quello di prima...
+function riprendiRagionamento(node) {
+  if (node._reasoningDone) {
+    node._reasoningBase = { ...node._reasoningDone };
+    node._reasoningDone = null;
+    node._reasoningStart = Date.now();
+    node._reasoningExtra = 0;
+  }
+  if (node._reasoningBase) node._reasoningExtra = (node._reasoningExtra || 0) + 1;
+}
+
+// ...e lo richiude alla prossima risposta o chiamata di strumento.
+function chiudiRipresaRagionamento(node) {
+  if (!node._reasoningBase || node._reasoningDone) return;
+  node._reasoningDone = {
+    seconds: node._reasoningBase.seconds + (Date.now() - (node._reasoningStart || Date.now())) / 1000,
+    tokens: node._reasoningBase.tokens + (node._reasoningExtra || 0),
+  };
+  fermaCronometroRagionamento(node);
+  const sommario = node.parentElement?.querySelector(".reasoning-panel")?.querySelector("summary");
+  if (sommario) sommario.textContent = testoRiepilogo(node);
 }
 
 function fermaCronometroRagionamento(node) {
@@ -2958,6 +2986,7 @@ function applyChatEvent(event, assistantNode) {
   }
 
   if (event.type === "message" && payload.token) {
+    chiudiRipresaRagionamento(assistantNode);
     const thread = $("chat-thread");
     const giu = inFondo(thread);
     assistantNode._raw = (assistantNode._raw || "") + payload.token;
@@ -3008,6 +3037,7 @@ function applyChatEvent(event, assistantNode) {
     // Il pensiero NON entra in _raw: _raw e' quello che diventa la risposta
     // mostrata e, lato server, quello che finisce nello storico della chat.
     assistantNode._reasoning = (assistantNode._reasoning || "") + payload.token;
+    riprendiRagionamento(assistantNode);
     assistantNode._reasoningStart = assistantNode._reasoningStart || Date.now();
     avviaCronometroRagionamento(assistantNode);
     const thread = $("chat-thread");
@@ -3063,11 +3093,14 @@ function applyChatEvent(event, assistantNode) {
     // Il tempo di pensiero arriva separato dal tempo di scrittura: tenerli
     // uniti renderebbe `tps` una cifra senza senso (trenta token dopo mezz'ora
     // di ragionamento darebbero 0,02 token/s).
+    chiudiRipresaRagionamento(assistantNode);
     fermaCronometroRagionamento(assistantNode);
     if (payload.reasoning_seconds) {
+      // reasoning_seconds del backend si ferma alla prima parola: tiene il piu' lungo
+      const prima = assistantNode._reasoningDone || { seconds: 0, tokens: 0 };
       assistantNode._reasoningDone = {
-        seconds: Number(payload.reasoning_seconds) || 0,
-        tokens: Number(payload.reasoning_tokens) || 0,
+        seconds: Math.max(Number(payload.reasoning_seconds) || 0, prima.seconds),
+        tokens: Math.max(Number(payload.reasoning_tokens) || 0, prima.tokens),
       };
       const pannello = assistantNode.parentElement?.querySelector(".reasoning-panel");
       const sommario = pannello?.querySelector("summary");
@@ -3099,6 +3132,7 @@ function applyChatEvent(event, assistantNode) {
   }
 
   if (event.type === "info" || event.type === "warning") {
+    chiudiRipresaRagionamento(assistantNode);
     // un'informazione (es. "🌐 Cerco sul web: ...") e' una riga in corsivo,
     // non un pezzo della risposta con l'etichetta tecnica davanti
     const riga = event.type === "info"
