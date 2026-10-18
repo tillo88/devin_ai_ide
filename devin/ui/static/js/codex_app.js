@@ -2671,6 +2671,8 @@ function parseSseBlock(block) {
 }
 
 const THINK_OPEN = "<think>";
+// Segna le righe degli strumenti nel testo della risposta in corso (vedi dividiLavoro).
+const INFO_SEGNO = "\u2063";
 const THINK_CLOSE = "</think>";
 
 // Separa il reasoning dalla risposta, reggendo anche un blocco ancora APERTO:
@@ -2809,11 +2811,12 @@ function aggiornaTornaInFondo() {
 }
 
 function renderAssistantStream(node, raw) {
-  const answer = splitReasoning(raw).answer;
+  const { lavoro, passi, finale } = dividiLavoro(splitReasoning(raw).answer);
   const reasoning = reasoningCompleto(node, raw);
-  rendiRispostaInCorso(node, answer);
+  rendiRispostaInCorso(node, finale);
   const article = node.parentElement;
   if (!article) return;
+  renderLavoro(node, lavoro, passi);
   let panel = article.querySelector(".reasoning-panel");
   if (!reasoning) { fermaCronometroRagionamento(node); panel?.remove(); return; }
   if (!panel) {
@@ -2835,6 +2838,47 @@ function renderAssistantStream(node, raw) {
   // nota il modello ripensa, ma il riquadro restava fermo (17/10).
   if (panel.open) seguiFondo(pre, preInFondo);
   renderNote(node);
+}
+
+// I passaggi con gli strumenti ("🧊 Modello il pezzo 3D", "🌐 Cerco sul web" e il
+// testo che il modello scrive fra una chiamata e l'altra) in un riquadro
+// richiudibile: prima si prendevano tutta la chat e la risposta finale finiva in
+// fondo a una pagina di tentativi (18/10). Le righe degli strumenti arrivano
+// segnate con INFO_SEGNO; quello che viene dopo l'ultima e' la risposta.
+function dividiLavoro(testo) {
+  const parti = String(testo || "").split(/\u2063([^\u2063]*)\u2063\n*/);
+  if (parti.length === 1) return { passi: [], lavoro: "", finale: parti[0] };
+  const passi = [];
+  const pezzi = [];
+  if (parti[0].trim()) pezzi.push(parti[0].trim());
+  for (let i = 1; i < parti.length; i += 2) {
+    passi.push(parti[i]);
+    pezzi.push(`_${parti[i]}_`);
+    const dopo = parti[i + 1] || "";
+    if (i + 2 < parti.length && dopo.trim()) pezzi.push(dopo.trim());
+  }
+  return { passi, lavoro: pezzi.join("\n\n"), finale: (parti[parti.length - 1] || "").replace(/^\s+/, "") };
+}
+
+function renderLavoro(node, lavoro, passi) {
+  const article = node.parentElement;
+  if (!article) return;
+  let panel = article.querySelector(".work-panel");
+  if (!passi.length) { panel?.remove(); return; }
+  if (!panel) {
+    panel = document.createElement("details");
+    panel.className = "work-panel";
+    panel.innerHTML = "<summary></summary><div></div>";
+    article.insertBefore(panel, node);
+  }
+  const n = passi.length;
+  panel.querySelector("summary").textContent =
+    `🔧 ${n} ${n === 1 ? "passaggio" : "passaggi"} con gli strumenti · ultimo: ${passi[n - 1]}`;
+  const corpo = panel.querySelector("div");
+  if (corpo._lavoro !== lavoro) {
+    corpo._lavoro = lavoro;
+    renderMarkdownBody(corpo, lavoro);
+  }
 }
 
 // Le note scritte mentre DEVIN lavora: una riga richiudibile come il
@@ -3057,7 +3101,9 @@ function applyChatEvent(event, assistantNode) {
   if (event.type === "info" || event.type === "warning") {
     // un'informazione (es. "🌐 Cerco sul web: ...") e' una riga in corsivo,
     // non un pezzo della risposta con l'etichetta tecnica davanti
-    const riga = event.type === "info" ? `_${payload.message ?? ""}_\n\n` : `[warning] ${payload.message ?? ""}\n`;
+    const riga = event.type === "info"
+      ? `${INFO_SEGNO}${String(payload.message ?? "").replaceAll(INFO_SEGNO, "")}${INFO_SEGNO}\n\n`
+      : `[warning] ${payload.message ?? ""}\n`;
     assistantNode._raw = (assistantNode._raw || "") + riga;
     renderAssistantStream(assistantNode, assistantNode._raw);
     return;
@@ -3444,7 +3490,7 @@ async function sendChatMessage(message) {
     if (buffer.trim()) applyChatEvent(parseSseBlock(buffer), assistantNode);
     // A risposta finita il testo diventa markdown reso. Durante lo stream resta
     // testo semplice: ri-analizzare tutto a ogni token costerebbe O(n^2).
-    const finale = splitReasoning(assistantNode._raw || "").answer;
+    const finale = dividiLavoro(splitReasoning(assistantNode._raw || "").answer).finale;
     if (finale.trim()) renderMarkdownBody(assistantNode, finale);
   } catch (err) {
     if (err?.name !== "AbortError") assistantNode.textContent += `\n[error] ${errorMessage(err, "Stream interrotto")}`;
