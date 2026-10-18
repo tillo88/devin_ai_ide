@@ -6183,6 +6183,17 @@ body.codex-shell {
 }
 .chat-jump[hidden] { display: none; }
 
+/* Passaggi con gli strumenti: richiudibili, la risposta finale resta in vista (18/10). */
+.work-panel {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.82rem;
+  border-left: 2px solid rgba(120, 170, 240, 0.7);
+  padding-left: 0.6rem;
+  opacity: 0.85;
+}
+.work-panel > summary { cursor: pointer; user-select: none; }
+.work-panel > div { margin-top: 0.4rem; max-height: 18rem; overflow-y: auto; }
+
 /* Note scritte mentre DEVIN lavora: richiudibili come il ragionamento. */
 .note-panel {
   margin: 0 0 0.5rem 0;

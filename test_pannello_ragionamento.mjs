@@ -80,14 +80,14 @@ const sorgente = fs.readFileSync(SORGENTE, "utf8");
 const NOMI = ["splitReasoning", "reasoningCompleto", "formatDurata", "testoRiepilogo",
   "fermaCronometroRagionamento", "avviaCronometroRagionamento", "rendiRispostaInCorso",
   "renderAssistantStream", "testoLettura", "testoCompattazione", "marcatoreCompattazione",
-  "inFondo", "seguiFondo", "renderNote"];
+  "inFondo", "seguiFondo", "renderNote", "dividiLavoro", "renderLavoro"];
 const corpo = NOMI.map((n) => estrai(sorgente, n)).join("\n");
 
 const fabbrica = new Function("document", "THINK_OPEN", "THINK_CLOSE", "setInterval", "clearInterval",
   "renderMarkdownBody",
   `${corpo}\nreturn { splitReasoning, reasoningCompleto, formatDurata, testoRiepilogo,
      fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream, testoLettura,
-     testoCompattazione, marcatoreCompattazione, inFondo, seguiFondo };`);
+     testoCompattazione, marcatoreCompattazione, inFondo, seguiFondo, dividiLavoro };`);
 
 let intervalliVivi = 0;
 // il markdown vero lo prova test_chat_markdown.mjs: qui conta chi lo chiama e con cosa
@@ -140,6 +140,27 @@ prova("compattazione ripiegata: il motivo si legge", () => {
   assert.match(testo, /senza riassunto: 6 messaggi/);
   assert.match(testo, /`x.py` non compare nella chat/);
   assert.match(F.testoCompattazione({ error: "boom" }), /non riuscita: boom/);
+});
+
+prova("i passaggi con gli strumenti vanno nel riquadro, la risposta resta in vista", () => {
+  const S = "\u2063";
+  const n = nuovoMessaggio();
+  let raw = `${S}🧊 Modello il pezzo 3D${S}\n\nCorreggo la sintassi.\n${S}🧊 Modello il pezzo 3D${S}\n\n`;
+  F.renderAssistantStream(n, raw);
+  const lavoro = n.parentElement.querySelector(".work-panel");
+  assert.ok(lavoro, "il riquadro dei passaggi doveva esserci");
+  assert.match(lavoro.querySelector("summary").textContent, /2 passaggi con gli strumenti · ultimo: 🧊 Modello il pezzo 3D/);
+  assert.match(lavoro.querySelector("div").textContent, /Correggo la sintassi\./);
+  assert.equal(n.textContent, "", "mentre lavora la risposta e' ancora vuota");
+  raw += "Il supporto misura 70 x 80 x 100 mm.";
+  F.renderAssistantStream(n, raw);
+  assert.equal(n.textContent, "Il supporto misura 70 x 80 x 100 mm.");
+  assert.doesNotMatch(n.textContent, /Modello il pezzo/);
+  const d = F.dividiLavoro("risposta senza strumenti");
+  assert.deepEqual([d.passi.length, d.finale], [0, "risposta senza strumenti"]);
+  const prima = nuovoMessaggio();
+  F.renderAssistantStream(prima, "solo testo");
+  assert.equal(prima.parentElement.querySelector(".work-panel"), null);
 });
 
 prova("il pensiero dall'evento SSE finisce nel pannello", () => {
