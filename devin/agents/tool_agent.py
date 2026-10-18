@@ -299,7 +299,8 @@ class AgenteStrumenti:
                 return "memoria non disponibile"
             return self._soluzioni(str(args["errore"])) or "nessuna soluzione verificata per un errore simile"
         if nome == "modella_3d" and self._modella is not None:
-            return self._modella(str(args["codice"]), str(args.get("nome") or "pezzo"), self.radice / "modelli")
+            return self._modella(str(args["codice"]), str(args.get("nome") or "pezzo"), self.radice / "modelli",
+                                 materiale=str(args.get("materiale") or ""), qualita=str(args.get("qualita") or ""))
         if nome == "guarda_pagina" and self._guarda is not None:
             return self._guarda(str(args["url"]), avvia=args.get("avvia"), cartella=self.radice,
                                 aspetta_secondi=args.get("aspetta_secondi") or 1,
