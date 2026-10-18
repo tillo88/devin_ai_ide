@@ -91,11 +91,19 @@ def test_con_lo_slicer_arrivano_tempo_e_filamento(config, tmp_path):
     finto = tmp_path / "finto-slicer"
     finto.write_text("#!/bin/sh\nfor a in \"$@\"; do case $prev in --output) out=$a;; esac; prev=$a; done\n"
                      "printf ';LAYER_CHANGE\\n; total filament used [g] = 7.10\\n; filament used [mm] = 2380.5\\n"
-                     "; estimated printing time (normal mode) = 41m 5s\\n' > \"$out\"\n")
+                     "; total filament cost = 0.18\\n; estimated printing time (normal mode) = 41m 5s\\n' > \"$out\"\n")
     finto.chmod(0o755)
     config["tools"]["slicer"] = {"bin": str(finto)}
     testo = modella3d.modella("risultato = Box(20, 30, 10, align=(Align.MIN,)*3)", "s", tmp_path / "o",
                               config=config)
-    assert "slicer (PrusaSlicer, profilo generico: ugello 0.4 mm, strato 0.2 mm, riempimento 15%" in testo, testo
-    assert "supporti no): tempo 41m 5s, filamento 7.1 g (2.38 m), 1 strati" in testo
+    assert "slicer (PrusaSlicer, Bambu Lab P2S, PLA Matte HF 220°C piatto 55°C, qualita' 'standard 0.20'" in testo, testo
+    assert "supporti no): tempo 41m 5s (stima), filamento 7.1 g (2.38 m), costo 0.18 EUR, 1 strati" in testo
     assert str(tmp_path / "o" / "s.gcode") in testo
+
+
+
+def test_lo_schema_offre_materiali_e_qualita_della_p2s():
+    proprieta = modella3d.STRUMENTO["function"]["parameters"]["properties"]
+    assert "PETG HF" in proprieta["materiale"]["enum"] and "hueforge 0.08" in proprieta["qualita"]["enum"]
+    assert "Bambu Lab P2S" in modella3d.DESCRIZIONE
+    assert "bounding_box()" in modella3d.PROMEMORIA and "is_watertight()" in modella3d.PROMEMORIA

@@ -32,7 +32,8 @@ DESCRIZIONE = (
     "fatto, unita' in mm) e assegnando il pezzo finale alla variabile risultato. Lo strumento esporta STL e "
     "STEP e restituisce le misure vere: volume, ingombro X/Y/Z, se la mesh e' chiusa (stampabile), "
     "triangoli, e per la stampa FDM sbalzi, appoggio sul piano, orientamento migliore fra i 6 assi, peso se pieno "
-    "e, se lo slicer e' installato, tempo di stampa e filamento veri (G-code). "
+    "e, se lo slicer e' installato, tempo di stampa, filamento e costo veri (G-code) per la stampante di "
+    "Alessandro (Bambu Lab P2S) col materiale e la qualita' scelti. "
     "Usalo per oggetti da stampare in 3D o da modellare, poi controlla che le misure "
     "corrispondano alla richiesta e correggi. Forme base: Box(x, y, z, align=(Align.MIN,)*3); spostare e "
     "ruotare: Pos(x, y, z) * Rot(X=gradi) * pezzo; pezzi inclinati: Plane.YZ * Polygon(*punti, align=None) "
@@ -50,15 +51,36 @@ PROMEMORIA = """PROMEMORIA build123d 0.13 (esempi verificati, unita' in mm):
     pezzo = extrude(profilo, amount=70)   # spessore lungo X
 - unione e sottrazione: a + b, a - b; foro: pezzo - Pos(35, 40, 0) * Cylinder(5, 10)
 - raccordo: fillet(pezzo.edges().filter_by(Axis.Z), radius=2)
-- NON esistono: Box(..., centered=...), Rotation(asse, angolo), pezzo.rotate(vettore, angolo); is_valid e' una proprieta'.
+- misure dentro il codice: bb = pezzo.bounding_box(); bb.min.X, bb.max.Z, bb.size.Y; corpi: len(pezzo.solids())
+- NON esistono: Box(..., centered=...), Rotation(asse, angolo), pezzo.rotate(vettore, angolo), is_watertight();
+  is_valid e' una proprieta' (pezzo.is_valid, senza parentesi). Le misure le restituisce gia' lo strumento.
 - alla fine: risultato = pezzo"""
+
+def _parametri_stampa() -> Dict[str, Any]:
+    """Materiale e qualita' dai profili della stampante (config/stampante_p2s.json), se leggibili."""
+    from devin.core import affetta
+
+    try:
+        materiali, qualita = affetta.nomi()
+        predefiniti = affetta.profili()["predefiniti"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    return {
+        "materiale": {"type": "string", "enum": materiali,
+                      "description": f"filamento per lo slicer (predefinito {predefiniti['materiale']})"},
+        "qualita": {"type": "string", "enum": qualita,
+                    "description": f"profilo di stampa (predefinito {predefiniti['qualita']}; "
+                                   "hueforge per le stampe HueForge, TPU per i flessibili)"},
+    }
+
 
 STRUMENTO = {"type": "function", "function": {
     "name": "modella_3d",
     "description": DESCRIZIONE,
     "parameters": {"type": "object", "properties": {
         "codice": {"type": "string", "description": "codice build123d che assegna il pezzo a 'risultato'"},
-        "nome": {"type": "string", "description": "nome del file, es. supporto_telefono"}},
+        "nome": {"type": "string", "description": "nome del file, es. supporto_telefono"},
+        **_parametri_stampa()},
         "required": ["codice"], "additionalProperties": False}}}
 
 PRELUDIO = "from build123d import *\n"
@@ -145,8 +167,9 @@ def stampabilita(misure: Dict[str, Any]) -> List[str]:
     return righe
 
 
-def _affettato(misure: Dict[str, Any], salvati: List[str], config: Optional[Dict[str, Any]]) -> List[str]:
-    """Se lo slicer c'e', tempo e filamento veri; supporti solo se com'e' ci sono sbalzi."""
+def _affettato(misure: Dict[str, Any], salvati: List[str], config: Optional[Dict[str, Any]],
+               materiale: str = "", qualita: str = "") -> List[str]:
+    """Se lo slicer c'e', tempo, filamento e costo veri col profilo della stampante."""
     from devin.core import affetta
 
     if not affetta.disponibile(config)[0]:
@@ -155,7 +178,8 @@ def _affettato(misure: Dict[str, Any], salvati: List[str], config: Optional[Dict
     if stl is None or not misure.get("chiusa"):
         return ["slicer: saltato (mesh non chiusa o STL mancante)"]
     sbalzi = float(((misure.get("orientamenti") or {}).get("Z-") or {}).get("sbalzi_mm2") or 0)
-    return [affetta.riga(affetta.affetta(stl, supporti=sbalzi > 0, config=config))]
+    return [affetta.riga(affetta.affetta(stl, sbalzi=sbalzi > 0, config=config,
+                                         materiale=materiale, qualita=qualita))]
 
 
 def disponibile(config: Optional[Dict[str, Any]] = None) -> tuple[bool, str]:
@@ -175,7 +199,8 @@ def _nome_sicuro(nome: str) -> str:
 
 
 def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = None,
-            config: Optional[Dict[str, Any]] = None, secondi: int = 180) -> str:
+            config: Optional[Dict[str, Any]] = None, secondi: int = 180,
+            materiale: str = "", qualita: str = "") -> str:
     """Testo per il modello (mai un'eccezione). I file finiscono in ``destinazione``."""
     pronto, motivo = disponibile(config)
     if not pronto:
@@ -225,7 +250,7 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
         "file: " + ", ".join(salvati),
     ]
     righe_testo.extend(stampabilita(misure))
-    righe_testo.extend(_affettato(misure, salvati, config))
+    righe_testo.extend(_affettato(misure, salvati, config, str(materiale or ""), str(qualita or "")))
     if avviso:
         righe_testo.append(f"nota: {avviso}")
     return "\n".join(righe_testo)

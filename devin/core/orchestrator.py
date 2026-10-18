@@ -807,7 +807,8 @@ class Orchestrator:
         if not pronto:
             self._log(f"Modellazione 3D non disponibile: {motivo}", "info")
             return None
-        return lambda codice, nome, cartella: modella3d.modella(codice, nome, cartella, config=self.config or {})
+        return lambda codice, nome, cartella, materiale="", qualita="": modella3d.modella(
+            codice, nome, cartella, config=self.config or {}, materiale=materiale, qualita=qualita)
 
     def _occhi(self):
         """Il browser per guardare le pagine (anche dell'app in costruzione), se installato."""

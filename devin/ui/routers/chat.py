@@ -1383,8 +1383,10 @@ async def api_chat(req: ChatRequest):
                             argomenti = json.loads(funzione.get("arguments") or "{}")
                             cartella_modelli = (Path(req.project_path) / "modelli") if req.project_path else None
                             risultato = await run_in_threadpool(
-                                modella3d.modella, str(argomenti.get("codice") or ""),
-                                str(argomenti.get("nome") or "pezzo"), cartella_modelli, ai.config)
+                                lambda: modella3d.modella(
+                                    str(argomenti.get("codice") or ""), str(argomenti.get("nome") or "pezzo"),
+                                    cartella_modelli, ai.config, materiale=str(argomenti.get("materiale") or ""),
+                                    qualita=str(argomenti.get("qualita") or "")))
                         except (ValueError, TypeError) as exc:
                             risultato = f"ERRORE: argomenti non validi ({exc})"
                         conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
