@@ -39,10 +39,11 @@ _CAMPIONAMENTO_RETE = {
 }
 
 # Lo sforzo di ragionamento arriva al modello attraverso chat_template_kwargs.
-# Verificato sul rig: "xhigh" e l'assenza del parametro danno lo stesso
-# conteggio di token, "medium" uno diverso — quindi la manopola arriva davvero
-# al chat template e non viene ignorata.
-_SFORZI_AMMESSI = ("low", "medium", "high", "xhigh")
+# Solo i valori che il template di chat del modello accetta (18/10: il template
+# versionato di "Qwen38 Ara v5" ammette xhigh, medium e low; con un altro valore
+# fa fallire la richiesta). "high" non lo usava nessuno: tolto invece di
+# convertirlo di nascosto in un altro regime.
+_SFORZI_AMMESSI = ("low", "medium", "xhigh")
 
 # Un modello che pensa, a 8,8 token/s su un 27B, non risponde in 60 secondi.
 # I timeout storici (60/90/150 s) sono stati scritti per un modello che non
@@ -52,7 +53,6 @@ _TIMEOUT_PER_SFORZO = {
     "": 180,
     "low": 180,
     "medium": 600,
-    "high": 1200,
     "xhigh": 2400,
 }
 
@@ -501,6 +501,42 @@ class AIClient:
             return {"Authorization": f"Bearer {self.rig_api_key}"}
         return {}
 
+    def _server_rende_strumenti(self, url):
+        """Il template di chat del server mette da solo gli strumenti nel prompt?
+
+        Si chiede a ``/props`` una volta per server: se il template contiene
+        ``<tools>`` gli schemi passati in ``tools`` arrivano al modello e il
+        catalogo testuale nel messaggio di sistema sarebbe un doppione (token in
+        piu' e due istruzioni di formato diverse). Se il server non risponde o non
+        lo dice, si tiene il catalogo testuale com'era, e lo si scrive nel log.
+        """
+        if not hasattr(self, "_rende_strumenti"):
+            self._rende_strumenti = {}
+        parti = urlparse(url)
+        base = f"{parti.scheme}://{parti.netloc}"
+        if base in self._rende_strumenti:
+            return self._rende_strumenti[base]
+        esito, motivo = False, ""
+        try:
+            r = requests.get(base + "/props", timeout=5, headers=self._auth_headers(url))
+            r.raise_for_status()
+            template = (r.json() or {}).get("chat_template") or ""
+            esito = isinstance(template, str) and "<tools>" in template
+            motivo = "template con <tools>" if esito else "template senza <tools>"
+        except Exception as e:                       # noqa: BLE001 - detto nel log, si tiene il catalogo
+            motivo = f"/props non disponibile: {type(e).__name__}"
+        print(f"[AIClient] strumenti resi dal server {base}: {'si' if esito else 'no'} ({motivo})"
+              f"{'' if esito else ', catalogo testuale nel sistema'}")
+        self._rende_strumenti[base] = esito
+        return esito
+
+    def _con_catalogo_se_serve(self, messages, tools, url):
+        from devin.ai.tool_text import con_catalogo
+
+        if not tools or (url and self._server_rende_strumenti(url)):
+            return messages
+        return con_catalogo(messages, tools)
+
     def _get_endpoints(self, mode="reasoning"):
         """Seleziona URL e modello in base a disponibilita rig.
 
@@ -822,9 +858,11 @@ class AIClient:
         (richiesta rifiutata, es. contesto pieno) e' un ValueError col motivo
         del server; la rete che cade si ritenta come in local().
         """
-        from devin.ai.tool_text import con_catalogo
-
-        messages = con_catalogo(messages, tools)
+        try:
+            url_catalogo = self._get_endpoints(mode)[0]
+        except RigUnavailableError:
+            url_catalogo = ""            # l'errore vero arriva sotto, al primo tentativo
+        messages = self._con_catalogo_se_serve(messages, tools, url_catalogo)
         sforzo = self._sforzo(sforzo)
         timeout = self._timeout_ragionato(sforzo, timeout, messages)
         ultimo = None
@@ -1054,10 +1092,14 @@ class AIClient:
         testo non si mostra: a fine stream diventa una chiamata vera (se e' di
         uno strumento offerto) oppure, se non si riconosce, si consegna com'e'.
         """
-        from devin.ai.tool_text import APRE, con_catalogo, estrai_chiamate
+        from devin.ai.tool_text import APRE, estrai_chiamate
 
         if tools:
-            messages = con_catalogo(messages, tools)
+            try:
+                url_catalogo = self._get_endpoints(mode)[0]
+            except RigUnavailableError:
+                url_catalogo = ""
+            messages = self._con_catalogo_se_serve(messages, tools, url_catalogo)
         grezzo = self._stream_eventi_grezzo(messages, mode=mode, sforzo=sforzo, max_attempts=max_attempts,
                                             response_format=response_format, max_tokens=max_tokens,
                                             tools=tools, annulla=annulla)
