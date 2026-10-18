@@ -776,6 +776,43 @@ class AIClient:
                 funzione["arguments"] = json.dumps(adattati, ensure_ascii=False)
         return risposta
 
+    RICHIESTE_TENUTE = 30
+
+    @staticmethod
+    def _cartella_richieste():
+        return Path(os.environ.get("DEVIN_RICHIESTE_DIR") or os.path.expanduser("~/.local/share/devin/richieste"))
+
+    def _registra_richiesta(self, url, corpo):
+        """Scrive su disco (con fsync) il corpo esatto PRIMA di mandarlo al modello.
+
+        18/10: il rig si e' spento due volte durante il prefill della stessa richiesta della
+        chat, mai con le prove sintetiche. Per ripeterla identica in una prova controllata
+        serve il corpo esatto, e dopo un taglio di corrente solo cio' che e' gia' su disco
+        sopravvive. Cartella dell'operatore (0700), file 0600, si tengono le ultime 30.
+        Un errore qui non ferma la richiesta: lo si stampa.
+        """
+        try:
+            cartella = self._cartella_richieste()
+            cartella.mkdir(parents=True, exist_ok=True, mode=0o700)
+            nome = cartella / f"{time.strftime('%Y%m%dT%H%M%S')}-{time.time_ns()}-{os.getpid()}.json"
+            dati = json.dumps({"url": url, "corpo": corpo}, ensure_ascii=False).encode("utf-8")
+            fd = os.open(nome, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                os.write(fd, dati)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            dir_fd = os.open(cartella, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+            vecchi = sorted(cartella.glob("*.json"))[:-self.RICHIESTE_TENUTE]
+            for vecchio in vecchi:
+                vecchio.unlink(missing_ok=True)
+        except Exception as exc:
+            print(f"[AIClient] richiesta non registrata su disco: {type(exc).__name__}: {exc}")
+
     def chiama_con_strumenti(self, messages, tools, mode="reasoning", sforzo="", max_tokens=None,
                              timeout=None):
         """Un turno con tool calling nativo (API ``tools`` di llama-server).
@@ -797,6 +834,7 @@ class AIClient:
                 url, model = self._get_endpoints(mode)
                 corpo = {**self._corpo(model, messages, sforzo=sforzo, stream=True, max_tokens=max_tokens),
                          "tools": tools, "tool_choice": "auto", "return_progress": True}
+                self._registra_richiesta(url, corpo)
                 r = requests.post(url, json=corpo, timeout=timeout, stream=True,
                                   headers=self._auth_headers(url))
                 try:
@@ -853,11 +891,13 @@ class AIClient:
                 # stava ancora scrivendo ("contenuto vuoto"). Con lo stream e
                 # return_progress arriva un pezzo anche durante il prefill:
                 # scade solo un server che tace davvero.
+                corpo = {**self._corpo(model, messages, sforzo=sforzo, stream=True,
+                                       max_tokens=max_tokens),
+                         "return_progress": True}
+                self._registra_richiesta(url, corpo)
                 r = requests.post(
                     url,
-                    json={**self._corpo(model, messages, sforzo=sforzo, stream=True,
-                                        max_tokens=max_tokens),
-                          "return_progress": True},
+                    json=corpo,
                     timeout=timeout,
                     headers=self._auth_headers(url),
                     stream=True,
@@ -1108,17 +1148,19 @@ class AIClient:
 
             try:
                 url, model = self._get_endpoints(mode)
+                corpo = {**self._corpo(
+                    model,
+                    messages,
+                    sforzo=sforzo,
+                    stream=True,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
+                ), "return_progress": True,
+                   **({"tools": tools, "tool_choice": "auto"} if tools else {})}
+                self._registra_richiesta(url, corpo)
                 with requests.post(
                     url,
-                    json={**self._corpo(
-                        model,
-                        messages,
-                        sforzo=sforzo,
-                        stream=True,
-                        max_tokens=max_tokens,
-                        response_format=response_format,
-                    ), "return_progress": True,
-                       **({"tools": tools, "tool_choice": "auto"} if tools else {})},
+                    json=corpo,
                     timeout=timeout,
                     stream=True,
                     headers=self._auth_headers(url)
