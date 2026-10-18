@@ -59,6 +59,29 @@ def client(monkeypatch):
 
     monkeypatch.setattr(modulo.requests, "post", finta_post)
 
+    # /props: di default il server non risponde (si tiene il catalogo testuale);
+    # i test che vogliono un server col template mettono stato["props"].
+    stato["props"] = None
+    stato["props_chieste"] = 0
+
+    class _FintaProps:
+        def __init__(self, dati):
+            self._dati = dati
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._dati
+
+    def finta_get(url, timeout=None, headers=None, **kw):
+        stato["props_chieste"] += 1
+        if stato["props"] is None:
+            raise modulo.requests.ConnectionError("niente rete nei test")
+        return _FintaProps(stato["props"])
+
+    monkeypatch.setattr(modulo.requests, "get", finta_get)
+
     # refresh() e sleep() vanno CONTATI, non solo neutralizzati: "un 4xx non
     # brucia i retry" e' una promessa su quante volte si riprova, e senza
     # contarle un retry si nasconde dietro un errore diverso e il banco non
@@ -641,3 +664,33 @@ def test_annullato_lo_stream_si_ferma_e_chiude_la_connessione(client):
     resto = list(flusso)
     assert [e["testo"] for e in primi] == ["p0", "p1"]
     assert len(resto) <= 1
+
+
+def test_col_template_che_rende_i_tools_niente_catalogo_doppio(client):
+    """18/10: col template di chat il server mette gli schemi nel prompt da solo."""
+    client._stato["props"] = {"chat_template": "{%- if tools %}<tools>{% endif %}"}
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}), "data: [DONE]"]
+    for _ in range(2):
+        client._stato["risposta"] = _FintaRisposta(list(righe))
+        list(client.stream_eventi([{"role": "system", "content": "Sei DEVIN."},
+                                   {"role": "user", "content": "x"}], tools=[CERCA]))
+        corpo = client._stato["corpi"][-1]
+        assert corpo["messages"][0]["content"] == "Sei DEVIN." and corpo["tools"] == [CERCA]
+    assert client._stato["props_chieste"] == 1          # una volta per server, poi ricordato
+
+
+def test_template_senza_tools_tiene_il_catalogo(client):
+    client._stato["props"] = {"chat_template": "{{ messages }}"}
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"content": "ok"}}]}), "data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    list(client.stream_eventi([{"role": "system", "content": "Sei DEVIN."},
+                               {"role": "user", "content": "x"}], tools=[CERCA]))
+    assert "STRUMENTI DISPONIBILI" in client._stato["corpi"][-1]["messages"][0]["content"]
+
+
+def test_sforzo_high_rifiutato_con_i_valori_ammessi(client):
+    import pytest as _pytest
+    with _pytest.raises(ValueError) as errore:
+        client._sforzo("high")
+    assert "xhigh" in str(errore.value) and "medium" in str(errore.value)
+    assert client._sforzo("XHIGH") == "xhigh"
