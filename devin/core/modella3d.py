@@ -31,7 +31,8 @@ DESCRIZIONE = (
     "Crea un pezzo 3D scrivendo codice Python build123d 0.13 (CAD parametrico, 'from build123d import *' e' gia' "
     "fatto, unita' in mm) e assegnando il pezzo finale alla variabile risultato. Lo strumento esporta STL e "
     "STEP e restituisce le misure vere: volume, ingombro X/Y/Z, se la mesh e' chiusa (stampabile), "
-    "triangoli, e per la stampa FDM sbalzi, appoggio sul piano, orientamento migliore fra i 6 assi e peso se pieno. "
+    "triangoli, e per la stampa FDM sbalzi, appoggio sul piano, orientamento migliore fra i 6 assi, peso se pieno "
+    "e, se lo slicer e' installato, tempo di stampa e filamento veri (G-code). "
     "Usalo per oggetti da stampare in 3D o da modellare, poi controlla che le misure "
     "corrispondano alla richiesta e correggi. Forme base: Box(x, y, z, align=(Align.MIN,)*3); spostare e "
     "ruotare: Pos(x, y, z) * Rot(X=gradi) * pezzo; pezzi inclinati: Plane.YZ * Polygon(*punti, align=None) "
@@ -144,6 +145,19 @@ def stampabilita(misure: Dict[str, Any]) -> List[str]:
     return righe
 
 
+def _affettato(misure: Dict[str, Any], salvati: List[str], config: Optional[Dict[str, Any]]) -> List[str]:
+    """Se lo slicer c'e', tempo e filamento veri; supporti solo se com'e' ci sono sbalzi."""
+    from devin.core import affetta
+
+    if not affetta.disponibile(config)[0]:
+        return []
+    stl = next((Path(f) for f in salvati if f.lower().endswith(".stl")), None)
+    if stl is None or not misure.get("chiusa"):
+        return ["slicer: saltato (mesh non chiusa o STL mancante)"]
+    sbalzi = float(((misure.get("orientamenti") or {}).get("Z-") or {}).get("sbalzi_mm2") or 0)
+    return [affetta.riga(affetta.affetta(stl, supporti=sbalzi > 0, config=config))]
+
+
 def disponibile(config: Optional[Dict[str, Any]] = None) -> tuple[bool, str]:
     python = interprete(config)
     if not python.exists():
@@ -211,6 +225,7 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
         "file: " + ", ".join(salvati),
     ]
     righe_testo.extend(stampabilita(misure))
+    righe_testo.extend(_affettato(misure, salvati, config))
     if avviso:
         righe_testo.append(f"nota: {avviso}")
     return "\n".join(righe_testo)

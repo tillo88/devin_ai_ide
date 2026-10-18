@@ -15,7 +15,8 @@ def config(tmp_path, monkeypatch):
     python.parent.mkdir(parents=True)
     os.symlink(sys.executable, python)
     monkeypatch.setattr(modella3d, "disponibile", lambda config=None: (True, "pronto"))
-    return {"tools": {"solver_python": str(python)}}
+    # lo slicer di sistema, se c'e' su questa macchina, non entra nei test di modellazione
+    return {"tools": {"solver_python": str(python), "slicer": {"bin": str(tmp_path / "nessuno-slicer")}}}
 
 
 def test_scatola_con_foro_misure_vere(config, tmp_path):
@@ -83,3 +84,18 @@ def test_stampabilita_senza_appoggio_lo_dice():
     assert any("nessuna faccia piana appoggia" in r for r in righe)
     assert any("orientamento migliore fra i 6 assi: capovolto" in r for r in righe)
     assert not any("materiale" in r for r in righe)
+
+
+
+def test_con_lo_slicer_arrivano_tempo_e_filamento(config, tmp_path):
+    finto = tmp_path / "finto-slicer"
+    finto.write_text("#!/bin/sh\nfor a in \"$@\"; do case $prev in --output) out=$a;; esac; prev=$a; done\n"
+                     "printf ';LAYER_CHANGE\\n; total filament used [g] = 7.10\\n; filament used [mm] = 2380.5\\n"
+                     "; estimated printing time (normal mode) = 41m 5s\\n' > \"$out\"\n")
+    finto.chmod(0o755)
+    config["tools"]["slicer"] = {"bin": str(finto)}
+    testo = modella3d.modella("risultato = Box(20, 30, 10, align=(Align.MIN,)*3)", "s", tmp_path / "o",
+                              config=config)
+    assert "slicer (PrusaSlicer, profilo generico: ugello 0.4 mm, strato 0.2 mm, riempimento 15%" in testo, testo
+    assert "supporti no): tempo 41m 5s, filamento 7.1 g (2.38 m), 1 strati" in testo
+    assert str(tmp_path / "o" / "s.gcode") in testo
