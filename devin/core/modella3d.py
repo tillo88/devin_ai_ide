@@ -28,11 +28,28 @@ MAX_SECONDI = 300
 MAX_USCITA = 6000
 
 DESCRIZIONE = (
-    "Crea un pezzo 3D scrivendo codice Python build123d (CAD parametrico, 'from build123d import *' e' gia' "
+    "Crea un pezzo 3D scrivendo codice Python build123d 0.13 (CAD parametrico, 'from build123d import *' e' gia' "
     "fatto, unita' in mm) e assegnando il pezzo finale alla variabile risultato. Lo strumento esporta STL e "
     "STEP e restituisce le misure vere: volume, ingombro X/Y/Z, se la mesh e' chiusa (stampabile), "
     "triangoli. Usalo per oggetti da stampare in 3D o da modellare, poi controlla che le misure "
-    "corrispondano alla richiesta e correggi.")
+    "corrispondano alla richiesta e correggi. Forme base: Box(x, y, z, align=(Align.MIN,)*3); spostare e "
+    "ruotare: Pos(x, y, z) * Rot(X=gradi) * pezzo; pezzi inclinati: Plane.YZ * Polygon(*punti, align=None) "
+    "poi extrude(profilo, amount=larghezza); somma a + b, sottrazione a - b.")
+
+# 18/10: senza esempi il modello ha provato sei volte la sintassi di rotate/Rotation/Box(centered=...)
+# prima di arrivare al pezzo. Esempi provati su build123d 0.13.0 (la versione del lock): arrivano
+# insieme al primo errore, quando servono.
+PROMEMORIA = """PROMEMORIA build123d 0.13 (esempi verificati, unita' in mm):
+- parallelepipedo con l'angolo in (0,0,0): Box(70, 80, 4, align=(Align.MIN, Align.MIN, Align.MIN))
+- spostare/ruotare (si moltiplica a SINISTRA): Pos(0, 10, 4) * Rot(X=-30) * Box(70, 4, 100, align=(Align.MIN,)*3)
+- ruotare un pezzo gia' fatto: pezzo.rotate(Axis.Z, 90)   (asse, gradi)
+- pezzo con parti inclinate: disegna il profilo laterale e estrudi:
+    profilo = Plane.YZ * Polygon((0, 0), (80, 0), (80, 4), (20, 4), (70, 90), (66, 92), (14, 4), (0, 4), align=None)
+    pezzo = extrude(profilo, amount=70)   # spessore lungo X
+- unione e sottrazione: a + b, a - b; foro: pezzo - Pos(35, 40, 0) * Cylinder(5, 10)
+- raccordo: fillet(pezzo.edges().filter_by(Axis.Z), radius=2)
+- NON esistono: Box(..., centered=...), Rotation(asse, angolo), pezzo.rotate(vettore, angolo); is_valid e' una proprieta'.
+- alla fine: risultato = pezzo"""
 
 STRUMENTO = {"type": "function", "function": {
     "name": "modella_3d",
@@ -121,7 +138,7 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
         righe = [r for r in (proc.stdout or "").splitlines() if r.startswith("DEVIN_MISURE ")]
         if proc.returncode != 0 or not righe:
             errore = (proc.stderr or proc.stdout or "").strip()[-MAX_USCITA:]
-            return f"ERRORE nel codice del pezzo (exit {proc.returncode}):\n{errore}"
+            return f"ERRORE nel codice del pezzo (exit {proc.returncode}):\n{errore}\n\n{PROMEMORIA}"
         misure = json.loads(righe[-1][len("DEVIN_MISURE "):])
         destinazione.mkdir(parents=True, exist_ok=True)
         salvati: List[str] = []
