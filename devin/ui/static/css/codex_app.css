@@ -2784,6 +2784,10 @@ details[open] > .collapsible-summary::after {
 .approval-banner-actions .run-decision-btn.approve { border-color: var(--accent); }
 
 .activity-feed-section { min-height: 0; }
+/* 18/10: in colonna flex con overflow, le sezioni si schiacciavano sotto il loro contenuto
+   (Governance aperta) e il testo di una finiva sopra la successiva. Ogni sezione tiene la sua
+   altezza: e' il pannello a scorrere. */
+.mind-panel > * { flex-shrink: 0; }
 .activity-timeline.timeline {
   gap: 6px;
   margin: 0;
