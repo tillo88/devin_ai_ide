@@ -31,7 +31,8 @@ DESCRIZIONE = (
     "Crea un pezzo 3D scrivendo codice Python build123d 0.13 (CAD parametrico, 'from build123d import *' e' gia' "
     "fatto, unita' in mm) e assegnando il pezzo finale alla variabile risultato. Lo strumento esporta STL e "
     "STEP e restituisce le misure vere: volume, ingombro X/Y/Z, se la mesh e' chiusa (stampabile), "
-    "triangoli. Usalo per oggetti da stampare in 3D o da modellare, poi controlla che le misure "
+    "triangoli, e per la stampa FDM sbalzi, appoggio sul piano, orientamento migliore fra i 6 assi e peso se pieno. "
+    "Usalo per oggetti da stampare in 3D o da modellare, poi controlla che le misure "
     "corrispondano alla richiesta e correggi. Forme base: Box(x, y, z, align=(Align.MIN,)*3); spostare e "
     "ruotare: Pos(x, y, z) * Rot(X=gradi) * pezzo; pezzi inclinati: Plane.YZ * Polygon(*punti, align=None) "
     "poi extrude(profilo, amount=larghezza); somma a + b, sottrazione a - b.")
@@ -80,6 +81,18 @@ except Exception as _e:
     _step = None
 _m = _trimesh.load(_stl, force="mesh")
 _b = _m.bounds
+import numpy as _np
+_n, _a, _c = _m.face_normals, _m.area_faces, _m.triangles_center
+_orient = {}
+for _nome_o, _giu in (("Z-", (0, 0, -1)), ("Z+", (0, 0, 1)), ("X-", (-1, 0, 0)), ("X+", (1, 0, 0)),
+                      ("Y-", (0, -1, 0)), ("Y+", (0, 1, 0))):
+    _g = _np.array(_giu, dtype=float)
+    _h = -(_c @ _g)
+    _fondo = float((-(_m.vertices @ _g)).min())
+    _sul_piano = (_n @ _g > 0.9998) & (_h - _fondo < 0.01)
+    _sbalzo = (_n @ _g > 0.7071) & ~_sul_piano
+    _orient[_nome_o] = {"appoggio_mm2": round(float(_a[_sul_piano].sum()), 1),
+                        "sbalzi_mm2": round(float(_a[_sbalzo].sum()), 1)}
 print("DEVIN_MISURE " + _json.dumps({
     "volume_mm3": round(float(_m.volume), 2), "area_mm2": round(float(_m.area), 2),
     "ingombro_mm": [round(float(_b[1][i] - _b[0][i]), 3) for i in range(3)],
@@ -87,8 +100,48 @@ print("DEVIN_MISURE " + _json.dumps({
     "solido_valido": bool(_m.is_volume), "triangoli": int(len(_m.faces)),
     "corpi": int(len(_m.split(only_watertight=False))),
     "volume_cad_mm3": round(float(getattr(_pezzo, "volume", 0.0)), 2),
+    "orientamenti": _orient,
     "file": [p for p in (_stl, _step) if p]}))
 '''
+
+
+# Sbalzo: faccia rivolta verso il basso a meno di 45 gradi dall'orizzontale, non appoggiata sul
+# piano. E' la soglia comune per stampare senza supporti in FDM; la scelta del valore va detta,
+# non nascosta: per questo compare nel testo.
+SOGLIA_SBALZO_GRADI = 45
+PLA_G_CM3 = 1.24
+FILO_MM = 1.75
+ORIENTAMENTI = {"Z-": "com'e' (base in basso)", "Z+": "capovolto", "X-": "sul fianco X-", "X+": "sul fianco X+",
+                "Y-": "sul fianco Y-", "Y+": "sul fianco Y+"}
+
+
+def stampabilita(misure: Dict[str, Any]) -> List[str]:
+    """Righe sulla stampa FDM: sbalzi e appoggio per orientamento, peso se pieno."""
+    orient = misure.get("orientamenti") or {}
+    righe: List[str] = []
+    attuale = orient.get("Z-")
+    if attuale is not None:
+        area = float(misure.get("area_mm2") or 0) or 1.0
+        righe.append(f"stampa (FDM, sbalzi oltre {SOGLIA_SBALZO_GRADI} gradi): com'e' appoggia "
+                     f"{attuale['appoggio_mm2']} mm², sbalzi {attuale['sbalzi_mm2']} mm² "
+                     f"({round(100 * attuale['sbalzi_mm2'] / area, 1)}% della superficie)"
+                     + (" -> servono supporti o un altro orientamento" if attuale['sbalzi_mm2'] > 0 else ""))
+        if attuale["appoggio_mm2"] <= 0:
+            righe.append("ATTENZIONE: com'e' nessuna faccia piana appoggia sul piano di stampa")
+        candidati = [(v["sbalzi_mm2"], -v["appoggio_mm2"], k) for k, v in orient.items() if v["appoggio_mm2"] > 0]
+        if candidati:
+            sbalzi, appoggio, migliore = min(candidati)
+            if migliore != "Z-" and (sbalzi < attuale["sbalzi_mm2"] or attuale["appoggio_mm2"] <= 0):
+                righe.append(f"orientamento migliore fra i 6 assi: {ORIENTAMENTI[migliore]} "
+                             f"(sbalzi {sbalzi} mm², appoggio {-appoggio} mm²)")
+    volume = float(misure.get("volume_mm3") or 0)
+    if volume > 0:
+        grammi = volume / 1000 * PLA_G_CM3
+        metri = volume / (3.141592653589793 * (FILO_MM / 2) ** 2) / 1000
+        righe.append(f"materiale se pieno al 100% (limite superiore, PLA {PLA_G_CM3} g/cm³): "
+                     f"{round(grammi, 1)} g, {round(metri, 2)} m di filo da {FILO_MM} mm; "
+                     "con riempimento parziale serve meno, il valore vero lo da' lo slicer")
+    return righe
 
 
 def disponibile(config: Optional[Dict[str, Any]] = None) -> tuple[bool, str]:
@@ -157,6 +210,7 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
         f"punto minimo: {misure['min_mm']} (per la stampa il pezzo dovrebbe appoggiare su Z=0)",
         "file: " + ", ".join(salvati),
     ]
+    righe_testo.extend(stampabilita(misure))
     if avviso:
         righe_testo.append(f"nota: {avviso}")
     return "\n".join(righe_testo)
