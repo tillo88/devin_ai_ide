@@ -41,6 +41,15 @@ def test_senza_risultato_lo_dice(config, tmp_path):
 def test_errore_di_codice_arriva_al_modello(config, tmp_path):
     testo = modella3d.modella("risultato = Scatola(1)", "p", tmp_path / "o", config=config)
     assert "NameError" in testo
+    assert "PROMEMORIA build123d 0.13" in testo   # gli esempi verificati arrivano col primo errore
+
+
+def test_promemoria_e_descrizione_con_la_sintassi_giusta():
+    for frammento in ("Box(70, 80, 4, align=(Align.MIN, Align.MIN, Align.MIN))", "Pos(0, 10, 4) * Rot(X=-30)",
+                      "Plane.YZ * Polygon(", "extrude(profilo, amount=70)", "risultato = pezzo"):
+        assert frammento in modella3d.PROMEMORIA
+    assert "Pos(x, y, z) * Rot(X=gradi) * pezzo" in modella3d.DESCRIZIONE
+    assert "centered=" in modella3d.PROMEMORIA and "NON esistono" in modella3d.PROMEMORIA
 
 
 def test_senza_ambiente_non_disponibile(tmp_path):
