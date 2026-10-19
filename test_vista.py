@@ -107,3 +107,22 @@ def test_senza_visione_niente_cambia(tmp_path) -> None:
     assert "guarda_immagine" not in ai.strumenti
     assert not any(isinstance(m.get("content"), list) for turno in ai.visti for m in turno)
     assert "prossimo messaggio" not in json.dumps(ai.visti[-1])
+
+
+def test_dopo_modella_3d_l_agente_che_vede_riceve_l_anteprima(tmp_path) -> None:
+    def modella(codice, nome, cartella, **kw):
+        cartella.mkdir(parents=True, exist_ok=True)
+        (cartella / f"{nome}-anteprima.png").write_bytes(PNG)
+        return (f"pezzo '{nome}': ingombro 10 x 10 x 10 mm\nfile: {cartella / (nome + '.stl')}\n"
+                f"anteprima: {cartella / (nome + '-anteprima.png')} (vista isometrica, fronte, alto, destra)")
+
+    chiamata_3d = {"id": "id_3d", "type": "function", "function": {
+        "name": "modella_3d", "arguments": json.dumps({"codice": "risultato = Box(10, 10, 10)", "nome": "cubo"})}}
+    ai = AIVede([[chiamata_3d], "fatto"])
+    agente, _ = _agente(tmp_path, ai, modella=modella, vede=True)
+    agente.esegui("fai un cubo")
+    ultimo = ai.visti[1][-1]
+    assert ultimo["role"] == "user" and ultimo["content"][0]["type"] == "image_url"
+    assert "anteprima del pezzo cubo (modella_3d)" in ultimo["content"][-1]["text"]
+    assert "controllala" in ai.visti[1][-2]["content"]
+    assert vista.anteprima_di(ai.visti[1][-2]["content"]) == str(tmp_path / "modelli" / "cubo-anteprima.png")

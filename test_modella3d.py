@@ -107,3 +107,27 @@ def test_lo_schema_offre_materiali_e_qualita_della_p2s():
     assert "PETG HF" in proprieta["materiale"]["enum"] and "hueforge 0.08" in proprieta["qualita"]["enum"]
     assert "Bambu Lab P2S" in modella3d.DESCRIZIONE
     assert "bounding_box()" in modella3d.PROMEMORIA and "is_watertight()" in modella3d.PROMEMORIA
+
+
+def test_l_anteprima_si_vede_e_mostra_il_foro(config, tmp_path):
+    """Roadmap 2: quattro viste in un PNG, che DEVIN guarda quando la visione e' accesa."""
+    pytest.importorskip("PIL")
+    from PIL import Image
+    codice = ("with BuildPart() as p:\n"
+              "    Box(20, 30, 10, align=(Align.MIN, Align.MIN, Align.MIN))\n"
+              "    with Locations((10, 15, 10)):\n"
+              "        Hole(radius=3)\n"
+              "risultato = p.part\n")
+    testo = modella3d.modella(codice, "foro", tmp_path / "out", config=config)
+    png = tmp_path / "out" / "foro-anteprima.png"
+    assert f"anteprima: {png} (vista isometrica, fronte, alto, destra)" in testo
+    assert "foro-anteprima.png" not in testo.split("file: ")[1].split("\n")[0]
+    immagine = Image.open(png).convert("RGB")
+    assert immagine.size == (760, 784)
+    # vista dall'alto (riquadro in basso a sinistra): al centro del pezzo il foro passante e'
+    # bianco (sfondo), sul pieno accanto il colore del pezzo
+    lato = 380
+    centro = immagine.getpixel((lato // 2, lato + lato // 2 + 10))
+    assert centro == (255, 255, 255), centro
+    pieno = immagine.getpixel((lato // 2, lato + lato // 2 + 10 + 60))
+    assert pieno != (255, 255, 255) and pieno[2] > pieno[0]

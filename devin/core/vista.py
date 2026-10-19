@@ -4,6 +4,7 @@ Roadmap 2 (19/10). Quando il server del rig ha il proiettore della visione
 (``AIClient.vede_immagini``), DEVIN non "guarda" piu' solo attraverso il testo:
 
 - dopo ``guarda_pagina`` lo screenshot della pagina gli arriva come immagine;
+- dopo ``modella_3d`` l'anteprima del pezzo (isometrica, fronte, alto, destra);
 - ``guarda_immagine`` gli mostra un'immagine del progetto (un grafico prodotto,
   un'immagine di riferimento, uno screenshot salvato).
 
@@ -33,6 +34,8 @@ MIME = (
     (b"BM", "image/bmp"),
 )
 SCREENSHOT_RE = re.compile(r"^screenshot: (.+\.png)\s*$", re.M)
+ANTEPRIMA_RE = re.compile(r"^anteprima: (.+\.png) \(", re.M)
+MODELLI = Path("~/.local/share/devin/modelli").expanduser()
 PREFISSO_OCCHI = "devin-occhi-"
 SEGNO = "[immagini allegate dal sistema, non dall'utente]"
 
@@ -47,6 +50,8 @@ STRUMENTO = {"type": "function", "function": {
 
 NOTA_PROMPT = ("VISIONE: vedi le immagini. Dopo guarda_pagina ricevi anche lo screenshot della pagina: "
                "controlla com'e' fatta davvero (impaginazione, elementi visibili, errori a schermo). "
+               "Dopo modella_3d ricevi l'anteprima del pezzo (isometrica, fronte, alto, destra): "
+               "confrontala con la richiesta e correggi il codice se la forma non torna. "
                "Con guarda_immagine puoi guardare un'immagine del progetto. Descrivi solo cio' che vedi.")
 
 
@@ -97,6 +102,12 @@ def carica(percorso: str | Path, radici: Sequence[Path], base: Optional[Path] = 
 def screenshot_di(risultato: str) -> Optional[str]:
     """Il percorso dello screenshot scritto da ``occhi.guarda`` nel suo risultato."""
     trovato = SCREENSHOT_RE.search(str(risultato or ""))
+    return trovato.group(1) if trovato else None
+
+
+def anteprima_di(risultato: str) -> Optional[str]:
+    """Il percorso dell'anteprima scritta da ``modella_3d`` nel suo risultato."""
+    trovato = ANTEPRIMA_RE.search(str(risultato or ""))
     return trovato.group(1) if trovato else None
 
 

@@ -1431,6 +1431,14 @@ async def api_chat(req: ChatRequest):
                                     str(argomenti.get("codice") or ""), str(argomenti.get("nome") or "pezzo"),
                                     cartella_modelli, ai.config, materiale=str(argomenti.get("materiale") or ""),
                                     qualita=str(argomenti.get("qualita") or "")))
+                            anteprima = vista.anteprima_di(risultato) if vede_strumenti else None
+                            if anteprima:
+                                url_img, _ = vista.carica(anteprima, [cartella_modelli or vista.MODELLI])
+                                if url_img:
+                                    immagini_strumenti.append(
+                                        (url_img, f"anteprima del pezzo {argomenti.get('nome') or 'pezzo'} (modella_3d)"))
+                                    risultato += ("\n(l'anteprima ti arriva come immagine nel prossimo messaggio: "
+                                                  "controllala)")
                         except (ValueError, TypeError) as exc:
                             risultato = f"ERRORE: argomenti non validi ({exc})"
                         conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
