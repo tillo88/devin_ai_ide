@@ -308,8 +308,18 @@ class AgenteStrumenti:
                 return "memoria non disponibile"
             return self._soluzioni(str(args["errore"])) or "nessuna soluzione verificata per un errore simile"
         if nome == "modella_3d" and self._modella is not None:
-            return self._modella(str(args["codice"]), str(args.get("nome") or "pezzo"), self.radice / "modelli",
-                                 materiale=str(args.get("materiale") or ""), qualita=str(args.get("qualita") or ""))
+            risultato = self._modella(str(args["codice"]), str(args.get("nome") or "pezzo"), self.radice / "modelli",
+                                      materiale=str(args.get("materiale") or ""),
+                                      qualita=str(args.get("qualita") or ""))
+            if self.vede:
+                from devin.core import vista
+                anteprima = vista.anteprima_di(risultato)
+                if anteprima:
+                    url, motivo = vista.carica(anteprima, [self.radice])
+                    if url:
+                        self._immagini.append((url, f"anteprima del pezzo {args.get('nome') or 'pezzo'} (modella_3d)"))
+                        risultato += "\n(l'anteprima ti arriva come immagine nel prossimo messaggio: controllala)"
+            return risultato
         if nome == "guarda_pagina" and self._guarda is not None:
             risultato = self._guarda(str(args["url"]), avvia=args.get("avvia"), cartella=self.radice,
                                      aspetta_secondi=args.get("aspetta_secondi") or 1,

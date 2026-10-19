@@ -116,6 +116,78 @@ for _nome_o, _giu in (("Z-", (0, 0, -1)), ("Z+", (0, 0, 1)), ("X-", (-1, 0, 0)),
     _sbalzo = (_n @ _g > 0.7071) & ~_sul_piano
     _orient[_nome_o] = {"appoggio_mm2": round(float(_a[_sul_piano].sum()), 1),
                         "sbalzi_mm2": round(float(_a[_sbalzo].sum()), 1)}
+def _anteprima(_m, _percorso, _lato=380):
+    """Quattro viste (isometrica, fronte, alto, destra) in un PNG: per farsi guardare dal modello."""
+    from PIL import Image as _Img, ImageDraw as _Draw
+    _V = _np.asarray(_m.vertices, dtype=float)
+    _F = _np.asarray(_m.faces)
+    _N = _np.asarray(_m.face_normals, dtype=float)
+    _centro = (_V.max(0) + _V.min(0)) / 2
+    _V = _V - _centro
+
+    def _rot(_ax, _gradi):
+        _t = _np.radians(_gradi); _c, _s = _np.cos(_t), _np.sin(_t)
+        if _ax == "x":
+            return _np.array([[1, 0, 0], [0, _c, -_s], [0, _s, _c]])
+        if _ax == "y":
+            return _np.array([[_c, 0, _s], [0, 1, 0], [-_s, 0, _c]])
+        return _np.array([[_c, -_s, 0], [_s, _c, 0], [0, 0, 1]])
+    # base: guardare lungo -Y verso +Y significa x a destra, z in alto -> ruotare -90 su X
+    _fronte = _rot("x", -90)
+    _viste = [
+        ("isometrica", _rot("x", -90 + 35.264) @ _rot("z", -45)),
+        ("fronte (da -Y)", _fronte),
+        ("alto (da +Z)", _np.eye(3)),
+        ("destra (da +X)", _rot("x", -90) @ _rot("z", -90)),
+    ]
+    _luce = _np.array([0.35, 0.45, 1.0]); _luce /= _np.linalg.norm(_luce)
+    # spigoli vivi (facce adiacenti a piu' di 20 gradi): si disegnano con la loro faccia,
+    # cosi' le facce davanti li coprono come coprono il resto
+    _spigoli = {}
+    if len(_m.face_adjacency):
+        _vivi = _m.face_adjacency_angles > _np.radians(20)
+        for (_fa, _fb), _e in zip(_m.face_adjacency[_vivi], _m.face_adjacency_edges[_vivi]):
+            _spigoli.setdefault(int(_fa), []).append(_e)
+            _spigoli.setdefault(int(_fb), []).append(_e)
+    _img = _Img.new("RGB", (_lato * 2, _lato * 2 + 24), "white")
+    _d = _Draw.Draw(_img)
+    for _k, (_titolo, _R) in enumerate(_viste):
+        _P = _V @ _R.T
+        _Nr = _N @ _R.T
+        _ox, _oy = (_k % 2) * _lato, (_k // 2) * _lato
+        _span = float(max(_np.ptp(_P[:, 0]), _np.ptp(_P[:, 1]), 1e-9))
+        _sc = (_lato - 50) / _span
+        _xy = _np.stack([_ox + _lato / 2 + _P[:, 0] * _sc, _oy + _lato / 2 + 10 - _P[:, 1] * _sc], 1)
+        _vis = _Nr[:, 2] > 1e-6
+        _prof = _P[_F][:, :, 2].mean(1)
+        _pmin, _pmax = float(_prof.min()), float(_prof.max())
+        for _i in _np.argsort(_prof):
+            if not _vis[_i]:
+                continue
+            # profondita' solo per le facce viste di fronte (viste ortogonali): un piano
+            # inclinato coi triangoli a profondita' diverse mostrerebbe la triangolazione
+            _vicino = (float(_prof[_i]) - _pmin) / ((_pmax - _pmin) or 1.0) if _Nr[_i, 2] > 0.999 else 1.0
+            _l = (0.25 + 0.75 * max(0.0, float(_Nr[_i] @ _luce))) * (0.7 + 0.3 * _vicino)
+            _col = (int(60 + 160 * _l), int(95 + 135 * _l), int(140 + 105 * _l))
+            _pts = [tuple(p) for p in _xy[_F[_i]]]
+            _d.polygon(_pts, fill=_col, outline=_col)
+            for _a, _b2 in _spigoli.get(int(_i), ()):
+                _d.line([tuple(_xy[_a]), tuple(_xy[_b2])], fill=(35, 45, 60), width=1)
+        _d.rectangle((_ox, _oy, _ox + _lato - 1, _oy + _lato - 1), outline=(200, 200, 200))
+        _d.text((_ox + 8, _oy + 6), _titolo, fill=(30, 30, 30))
+    _b = _m.bounds
+    _d.text((8, _lato * 2 + 6), "ingombro %.1f x %.1f x %.1f mm (X x Y x Z)" % tuple(_b[1] - _b[0]), fill=(30, 30, 30))
+    _img.save(_percorso, optimize=True)
+
+
+_anteprima_file = _os.path.join(_out, _nome + "-anteprima.png")
+try:
+    if len(_m.faces) > 200000:
+        raise ValueError("troppi triangoli per l'anteprima")
+    _anteprima(_m, _anteprima_file)
+except Exception as _e:
+    print("DEVIN_ANTEPRIMA_ERRORE " + type(_e).__name__ + ": " + str(_e)[:200])
+    _anteprima_file = None
 print("DEVIN_MISURE " + _json.dumps({
     "volume_mm3": round(float(_m.volume), 2), "area_mm2": round(float(_m.area), 2),
     "ingombro_mm": [round(float(_b[1][i] - _b[0][i]), 3) for i in range(3)],
@@ -124,7 +196,7 @@ print("DEVIN_MISURE " + _json.dumps({
     "corpi": int(len(_m.split(only_watertight=False))),
     "volume_cad_mm3": round(float(getattr(_pezzo, "volume", 0.0)), 2),
     "orientamenti": _orient,
-    "file": [p for p in (_stl, _step) if p]}))
+    "file": [p for p in (_stl, _step, _anteprima_file) if p]}))
 '''
 
 
@@ -247,8 +319,11 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
         f"{'solido valido' if misure['solido_valido'] else 'solido NON valido'}, {misure['triangoli']} triangoli, "
         f"{misure['corpi']} {'corpo' if misure['corpi'] == 1 else 'corpi separati'}",
         f"punto minimo: {misure['min_mm']} (per la stampa il pezzo dovrebbe appoggiare su Z=0)",
-        "file: " + ", ".join(salvati),
+        "file: " + ", ".join(s for s in salvati if not s.endswith("-anteprima.png")),
     ]
+    anteprima = next((s for s in salvati if s.endswith("-anteprima.png")), None)
+    if anteprima:
+        righe_testo.append(f"anteprima: {anteprima} (vista isometrica, fronte, alto, destra)")
     righe_testo.extend(stampabilita(misure))
     righe_testo.extend(_affettato(misure, salvati, config, str(materiale or ""), str(qualita or "")))
     if avviso:
