@@ -350,6 +350,10 @@ class ChatRequest(BaseModel):
     # "medium" bastano 2-8 minuti sui task normali, il regime largo
     # risolve i task difficili ma costa mezz'ora a risposta.
     reasoning_effort: Optional[str] = None
+    # Immagini di QUESTO messaggio come data URL (PNG/JPEG/GIF/BMP). Arrivano al
+    # modello solo se il server ha il proiettore della visione (``/props``
+    # modalities.vision); altrimenti la richiesta si rifiuta con un errore chiaro.
+    images: Optional[List[str]] = None
 
 
 class LocalAgentStepRequest(BaseModel):
@@ -856,10 +860,25 @@ async def api_chat(req: ChatRequest):
         return {"error": "empty message"}
     if req.project_path:
         req.project_path = _validated_project_path(req.project_path, allow_general=False)
+    images = list(req.images or [])
+    if req.image_base64:
+        try:
+            legacy = _image_data_url(base64.b64decode(req.image_base64, validate=True))
+        except (ValueError, TypeError):
+            legacy = None
+        if legacy is None:
+            return {"error": "immagine non leggibile: formati ammessi PNG, JPEG, GIF, BMP"}
+        images.append(legacy)
+    if len(images) > MAX_CHAT_IMAGES:
+        return {"error": f"troppe immagini ({len(images)}), max {MAX_CHAT_IMAGES} per messaggio"}
+    if any(not isinstance(url, str) or not url.startswith(
+            ("data:image/png;base64,", "data:image/jpeg;base64,", "data:image/gif;base64,",
+             "data:image/bmp;base64,")) for url in images):
+        return {"error": "immagini: solo data URL PNG, JPEG, GIF o BMP"}
 
     local_workspace = local_workspace_for_project(req.project_path) if req.project_path else None
     is_direct_workspace = bool(local_workspace and local_workspace.get("mode") == "direct")
-    if is_direct_workspace and not _is_trivial_message(message):
+    if is_direct_workspace and not images and not _is_trivial_message(message):
         ChatPersistence(req.project_path, chat_id=req.chat_id).append("user", message)
         return {
             "status": "local_agent_required",
@@ -871,7 +890,8 @@ async def api_chat(req: ChatRequest):
 
     # Regola "Chat First": per lo scaffolding l'eventuale ricerca web deve avvenire
     # PRIMA del routing. Prima questo return anticipato saltava interamente Web Search.
-    if req.project_path and _is_scaffold_request(message, req.project_path):
+    # Con un'immagine allegata si parla dell'immagine: niente scaffold ne' run.
+    if req.project_path and not images and _is_scaffold_request(message, req.project_path):
         scaffold_task = message
         web_requested = req.use_web_search or _wants_web_search(message)
         if web_requested:
@@ -903,16 +923,9 @@ async def api_chat(req: ChatRequest):
     # quel percorso pianifica una nuova struttura. Le richieste che chiedono
     # modifiche reali vengono avviate come manutenzione e restano soggette a
     # sandbox, test e approvazione esplicita.
-    if (req.project_path and is_operational_build_request(message)
+    if (req.project_path and not images and is_operational_build_request(message)
             and not _wants_discussion_first(message)):
         return await api_run(RunRequest(path=req.project_path, task=message))
-
-    # Vision rimosso da DEVIN (2026-07-09): nessun modello locale/rig di questo
-    # progetto ha piu' --mmproj caricato. Un'immagine qui non verrebbe letta dal
-    # modello (che risponderebbe a caso ignorandola) - meglio un errore chiaro
-    # che una risposta silenziosamente sbagliata. Per immagini: usa Hermes.
-    if req.image_base64:
-        return {"error": "Vision non disponibile su DEVIN AI IDE — usa Hermes (ruolo dedicato del rig) per immagini."}
 
     selected_mode = _detect_mode(message) if req.mode == "auto" else req.mode
 
@@ -922,6 +935,15 @@ async def api_chat(req: ChatRequest):
         await asyncio.to_thread(launcher.ensure_models)
 
     ai = _get_ai_client()
+
+    # Visione (roadmap 2, 19/10): il modello del rig vede le immagini solo se il
+    # server ha caricato il proiettore (--mmproj). Lo dice /props; se non lo
+    # dice, un'immagine verrebbe ignorata e la risposta inventata: errore chiaro.
+    if images:
+        sees, why = await asyncio.to_thread(ai.vede_immagini, selected_mode)
+        if not sees:
+            return {"error": f"Il modello sul rig non ha la visione accesa ({why}): "
+                             "l'immagine non verrebbe letta."}
 
     # Persistenza caricata PRIMA del blocco web-search: serve a _build_search_query
     # per ricavare l'argomento della conversazione sui follow-up corti ("riprova").
@@ -996,9 +1018,8 @@ async def api_chat(req: ChatRequest):
             # il messaggio al modello resta quello originale (nessun rumore extra).
             web_search_error = str(e)
 
-    # (audit #18, 2026-07-10: rimosso il ramo vision morto — image_base64 viene
-    # gia' rifiutato con errore esplicito a inizio funzione, questo blocco era
-    # irraggiungibile dal 2026-07-09, quando la vision e' stata tolta da DEVIN.)
+    # Le immagini (``images``) non passano da qui: entrano nell'ultimo messaggio
+    # dell'utente in ``_layout`` (``_with_images``), dopo il controllo della visione.
 
     # Persistenza server-side dello storico: caricata piu' sopra (prima del blocco
     # web-search, a cui serve per costruire la query contestuale). Il server resta
@@ -1115,13 +1136,15 @@ async def api_chat(req: ChatRequest):
         else:
             # senza continuita' resta il vecchio tetto a numero di messaggi
             storia = persisted_history[-max_history:] if persisted_history else []
-        return compose_prompt_layout(
+        layout = compose_prompt_layout(
             stable_parts=parti,
             retrieval_parts=retrieval_parts,
             recent_history=storia,
             user_content=content,
             checkpoint=cp,
-        ), bool(continuita)
+        )
+        layout["messages"] = _with_images(layout["messages"], images)
+        return layout, bool(continuita)
 
     def _compatta():
         """Esegue la compattazione; restituisce (checkpoint, esito per la UI)."""
@@ -1192,7 +1215,8 @@ async def api_chat(req: ChatRequest):
         "file": model_cfg.get("file", ""),
         "description": model_cfg.get("description", ""),
         "ctx_size": model_cfg.get("ctx_size", ""),
-        "vision": model_cfg.get("vision", {}).get("enabled", False),
+        "vision": bool(images) or model_cfg.get("vision", {}).get("enabled", False),
+        "images": len(images),
         "web_search_used": req.use_web_search,
         "continuity_checkpoint": has_continuity,
         "continuity_summarized_messages": (
@@ -1544,6 +1568,57 @@ CHAT_TEXT_EXTENSIONS = {
 
 
 
+# Formati che il caricatore d'immagini del server (stb_image) legge davvero.
+# WebP e HEIC no: meglio dirlo che mandare un'immagine che il modello non vede.
+IMAGE_MIMES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+    (b"BM", "image/bmp"),
+)
+MAX_CHAT_IMAGES = 6
+
+
+def _image_mime(raw: bytes) -> Optional[str]:
+    for magic, mime in IMAGE_MIMES:
+        if raw.startswith(magic):
+            return mime
+    return None
+
+
+def _image_data_url(raw: bytes) -> Optional[str]:
+    mime = _image_mime(raw)
+    if mime is None:
+        return None
+    return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+
+
+def _image_note(filename: str, raw: bytes) -> str:
+    """Riga di testo che resta nello storico al posto dell'immagine."""
+    # anche un percorso Windows ("C:\\foto\\pezzo.png") diventa solo il nome
+    safe_name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1] or "immagine"
+    digest = hashlib.sha256(raw).hexdigest()
+    return (f"[Immagine allegata: {safe_name} | {_image_mime(raw)} | size={len(raw)} bytes | "
+            f"sha256={digest[:16]}... — il modello la vede in questo messaggio]")
+
+
+def _with_images(messages: list, images: list) -> list:
+    """Copia dei messaggi con le immagini nell'ultimo messaggio dell'utente (formato OpenAI)."""
+    if not images:
+        return messages
+    out = list(messages)
+    for index in range(len(out) - 1, -1, -1):
+        message = out[index]
+        if isinstance(message, dict) and message.get("role") == "user":
+            text = message.get("content")
+            parts = [{"type": "image_url", "image_url": {"url": url}} for url in images]
+            parts.append({"type": "text", "text": text if isinstance(text, str) else ""})
+            out[index] = {**message, "content": parts}
+            return out
+    raise ValueError("nessun messaggio utente a cui allegare le immagini")
+
+
 def _looks_textual(raw: bytes) -> bool:
     if not raw:
         return True
@@ -1638,21 +1713,31 @@ async def api_chat_document(message: str = Form(""), document: UploadFile = File
         return {"error": f"troppi allegati ({len(uploads)}), max {MAX_CHAT_UPLOAD_FILES}"}
 
     attachment_blocks = []
+    images = []
     for upload in uploads:
         raw, err = await _read_upload_limited(upload, MAX_DOCUMENT_BYTES)
         if err:
             return {"error": f"{upload.filename}: {err}"}
+        if _image_mime(raw):
+            if len(raw) > MAX_IMAGE_BYTES:
+                return {"error": f"{upload.filename}: immagine troppo grande (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB)"}
+            images.append(_image_data_url(raw))
+            attachment_blocks.append(_image_note(upload.filename, raw))
+            continue
+        if Path(upload.filename or "").suffix.lower() in {".webp", ".heic", ".heif", ".avif", ".tif", ".tiff"}:
+            return {"error": f"{upload.filename}: formato d'immagine non letto dal modello, usa PNG o JPEG"}
         block = await asyncio.to_thread(_format_chat_upload_for_context, upload.filename, raw)
         attachment_blocks.append(block)
 
     content = message
     if attachment_blocks:
-        content = ("\n\n".join(attachment_blocks) + "\n\n" + (message or "Analizza gli allegati.")).strip()
+        default = "Descrivi l'immagine." if images and len(images) == len(attachment_blocks) else "Analizza gli allegati."
+        content = ("\n\n".join(attachment_blocks) + "\n\n" + (message or default)).strip()
 
     req = ChatRequest(message=content, mode=mode, project_path=project_path or None,
                        use_web_search=use_web_search, chat_id=chat_id or None,
                        reasoning_effort=reasoning_effort or None,
-                       local_context=local_context or None)
+                       local_context=local_context or None, images=images or None)
     return await api_chat(req)
 
 
