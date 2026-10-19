@@ -168,9 +168,12 @@ def test_i_messaggi_nuovi_ricevono_subito_l_indice_per_cancellarli(tmp_path, mon
 def test_l_app_mette_la_x_ai_messaggi_appena_scritti():
     from pathlib import Path
     js = (Path(__file__).resolve().parent / "devin/ui/static/js/codex_app.js").read_text(encoding="utf-8")
-    assert "aggiungiCancella(state.chatUserNode?.parentElement, payload.user_index)" in js
+    # dal 19/10 il messaggio dell'utente sta sul nodo della risposta (una per chat),
+    # non piu' in uno stato globale
+    assert "aggiungiCancella(assistantNode._utente?.parentElement, payload.user_index)" in js
     assert "aggiungiCancella(assistantNode.parentElement, payload.assistant_index)" in js
-    assert 'state.chatUserNode = appendChatMessage("user", message)' in js
+    assert 'const userNode = appendChatMessage("user", message)' in js
+    assert "assistantNode._utente = userNode" in js
 
 
 def test_varianti_della_ricerca_web():

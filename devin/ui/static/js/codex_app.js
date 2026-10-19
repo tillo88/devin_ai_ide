@@ -39,7 +39,10 @@ const state = {
   runLogFilter: "all",
   hideKnownWarnings: true,
   runLogRefreshTimer: null,
-  chatAbort: null,
+  // Una risposta in corso PER CHAT (19/10), chiave chiaveChatCorrente() ->
+  // { nodo, abort }. Con un solo stato globale, passando a un'altra chat il
+  // composer restava "Nota/Stop" e il messaggio diventava una nota rifiutata.
+  chatStreams: new Map(),
   localCommandId: null,
   reviewedChangeRunId: null,
   reviewedChangeProjectPath: null,
@@ -272,6 +275,98 @@ function confirmModal(message, { okLabel = "Conferma", danger = false } = {}) {
 
 function selectedChatFiles() {
   return Array.from($("chat-file")?.files ?? []);
+}
+
+const IMMAGINE_ALLEGATO_RE = /\.(png|jpe?g|gif|bmp)$/i;
+
+function eImmagine(file) {
+  return /^image\/(png|jpeg|gif|bmp)$/i.test(file?.type || "") || IMMAGINE_ALLEGATO_RE.test(file?.name || "");
+}
+
+function formatoDimensione(byte) {
+  const n = Number(byte) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Una scheda per allegato: miniatura (se immagine), nome, dimensione e,
+// nel composer, una x per toglierlo. Prima l'unica conferma era una scritta
+// grigia di 120px accanto ai chip: allegando un'immagine non si vedeva niente.
+function schedaAllegato(file, indice, rimovibile) {
+  const scheda = document.createElement("span");
+  scheda.className = "chat-attachment";
+  if (eImmagine(file) && typeof URL !== "undefined" && URL.createObjectURL) {
+    const img = document.createElement("img");
+    const url = URL.createObjectURL(file);
+    img.src = url;
+    img.alt = file.name || "immagine";
+    img.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+    scheda.appendChild(img);
+  } else {
+    const ico = document.createElement("span");
+    ico.className = "chat-attachment-ico";
+    ico.textContent = "📄";
+    scheda.appendChild(ico);
+  }
+  const nome = document.createElement("span");
+  nome.className = "chat-attachment-name";
+  nome.textContent = `${file.name || "allegato"} · ${formatoDimensione(file.size)}`;
+  nome.title = file.name || "";
+  scheda.appendChild(nome);
+  if (rimovibile) {
+    const togli = document.createElement("button");
+    togli.type = "button";
+    togli.className = "chat-attachment-remove";
+    togli.title = "Togli questo allegato";
+    togli.textContent = "×";
+    togli.addEventListener("click", () => togliAllegato(indice));
+    scheda.appendChild(togli);
+  }
+  return scheda;
+}
+
+function renderAllegati() {
+  const files = selectedChatFiles();
+  const label = $("chat-file-label");
+  if (label) {
+    label.textContent = formatFileLabel(files);
+    label.title = files.map((file) => file.name).join("\n") || "No files attached";
+  }
+  const vassoio = $("chat-attachments");
+  if (!vassoio) return;
+  vassoio.replaceChildren(...files.map((file, i) => schedaAllegato(file, i, true)));
+  vassoio.hidden = !files.length;
+}
+
+function togliAllegato(indice) {
+  const input = $("chat-file");
+  if (!input) return;
+  const restano = selectedChatFiles().filter((_, i) => i !== indice);
+  try {
+    const dt = new DataTransfer();
+    restano.forEach((file) => dt.items.add(file));
+    input.files = dt.files;
+  } catch (_) {
+    input.value = "";              // senza DataTransfer: si tolgono tutti
+  }
+  renderAllegati();
+}
+
+function svuotaAllegati() {
+  const input = $("chat-file");
+  if (input) input.value = "";
+  renderAllegati();
+}
+
+// Nel messaggio dell'utente appena inviato: cosa e' partito davvero.
+function mostraAllegatiInviati(corpo, files) {
+  const article = corpo?.parentElement;
+  if (!article || !files.length) return;
+  const riga = document.createElement("div");
+  riga.className = "chat-attachments sent";
+  files.forEach((file, i) => riga.appendChild(schedaAllegato(file, i, false)));
+  article.appendChild(riga);
 }
 
 function formatFileLabel(files) {
@@ -1715,8 +1810,18 @@ async function loadProjectOverview(projectPath = state.selectedProjectPath) {
   if (!projectPath) {
     state.lastProjectRun = null;
     state.lastProjectRunLookup = "idle";
-    state.selectedChatId = null;
-    renderChatList([]);
+    let chats = [];
+    try {
+      const generale = await fetchJson(`/api/project/overview?${new URLSearchParams({ project_path: "", lite: "true" }).toString()}`);
+      chats = generale.chats ?? [];
+    } catch (err) {
+      console.error(err);
+    }
+    if (state.selectedProjectPath) return;       // nel frattempo si e' scelto un progetto
+    if (state.selectedChatId && !chats.some((chat) => chat.chat_id === state.selectedChatId)) {
+      state.selectedChatId = null;
+    }
+    renderChatList(chats);
     await loadChatHistory();
     const workBox = $("workdir-box");
     if (workBox) {
@@ -1968,9 +2073,9 @@ async function deleteChat(chatId) {
   const label = chatId ? "questa chat" : (state.selectedProjectPath ? "la chat default del progetto" : "la chat generale");
   if (!window.confirm(`Cancellare ${label}? Operazione non reversibile.`)) return;
 
-  if (chatId && state.selectedProjectPath) {
+  if (chatId) {
     const result = await postJson("/api/project/chats/delete", {
-      project_path: state.selectedProjectPath,
+      project_path: state.selectedProjectPath || "",
       chat_id: chatId,
     });
     if (result.status !== "deleted") throw new Error("chat non trovata");
@@ -1988,14 +2093,11 @@ async function deleteChat(chatId) {
   renderChatHistory([]);
 }
 
+// Senza progetto la nuova chat e' una General chat in piu' (19/10): il backend
+// le tiene gia' in workspace/_general_chat/.devin/chats, mancava solo il bottone.
 async function createProjectChat(continueCurrent = false) {
-  if (!state.selectedProjectPath) {
-    appendChatMessage("assistant", "Seleziona un progetto prima di creare una chat multipla.");
-    return;
-  }
-
   const result = await postJson("/api/project/chats/new", {
-    project_path: state.selectedProjectPath,
+    project_path: state.selectedProjectPath || "",
     title: continueCurrent ? "Continuazione" : "Nuova chat",
     continue_from_chat_id: continueCurrent ? (state.selectedChatId || "") : "",
   });
@@ -2597,15 +2699,25 @@ function renderChatHistory(history = []) {
 // avanti. Il nodo vivo esiste ancora e continua a ricevere i token: lo si
 // rimette in fondo se la chat e' la stessa.
 function riattaccaRispostaInCorso(thread) {
-  const nodo = state.chatAssistantNode;
-  if (!thread || !nodo || !state.chatAbort) return;
-  if (state.chatStreamKey !== chiaveChatCorrente()) return;
-  const articolo = nodo.parentElement;
+  const flusso = streamDellaChat();
+  if (!thread || !flusso) return;
+  const articolo = flusso.nodo.parentElement;
   if (articolo && articolo.parentElement !== thread) thread.appendChild(articolo);
+  thread.scrollTop = thread.scrollHeight;
 }
 
 function chiaveChatCorrente() {
   return `${state.selectedProjectPath || ""}|${state.selectedChatId || ""}`;
+}
+
+function streamDellaChat(chiave = chiaveChatCorrente()) {
+  return state.chatStreams.get(chiave) || null;
+}
+
+// Il composer rispecchia la chat che stai guardando: Nota/Stop solo se DEVIN
+// sta rispondendo proprio qui.
+function aggiornaComposerPerChat() {
+  setChatBusy(Boolean(streamDellaChat()));
 }
 
 async function deleteChatMessage(index) {
@@ -2628,6 +2740,7 @@ async function deleteChatMessage(index) {
 }
 
 async function loadChatHistory() {
+  aggiornaComposerPerChat();
   const params = new URLSearchParams();
   if (state.selectedProjectPath) params.set("project_path", state.selectedProjectPath);
   if (state.selectedChatId) params.set("chat_id", state.selectedChatId);
@@ -3071,7 +3184,7 @@ function applyChatEvent(event, assistantNode) {
   }
 
   if (event.type === "meta") {
-    aggiungiCancella(state.chatUserNode?.parentElement, payload.user_index);
+    aggiungiCancella(assistantNode._utente?.parentElement, payload.user_index);
     // Alias nella superficie primaria; il model id completo (sul rig e' il path
     // assoluto del GGUF) resta nel tooltip, per la diagnostica.
     const article = assistantNode.parentElement;
@@ -3432,13 +3545,20 @@ async function runLocalWorkspaceAgent(task, workspace, assistantNode) {
 }
 
 async function sendChatMessage(message) {
-  state.chatUserNode = appendChatMessage("user", message);
+  // Chat, progetto e allegati si fissano ADESSO: mentre DEVIN risponde puoi
+  // cambiare chat e allegare altro, e questa richiesta non deve accorgersene.
+  const chiave = chiaveChatCorrente();
+  const progetto = state.selectedProjectPath || "";
+  const chatId = state.selectedChatId || "";
+  const selectedFiles = selectedChatFiles();
+  const userNode = appendChatMessage("user", message);
+  mostraAllegatiInviati(userNode, selectedFiles);
+  svuotaAllegati();
   const assistantNode = appendChatMessage("assistant", "");
-  state.chatAssistantNode = assistantNode;
-  state.chatStreamKey = chiaveChatCorrente();
+  assistantNode._utente = userNode;
+  const flusso = { nodo: assistantNode, abort: new AbortController() };
+  state.chatStreams.set(chiave, flusso);
   setChatBusy(true);
-
-  state.chatAbort = new AbortController();
 
   try {
     const directWorkspace = selectedDirectWorkspace();
@@ -3448,7 +3568,6 @@ async function sendChatMessage(message) {
         query: message,
       })
       : null;
-    const selectedFiles = selectedChatFiles();
     let response;
     if (selectedFiles.length) {
       const formData = new FormData();
@@ -3456,14 +3575,14 @@ async function sendChatMessage(message) {
       formData.append("mode", $("chat-mode")?.value ?? "auto");
       formData.append("use_web_search", state.webForced ? "true" : "false");
       formData.append("reasoning_effort", state.reasoningEffort || "");
-      formData.append("project_path", state.selectedProjectPath || "");
-      formData.append("chat_id", state.selectedChatId || "");
+      formData.append("project_path", progetto);
+      formData.append("chat_id", chatId);
       formData.append("local_context", localContext?.content || "");
       selectedFiles.forEach((file) => formData.append("files", file));
       response = await apiFetch("/api/chat/document", {
         method: "POST",
         body: formData,
-        signal: state.chatAbort.signal,
+        signal: flusso.abort.signal,
       });
     } else {
       response = await apiFetch("/api/chat", {
@@ -3474,11 +3593,11 @@ async function sendChatMessage(message) {
           mode: $("chat-mode")?.value ?? "auto",
           use_web_search: Boolean(state.webForced),
           reasoning_effort: state.reasoningEffort || null,
-          project_path: state.selectedProjectPath || null,
-          chat_id: state.selectedChatId || null,
+          project_path: progetto || null,
+          chat_id: chatId || null,
           local_context: localContext?.content || null,
         }),
-        signal: state.chatAbort.signal,
+        signal: flusso.abort.signal,
       });
     }
 
@@ -3529,14 +3648,13 @@ async function sendChatMessage(message) {
   } catch (err) {
     if (err?.name !== "AbortError") assistantNode.textContent += `\n[error] ${errorMessage(err, "Stream interrotto")}`;
   } finally {
-    state.chatAbort = null;
-    state.chatAssistantNode = null;
-    if ($("chat-file")) $("chat-file").value = "";
-    setText("chat-file-label", "no files");
-    const labelNode = $("chat-file-label");
-    if (labelNode) labelNode.title = "No files attached";
-    setChatBusy(false);
-    $("chat-input")?.focus();
+    if (state.chatStreams.get(chiave) === flusso) state.chatStreams.delete(chiave);
+    // Gli allegati sono gia' stati svuotati all'invio: qui non si tocca il
+    // composer di un'altra chat, dove magari stai allegando qualcos'altro.
+    if (chiave === chiaveChatCorrente()) {
+      setChatBusy(false);
+      $("chat-input")?.focus();
+    }
   }
 }
 
@@ -3801,7 +3919,8 @@ function runAttivoDellaChat() {
 }
 
 async function inviaNota(testo) {
-  const runId = state.chatAbort ? null : runAttivoDellaChat();
+  const flusso = streamDellaChat();
+  const runId = flusso ? null : runAttivoDellaChat();
   const url = runId ? `/api/run/${encodeURIComponent(runId)}/nota` : "/api/chat/nota";
   const esito = await postJson(url, {
     testo,
@@ -3820,8 +3939,8 @@ async function inviaNota(testo) {
   }
   if (runId) {
     appendChatMessage("user", `📝 ${testo}`);
-  } else if (state.chatAssistantNode) {
-    const nodo = state.chatAssistantNode;
+  } else if (flusso) {
+    const nodo = flusso.nodo;
     (nodo._note ||= []).push({ testo, letta: false });
     renderNote(nodo);
   }
@@ -3839,7 +3958,7 @@ function setupChatComposer() {
     const input = $("chat-input");
     const message = input.value.trim();
     const files = selectedChatFiles();
-    if (state.chatAbort || runAttivoDellaChat()) {
+    if (streamDellaChat() || runAttivoDellaChat()) {
       if (!message) return;
       input.value = "";
       const esito = await inviaNota(message);
@@ -3867,16 +3986,10 @@ function setupChatComposer() {
         console.warn("local command cancellation failed", error);
       }
     }
-    state.chatAbort?.abort();
+    streamDellaChat()?.abort.abort();
   });
 
-  $("chat-file")?.addEventListener("change", () => {
-    const files = selectedChatFiles();
-    const label = formatFileLabel(files);
-    setText("chat-file-label", label);
-    const labelNode = $("chat-file-label");
-    if (labelNode) labelNode.title = files.map((file) => file.name).join("\n") || "No files attached";
-  });
+  $("chat-file")?.addEventListener("change", () => renderAllegati());
 
   $("link-folder-button")?.addEventListener("click", () => {
     linkWorkspaceFolder().catch((err) => {
