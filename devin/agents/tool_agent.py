@@ -27,6 +27,8 @@ import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from devin.core.sorvegliante import Sorvegliante, messaggio_avviso, messaggio_stop
+
 MAX_TURNI = 60
 MAX_TOKENS_TURNO = 8192
 MAX_LETTURA = 20_000
@@ -95,7 +97,7 @@ principale, creare o cancellare repository) solo se il compito le chiede esplici
 
 @dataclass
 class EsitoAgente:
-    motivo: str                       # "fine", "risposta", "stop", "turni", "errore"
+    motivo: str                       # "fine", "risposta", "stop", "turni", "errore", "giro_a_vuoto"
     riassunto: str = ""
     turni: int = 0
     chiamate: List[str] = field(default_factory=list)
@@ -132,6 +134,8 @@ class AgenteStrumenti:
         self.strumenti: List[Dict[str, Any]] = STRUMENTI + list(getattr(mcp, "strumenti", None) or [])
         self.contesto_token = int(contesto_token)
         self.max_turni = int(max_turni)
+        # niente tetto stretto: a fermare un agente che gira in tondo e' il sorvegliante
+        self.sorvegliante = Sorvegliante()
         self.max_tokens_turno = int(max_tokens_turno)
         self.sforzo = sforzo
         self.messaggi: List[Dict[str, Any]] = [{"role": "system", "content": PROMPT_SISTEMA}]
@@ -387,6 +391,7 @@ class AgenteStrumenti:
         """Un giro di lavoro: il messaggio (compito o feedback) e poi turni fino a fine/stop/limite."""
         self.messaggi.append({"role": "user", "content": messaggio})
         esito = EsitoAgente(motivo="turni")
+        fermato = ""            # il sorvegliante l'ha fermato: un ultimo turno senza strumenti
         for turno in range(1, self.max_turni + 1):
             esito.turni = turno
             if self.should_stop():
@@ -396,7 +401,8 @@ class AgenteStrumenti:
             self._alleggerisci()
             try:
                 risposta = self.ai.chiama_con_strumenti(
-                    self.messaggi, self.strumenti, sforzo=self.sforzo, max_tokens=self.max_tokens_turno)
+                    self.messaggi, [] if fermato else self.strumenti, sforzo=self.sforzo,
+                    max_tokens=self.max_tokens_turno)
             except Exception as exc:
                 esito.motivo, esito.errore = "errore", f"{type(exc).__name__}: {exc}"[:500]
                 self.log(f"Agente: il modello non risponde ({esito.errore})", "error")
@@ -411,8 +417,15 @@ class AgenteStrumenti:
                         "i file grandi scrivili a pezzi (scrivi_file e poi modifica_file).")})
                     self.log("Agente: risposta tagliata per lunghezza, gli chiedo di continuare a pezzi", "warning")
                     continue
-                esito.motivo, esito.riassunto = "risposta", testo
+                esito.motivo, esito.riassunto = ("giro_a_vuoto" if fermato else "risposta"), testo
+                if fermato:
+                    esito.errore = f"fermato dal sorvegliante: {fermato}"[:500]
                 self.messaggi.append({"role": "assistant", "content": testo})
+                return esito
+            if fermato:
+                # niente strumenti offerti e lui scrive chiamate lo stesso: non si eseguono
+                esito.motivo, esito.errore = "giro_a_vuoto", f"fermato dal sorvegliante: {fermato}"[:500]
+                esito.riassunto = testo
                 return esito
             self.messaggi.append({"role": "assistant", "content": testo, "tool_calls": chiamate})
             finito = False
@@ -441,6 +454,8 @@ class AgenteStrumenti:
                         except Exception as exc:
                             risultato = f"ERRORE: {type(exc).__name__}: {exc}"
                 esito.chiamate.append(nome)
+                if args is not None and nome != "fine":
+                    self.sorvegliante.registra(nome, args, risultato)
                 self.messaggi.append({"role": "tool", "tool_call_id": call.get("id", ""),
                                       "content": str(risultato)})
             if self._immagini:
@@ -451,6 +466,16 @@ class AgenteStrumenti:
             if finito:
                 esito.motivo = "fine"
                 return esito
+            verdetto = self.sorvegliante.fine_giro()
+            if verdetto.stato == "avviso":
+                self.messaggi.append(messaggio_avviso(verdetto.motivo))
+                self.log(f"🔁 Sorvegliante: l'agente si ripete ({verdetto.motivo[:200]}), gli chiedo di "
+                         "cambiare approccio", "warning")
+            elif verdetto.stato == "stop":
+                fermato = verdetto.motivo
+                self.messaggi.append(messaggio_stop(verdetto.motivo))
+                self.log(f"🔁 Sorvegliante: agente fermato perche' gira in tondo ({verdetto.motivo[:200]})",
+                         "warning")
         self.log(f"Agente: raggiunto il limite di {self.max_turni} turni", "warning")
         return esito
 

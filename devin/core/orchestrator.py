@@ -748,7 +748,7 @@ class Orchestrator:
             riassunto = esito.riassunto or riassunto
             self._log(f"Agente, giro {giro}: {esito.motivo} dopo {esito.turni} turni "
                       f"({len(esito.chiamate)} strumenti)", "info")
-            if esito.motivo in ("stop", "errore"):
+            if esito.motivo in ("stop", "errore", "giro_a_vuoto"):
                 quality = gate() if scritti() else quality
                 if esito.errore:
                     quality.setdefault("errors", []).append(f"agente: {esito.errore}")

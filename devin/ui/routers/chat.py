@@ -66,6 +66,7 @@ from devin.core.chat_continuity import (
     pending_messages,
     should_checkpoint,
 )
+from devin.core.sorvegliante import Sorvegliante, messaggio_avviso, messaggio_stop
 from devin.core.context_budget import (
     completion_budget,
     context_budget,
@@ -314,6 +315,14 @@ STRUMENTO_CERCA_WEB = {"type": "function", "function": {
                     "Da usare per informazioni aggiornate, specifiche o incerte."),
     "parameters": {"type": "object", "properties": {"domanda": {"type": "string"}},
                    "required": ["domanda"], "additionalProperties": False}}}
+
+# Una risposta in chat lavora da sola finche' serve (19/10): niente tetto fisso di
+# passaggi. Prima, dopo 10 giri, gli strumenti sparivano in silenzio: DEVIN ha
+# ripetuto tre volte la stessa ricerca e poi ha scritto la chiamata come testo. Ora
+# a fermarlo e' solo il sorvegliante (devin/core/sorvegliante.py) quando gira in
+# tondo, e un tetto di sicurezza molto alto, dichiarato a lui e all'utente.
+MAX_GIRI_SICUREZZA = 60
+CHIAMATA_SCRITTA_RE = re.compile(r"<tool_call>|<function=[\w.-]+>")
 
 
 def _connetti_mcp_chat():
@@ -1327,7 +1336,7 @@ async def api_chat(req: ChatRequest):
 
             # Strumenti in chat: con il web su "auto" DEVIN ha cerca_web e lo
             # usa quando serve; la ricerca si vede in chat, il risultato torna
-            # al modello e la risposta continua. Al massimo 3 ricerche.
+            # al modello e la risposta continua. Nessun tetto: le ripetizioni le ferma il sorvegliante.
             # Server MCP accesi (es. GitHub): i loro strumenti si aggiungono.
             mcp, avvisi_mcp = await run_in_threadpool(_connetti_mcp_chat)
             for avviso in avvisi_mcp:   # un server acceso che non risponde si dice, non si salta in silenzio
@@ -1384,9 +1393,9 @@ async def api_chat(req: ChatRequest):
             uso_prompt.update(tools_offered=len(strumenti or []))
             print(f"[Chat] strumenti offerti al modello: {len(strumenti or [])} "
                   f"({', '.join(t['function']['name'] for t in (strumenti or []))[:300]})")
-            ricerche = 0
             giri_strumenti = 0
-            for _giro in range(16):
+            sorvegliante = Sorvegliante()
+            for _giro in range(MAX_GIRI_SICUREZZA * 2):   # le note rifanno un giro senza strumenti
                 chiamate = []
                 testo_giro = ""
                 note: list[str] = []
@@ -1417,9 +1426,18 @@ async def api_chat(req: ChatRequest):
                     yield f"event: nota\ndata: {json.dumps({'note': note})}\n\n"
                     continue
                 if not chiamate:
+                    if CHIAMATA_SCRITTA_RE.search(testo_giro):
+                        # Non e' una risposta: e' una chiamata che il server non ha
+                        # riconosciuto (o scritta senza strumenti). Non si esegue
+                        # niente, ma lo si dice invece di farla passare per risposta.
+                        avviso = ("DEVIN ha scritto una chiamata a uno strumento come testo: non e' stata "
+                                  "eseguita. Scrivi «continua» per farlo riprovare.")
+                        yield f"event: warning\ndata: {json.dumps({'message': avviso})}\n\n"
                     break
                 conversazione.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
-                for chiamata in chiamate:
+                inizio_risultati = len(conversazione)
+                saltate: set[int] = set()       # ricerche non rifatte: le ha gia' contate il sorvegliante
+                for indice_chiamata, chiamata in enumerate(chiamate):
                     funzione = chiamata.get("function") or {}
                     if funzione.get("name") == "modella_3d" and modella_pronta:
                         yield f"event: info\ndata: {json.dumps({'message': '🧊 Modello il pezzo 3D'})}\n\n"
@@ -1511,11 +1529,18 @@ async def api_chat(req: ChatRequest):
                         domanda = str(json.loads(funzione.get("arguments") or "{}").get("domanda") or "").strip()
                     except ValueError:
                         domanda = ""
-                    if funzione.get("name") != "cerca_web" or not domanda:
-                        offerti = [s["function"]["name"] for s in (strumenti or [])]
-                        risultato = (f"ERRORE: lo strumento {funzione.get('name')!r} non esiste o mancano gli "
-                                     f"argomenti. Strumenti disponibili: {', '.join(offerti) or 'nessuno'} "
-                                     "(cerca_web vuole 'domanda'). Riprova con un nome esatto.")
+                    offerti = [s["function"]["name"] for s in (strumenti or [])]
+                    if funzione.get("name") != "cerca_web" or not domanda or "cerca_web" not in offerti:
+                        risultato = (f"ERRORE: lo strumento {funzione.get('name')!r} non esiste, non e' piu' "
+                                     f"disponibile o mancano gli argomenti. Strumenti disponibili: "
+                                     f"{', '.join(offerti) or 'nessuno'} (cerca_web vuole 'domanda').")
+                    elif sorvegliante.ricerca_gia_fatta(domanda) is not None:
+                        # la stessa ricerca rifatta da' gli stessi risultati: un giro a vuoto
+                        saltate.add(indice_chiamata)
+                        yield f"event: info\ndata: {json.dumps({'message': f'🌐 Ricerca già fatta, non la ripeto: {domanda[:120]}'})}\n\n"
+                        risultato = ("Hai gia' cercato esattamente questo in questa risposta: i risultati sono "
+                                     "piu' sopra. Non ripetere la stessa ricerca: usa quei risultati, cambia "
+                                     "domanda o prosegui con gli altri strumenti.")
                     else:
                         yield f"event: info\ndata: {json.dumps({'message': f'🌐 Cerco sul web: {domanda[:160]}'})}\n\n"
                         try:
@@ -1530,12 +1555,28 @@ async def api_chat(req: ChatRequest):
                     immagini_strumenti = []
                     vista.alleggerisci(conversazione)
                 giri_strumenti += 1
-                if any((c.get("function") or {}).get("name") == "cerca_web" for c in chiamate):
-                    ricerche += 1
-                if ricerche >= 3:
-                    strumenti_web = []   # dopo tre ricerche si risponde con quello che c'e'
-                if giri_strumenti >= 10:
-                    strumenti_mcp = []
+                risultati = [m for m in conversazione[inizio_risultati:] if m.get("role") == "tool"]
+                for indice_chiamata, (chiamata, esito_tool) in enumerate(zip(chiamate, risultati)):
+                    if indice_chiamata not in saltate:
+                        funzione = chiamata.get("function") or {}
+                        sorvegliante.registra(funzione.get("name", ""), funzione.get("arguments") or "{}",
+                                              esito_tool.get("content"))
+                verdetto = sorvegliante.fine_giro()
+                if verdetto.stato == "avviso":
+                    conversazione.append(messaggio_avviso(verdetto.motivo))
+                    avviso = f"🔁 Sorvegliante: DEVIN si sta ripetendo ({verdetto.motivo[:200]}). Gli ho chiesto di cambiare approccio."
+                    yield f"event: info\ndata: {json.dumps({'message': avviso})}\n\n"
+                elif verdetto.stato == "stop" or giri_strumenti >= MAX_GIRI_SICUREZZA:
+                    motivo = (verdetto.motivo if verdetto.stato == "stop"
+                              else f"raggiunto il tetto di sicurezza di {MAX_GIRI_SICUREZZA} passaggi")
+                    strumenti_web, strumenti_mcp = [], []
+                    conversazione.append(messaggio_stop(motivo))
+                    avviso = (f"DEVIN è stato fermato perché girava in tondo: {motivo[:200]}. "
+                              "Ti risponde con quello che ha; scrivi «continua» per farlo riprovare."
+                              if verdetto.stato == "stop" else
+                              f"DEVIN ha raggiunto il tetto di sicurezza di {MAX_GIRI_SICUREZZA} passaggi: "
+                              "ti risponde con quello che ha; scrivi «continua» per farlo proseguire.")
+                    yield f"event: warning\ndata: {json.dumps({'message': avviso})}\n\n"
                 strumenti = (strumenti_web + strumenti_mcp) or None
             if mcp:
                 await run_in_threadpool(mcp.chiudi)

@@ -128,8 +128,11 @@ def test_stop_risposta_tagliata_e_limite_di_turni(tmp_path):
 
 
 def test_un_contesto_pieno_riduce_i_risultati_vecchi(tmp_path):
-    (tmp_path / "grande.txt").write_text("y" * 9000)
-    ai = AIFinta([[chiamata("leggi_file", percorso="grande.txt")]] * 12 + ["fine"])
+    # file diversi: rileggere lo stesso file identico 12 volte e' un giro a vuoto,
+    # e dal 19/10 il sorvegliante lo ferma prima
+    for i in range(12):
+        (tmp_path / f"grande{i}.txt").write_text("y" * 9000)
+    ai = AIFinta([[chiamata("leggi_file", percorso=f"grande{i}.txt")] for i in range(12)] + ["fine"])
     agente, _ = _agente(tmp_path, ai, contesto_token=20_000)
     agente.esegui("leggi")
     ultimi = ai.visti[-1]
@@ -215,3 +218,39 @@ def test_se_l_agente_risponde_a_parole_senza_scrivere_si_insiste(tmp_path):
     # nella sandbox di prova ci sono gia' file del progetto: scatta la spinta "scrivi i test"
     assert spinta.startswith(("Non hai scritto nessun file", "La verifica non ha trovato test"))
     assert result["verified"] is True and result["status"] == "awaiting_approval", result
+
+
+class AIRipete(AIFinta):
+    """Come AIFinta, ma accetta il turno finale senza strumenti dopo lo stop."""
+
+    def chiama_con_strumenti(self, messages, tools, **kwargs):
+        self.visti.append([dict(m) for m in messages])
+        self.offerti = getattr(self, "offerti", []) + [[t["function"]["name"] for t in tools]]
+        turno = self.turni.pop(0)
+        if isinstance(turno, str):
+            return {"content": turno, "tool_calls": [], "finish_reason": "stop"}
+        return {"content": "", "tool_calls": turno, "finish_reason": "tool_calls"}
+
+
+def test_il_sorvegliante_ferma_l_agente_che_gira_in_tondo(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    ai = AIRipete([[chiamata("leggi_file", percorso="a.py")]] * 5
+                  + ["Mi sono bloccato: rileggevo sempre a.py."])
+    agente, log = _agente(tmp_path, ai)
+    esito = agente.esegui("sistema a.py")
+    assert esito.motivo == "giro_a_vuoto" and "sorvegliante" in esito.errore
+    assert esito.riassunto == "Mi sono bloccato: rileggevo sempre a.py."
+    assert ai.offerti[-1] == [] and all(ai.offerti[:-1]), "solo l'ultimo turno e' senza strumenti"
+    testi = [m["content"] for m in ai.visti[-1] if m["role"] == "user"]
+    assert any("Ti stai ripetendo" in t for t in testi) and "girava in tondo" in testi[-1]
+
+
+def test_lo_stesso_comando_dopo_una_modifica_non_e_una_ripetizione(tmp_path):
+    turni = []
+    for i in range(8):
+        turni.append([chiamata("scrivi_file", percorso="calc.py", contenuto=f"VALORE = {i}\n")])
+        turni.append([chiamata("leggi_file", percorso="calc.py")])
+    ai = AIRipete(turni + [[chiamata("fine", riassunto="fatto")]])
+    agente, _ = _agente(tmp_path, ai)
+    esito = agente.esegui("prova piu' valori")
+    assert esito.motivo == "fine" and agente.sorvegliante.interventi == []
