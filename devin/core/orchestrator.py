@@ -732,6 +732,7 @@ class Orchestrator:
             risolvi=self._risolutore(),
             guarda=self._occhi(),
             modella=self._modellatore(),
+            vede=self._vede_immagini(),
             contesto_token=contesto_token,
             max_turni=int(cfg.get("agent_max_turns", 60) or 60),
         )
@@ -809,6 +810,18 @@ class Orchestrator:
             return None
         return lambda codice, nome, cartella, materiale="", qualita="": modella3d.modella(
             codice, nome, cartella, config=self.config or {}, materiale=materiale, qualita=qualita)
+
+    def _vede_immagini(self) -> bool:
+        """Il server del rig ha il proiettore della visione? (dice /props; nel dubbio no)."""
+        controllo = getattr(self.ai_client, "vede_immagini", None)
+        if controllo is None:
+            return False
+        try:
+            vede, motivo = controllo()
+        except Exception as exc:                          # noqa: BLE001 - nel dubbio niente immagini
+            vede, motivo = False, f"{type(exc).__name__}"
+        self._log(f"Visione: {'accesa' if vede else 'spenta'} ({motivo})", "info")
+        return bool(vede)
 
     def _occhi(self):
         """Il browser per guardare le pagine (anche dell'app in costruzione), se installato."""
