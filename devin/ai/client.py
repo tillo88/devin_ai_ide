@@ -895,7 +895,11 @@ class AIClient:
             try:
                 url, model = self._get_endpoints(mode)
                 corpo = {**self._corpo(model, messages, sforzo=sforzo, stream=True, max_tokens=max_tokens),
-                         "tools": tools, "tool_choice": "auto", "return_progress": True}
+                         "return_progress": True}
+                if tools:
+                    # senza strumenti (il sorvegliante ha fermato l'agente) niente "tools": []
+                    # con tool_choice: un turno normale, che chiede solo la risposta
+                    corpo.update(tools=tools, tool_choice="auto")
                 self._registra_richiesta(url, corpo)
                 r = requests.post(url, json=corpo, timeout=timeout, stream=True,
                                   headers=self._auth_headers(url))

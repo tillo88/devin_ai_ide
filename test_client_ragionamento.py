@@ -694,3 +694,17 @@ def test_sforzo_high_rifiutato_con_i_valori_ammessi(client):
         client._sforzo("high")
     assert "xhigh" in str(errore.value) and "medium" in str(errore.value)
     assert client._sforzo("XHIGH") == "xhigh"
+
+
+def test_un_turno_con_strumenti_vuoti_non_manda_tools(client):
+    """Dopo lo stop del sorvegliante l'agente chiede una risposta senza strumenti:
+    niente "tools": [] con tool_choice, che il server potrebbe rifiutare (19/10)."""
+    righe = ["data: " + json.dumps({"choices": [{"delta": {"content": "riassunto"}}]}), "data: [DONE]"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    esito = client.chiama_con_strumenti([{"role": "user", "content": "x"}], [])
+    corpo = client._stato["corpi"][-1]
+    assert "tools" not in corpo and "tool_choice" not in corpo
+    assert esito["content"] == "riassunto" and not esito["tool_calls"]
+    client._stato["risposta"] = _FintaRisposta(righe)
+    client.chiama_con_strumenti([{"role": "user", "content": "x"}], [CERCA])
+    assert client._stato["corpi"][-1]["tools"] == [CERCA] and client._stato["corpi"][-1]["tool_choice"] == "auto"
