@@ -6206,3 +6206,51 @@ body.codex-shell {
 .note-panel > ul { margin: 0.4rem 0 0 0; padding-left: 1.1rem; max-height: 12rem; overflow-y: auto; }
 .note-panel li { white-space: pre-wrap; margin-bottom: 0.25rem; }
 .note-panel li.in-attesa { opacity: 0.6; font-style: italic; }
+
+/* Allegati visibili (19/10): miniatura, nome, dimensione e x per toglierli,
+   nel composer prima dell'invio e nel messaggio inviato. */
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+}
+.chat-attachments[hidden] { display: none; }
+.chat-attachments.sent { margin: 8px 0 0; }
+.chat-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 280px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text);
+  font-size: 12px;
+}
+.chat-attachment img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.chat-attachments.sent .chat-attachment img { width: 96px; height: 96px; }
+.chat-attachment-ico { font-size: 22px; padding: 0 4px; }
+.chat-attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-attachment-remove {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.chat-attachment-remove:hover { color: var(--text); }
