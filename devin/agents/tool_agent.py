@@ -113,6 +113,7 @@ class AgenteStrumenti:
                  risolvi: Optional[Callable[[str, int], str]] = None,
                  guarda: Optional[Callable[..., str]] = None,
                  modella: Optional[Callable[..., str]] = None,
+                 vede: bool = False,
                  contesto_token: int = 131_072, max_turni: int = MAX_TURNI,
                  max_tokens_turno: int = MAX_TOKENS_TURNO, sforzo: str = ""):
         self.ai = ai
@@ -148,6 +149,14 @@ class AgenteStrumenti:
             self.strumenti.append(STRUMENTO_3D)
             self.messaggi[0]["content"] += ("\n\nPEZZI 3D: modellali con modella_3d (build123d) e confronta "
                                             "le misure restituite con quelle richieste prima di finire.")
+        # Visione (19/10): con il proiettore sul server, screenshot e immagini del
+        # progetto arrivano al modello come immagini (devin.core.vista).
+        self.vede = bool(vede)
+        self._immagini: List[tuple] = []
+        if self.vede:
+            from devin.core import vista
+            self.strumenti.append(vista.STRUMENTO)
+            self.messaggi[0]["content"] += "\n\n" + vista.NOTA_PROMPT
         self.ultima_verifica: Optional[Dict[str, Any]] = None
 
     # --- percorsi -----------------------------------------------------------------
@@ -302,9 +311,27 @@ class AgenteStrumenti:
             return self._modella(str(args["codice"]), str(args.get("nome") or "pezzo"), self.radice / "modelli",
                                  materiale=str(args.get("materiale") or ""), qualita=str(args.get("qualita") or ""))
         if nome == "guarda_pagina" and self._guarda is not None:
-            return self._guarda(str(args["url"]), avvia=args.get("avvia"), cartella=self.radice,
-                                aspetta_secondi=args.get("aspetta_secondi") or 1,
-                                cartella_screenshot=self.radice / ".casa" / "screenshot")
+            risultato = self._guarda(str(args["url"]), avvia=args.get("avvia"), cartella=self.radice,
+                                     aspetta_secondi=args.get("aspetta_secondi") or 1,
+                                     cartella_screenshot=self.radice / ".casa" / "screenshot")
+            if self.vede:
+                from devin.core import vista
+                scatto = vista.screenshot_di(risultato)
+                if scatto:
+                    url, motivo = vista.carica(scatto, [self.radice])
+                    if url:
+                        self._immagini.append((url, f"screenshot di {str(args['url'])[:200]} (guarda_pagina)"))
+                        risultato += "\n(lo screenshot ti arriva come immagine nel prossimo messaggio)"
+                    else:
+                        risultato += f"\n(screenshot non mostrabile: {motivo})"
+            return risultato
+        if nome == "guarda_immagine" and self.vede:
+            from devin.core import vista
+            url, motivo = vista.carica(str(args["percorso"]), [self.radice], base=self.radice)
+            if not url:
+                return f"ERRORE: immagine non mostrabile: {motivo}"
+            self._immagini.append((url, f"{args['percorso']} (guarda_immagine)"))
+            return "ok: l'immagine ti arriva nel prossimo messaggio"
         if nome == "risolvi_vincoli" and self._risolvi is not None:
             return self._risolvi(str(args["codice"]), int(args.get("secondi") or 120))
         if self._mcp is not None and self._mcp.gestisce(nome):
@@ -318,7 +345,8 @@ class AgenteStrumenti:
     def _token_stimati(self) -> int:
         caratteri = 0
         for m in self.messaggi:
-            caratteri += len(str(m.get("content") or ""))
+            from devin.core.vista import caratteri as _caratteri
+            caratteri += _caratteri(m.get("content"))
             for call in m.get("tool_calls") or []:
                 caratteri += len(str((call.get("function") or {}).get("arguments") or ""))
         return caratteri // CARATTERI_PER_TOKEN
@@ -405,6 +433,11 @@ class AgenteStrumenti:
                 esito.chiamate.append(nome)
                 self.messaggi.append({"role": "tool", "tool_call_id": call.get("id", ""),
                                       "content": str(risultato)})
+            if self._immagini:
+                from devin.core import vista
+                self.messaggi.append(vista.messaggio(self._immagini))
+                self._immagini = []
+                vista.alleggerisci(self.messaggi)
             if finito:
                 esito.motivo = "fine"
                 return esito

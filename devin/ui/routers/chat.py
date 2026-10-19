@@ -940,7 +940,9 @@ async def api_chat(req: ChatRequest):
     # server ha caricato il proiettore (--mmproj). Lo dice /props; se non lo
     # dice, un'immagine verrebbe ignorata e la risposta inventata: errore chiaro.
     if images:
-        sees, why = await asyncio.to_thread(ai.vede_immagini, selected_mode)
+        controllo = getattr(ai, "vede_immagini", None)
+        sees, why = ((False, "il client non sa chiederlo al server") if controllo is None
+                     else await asyncio.to_thread(controllo, selected_mode))
         if not sees:
             return {"error": f"Il modello sul rig non ha la visione accesa ({why}): "
                              "l'immagine non verrebbe letta."}
@@ -1358,6 +1360,24 @@ async def api_chat(req: ChatRequest):
             print(f"[Chat] browser per guardare le pagine: {motivo_occhi}")
             if occhi_pronti:
                 strumenti_mcp = strumenti_mcp + [occhi.STRUMENTO]
+            # Visione negli strumenti (19/10): screenshot di guarda_pagina e
+            # guarda_immagine arrivano come immagini, se il server vede.
+            from devin.core import vista
+            vede_strumenti = bool(images)
+            controllo_vista = getattr(ai, "vede_immagini", None)
+            if not vede_strumenti and controllo_vista is not None:
+                try:
+                    vede_strumenti, _motivo_vista = await asyncio.to_thread(controllo_vista, selected_mode)
+                except Exception as exc:                  # noqa: BLE001 - nel dubbio niente immagini
+                    vede_strumenti = False
+                    print(f"[Chat] visione negli strumenti: controllo fallito ({type(exc).__name__})")
+            radici_vista = [Path(req.project_path)] if req.project_path else []
+            if vede_strumenti:
+                strumenti_mcp = strumenti_mcp + [vista.STRUMENTO]
+                if messaggi and messaggi[0].get("role") == "system":
+                    messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + "\n\n"
+                                 + vista.NOTA_PROMPT}] + list(messaggi[1:])
+            immagini_strumenti: list = []
             strumenti_web = [] if req.use_web_search else [STRUMENTO_CERCA_WEB]
             strumenti = (strumenti_web + strumenti_mcp) or None
             conversazione = list(messaggi)
@@ -1424,8 +1444,32 @@ async def api_chat(req: ChatRequest):
                             risultato = await run_in_threadpool(
                                 lambda: occhi.guarda(indirizzo, config=ai.config,
                                                      aspetta_secondi=argomenti.get("aspetta_secondi") or 1))
+                            scatto = vista.screenshot_di(risultato) if vede_strumenti else None
+                            if scatto:
+                                url_img, motivo_img = vista.carica(scatto, radici_vista, screenshot_temporanei=True)
+                                if url_img:
+                                    immagini_strumenti.append((url_img, f"screenshot di {indirizzo[:200]} (guarda_pagina)"))
+                                    risultato += "\n(lo screenshot ti arriva come immagine nel prossimo messaggio)"
+                                else:
+                                    risultato += f"\n(screenshot non mostrabile: {motivo_img})"
                         except (ValueError, TypeError) as exc:
                             risultato = f"ERRORE: argomenti non validi ({exc})"
+                        conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
+                                              "content": risultato})
+                        continue
+                    if funzione.get("name") == "guarda_immagine" and vede_strumenti:
+                        try:
+                            percorso_img = str(json.loads(funzione.get("arguments") or "{}").get("percorso") or "")
+                        except ValueError:
+                            percorso_img = ""
+                        url_img, motivo_img = vista.carica(
+                            percorso_img, radici_vista, base=Path(req.project_path) if req.project_path else None)
+                        if url_img:
+                            yield f"event: info\ndata: {json.dumps({'message': f'🖼 Guardo {percorso_img[:160]}'})}\n\n"
+                            immagini_strumenti.append((url_img, f"{percorso_img} (guarda_immagine)"))
+                            risultato = "ok: l'immagine ti arriva nel prossimo messaggio"
+                        else:
+                            risultato = f"ERRORE: immagine non mostrabile: {motivo_img}"
                         conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
                                               "content": risultato})
                         continue
@@ -1473,6 +1517,10 @@ async def api_chat(req: ChatRequest):
                             yield f"event: warning\ndata: {json.dumps({'message': f'Ricerca web non riuscita: {exc}'})}\n\n"
                     conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
                                           "content": risultato or "nessun risultato"})
+                if immagini_strumenti:
+                    conversazione.append(vista.messaggio(immagini_strumenti))
+                    immagini_strumenti = []
+                    vista.alleggerisci(conversazione)
                 giri_strumenti += 1
                 if any((c.get("function") or {}).get("name") == "cerca_web" for c in chiamate):
                     ricerche += 1
