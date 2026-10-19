@@ -530,6 +530,30 @@ class AIClient:
         self._rende_strumenti[base] = esito
         return esito
 
+    def vede_immagini(self, mode="reasoning"):
+        """Il server del modello vede le immagini? ``(si/no, motivo)``.
+
+        Lo dice ``/props`` (``modalities.vision``): vero solo con il proiettore
+        caricato (``--mmproj``). Si chiede ogni volta che arriva un'immagine,
+        perche' il server puo' cambiare (envelope nuovo) senza che il backend
+        riparta; nessuna cache che possa dire "si'" a un server che non vede.
+        """
+        try:
+            url = self._get_endpoints(mode)[0]
+        except RigUnavailableError as e:
+            return False, f"rig non disponibile: {e}"
+        parti = urlparse(url)
+        base = f"{parti.scheme}://{parti.netloc}"
+        try:
+            r = requests.get(base + "/props", timeout=10, headers=self._auth_headers(url))
+            r.raise_for_status()
+            modalities = (r.json() or {}).get("modalities") or {}
+        except Exception as e:                       # noqa: BLE001 - il motivo va all'utente
+            return False, f"/props non disponibile: {type(e).__name__}"
+        if modalities.get("vision") is True:
+            return True, "proiettore caricato"
+        return False, "il server non ha il proiettore della visione (--mmproj)"
+
     def _con_catalogo_se_serve(self, messages, tools, url):
         from devin.ai.tool_text import con_catalogo
 
