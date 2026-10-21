@@ -345,6 +345,11 @@ def _connetti_mcp_chat():
 class ChatRequest(BaseModel):
     message: str
     mode: str = "auto"
+    # Riscaldamento (21/10): la stessa strada della chat fino alla prima lettura
+    # del modello, con max_tokens=1, senza storico ne' salvataggi. Prepara nella
+    # cache del server il prefisso comune (istruzioni + strumenti) che ogni chat
+    # riusa: la prima domanda vera non deve rileggerlo da capo.
+    riscaldamento: bool = False
     image_base64: Optional[str] = None
     project_path: Optional[str] = None
     use_web_search: bool = False
@@ -1029,6 +1034,10 @@ async def api_chat(req: ChatRequest):
     message = req.message.strip()
     if not message:
         return {"error": "empty message"}
+    if req.riscaldamento:
+        # come una General chat nuova, senza allegati ne' ricerca forzata
+        req.project_path, req.chat_id, req.images, req.image_base64 = None, None, None, None
+        req.use_web_search, req.local_context = False, None
     if req.project_path:
         req.project_path = _validated_project_path(req.project_path, allow_general=False)
     images = list(req.images or [])
@@ -1122,8 +1131,11 @@ async def api_chat(req: ChatRequest):
     # per ricavare l'argomento della conversazione sui follow-up corti ("riprova").
     persistence_key = req.project_path or GENERAL_CHAT_PROJECT_KEY
     chat_persistence = ChatPersistence(persistence_key, chat_id=req.chat_id)
-    persisted_history = chat_persistence.load()
-    chat_persistence.append("user", message)  # subito, sopravvive anche a crash mid-stream
+    if req.riscaldamento:
+        persisted_history = []            # niente storico: conta solo il prefisso comune
+    else:
+        persisted_history = chat_persistence.load()
+        chat_persistence.append("user", message)  # subito, sopravvive anche a crash mid-stream
 
     # Auto-attivazione ricerca web su intento esplicito (toggle spento ma la
     # domanda chiede chiaramente dati dal web). L'utente viene avvisato via SSE.
@@ -1567,7 +1579,18 @@ async def api_chat(req: ChatRequest):
                 note: list[str] = []
                 flusso = ai.stream_eventi(conversazione, mode=selected_mode,
                                           sforzo=req.reasoning_effort or "",
-                                          tools=strumenti, annulla=annulla)
+                                          tools=strumenti, annulla=annulla,
+                                          **({"max_tokens": 1} if req.riscaldamento else {}))
+                if req.riscaldamento:
+                    # basta che il server legga il prefisso: niente risposta, niente
+                    # strumenti, niente storico, memoria o eval
+                    async for evento in iterate_in_threadpool(flusso):
+                        if evento["tipo"] == "uso":
+                            _registra_lettura("riscaldamento", evento)
+                    if mcp:
+                        await run_in_threadpool(mcp.chiudi)
+                    yield f"event: done\ndata: {json.dumps({'riscaldamento': True})}\n\n"
+                    return
                 async for evento in iterate_in_threadpool(flusso):
                     if evento["tipo"] == "chiamate":
                         chiamate = evento.get("chiamate") or []

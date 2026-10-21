@@ -230,6 +230,39 @@ from devin.ui.routers.chat import (
     _requires_verified_web_sources,
     api_chat,
 )
+async def riscalda_cache_del_modello() -> str:
+    """Riscaldamento (21/10): una lettura del prefisso comune della chat.
+
+    Istruzioni e descrizione degli strumenti sono ~10k token uguali per ogni chat;
+    il server le tiene in cache dopo la prima lettura e le chat successive le
+    riusano. Senza riscaldamento la prima domanda le leggeva da capo (minuti).
+    Passa dalla stessa strada della chat (riscaldamento=True), cosi' il prefisso
+    e' identico per costruzione. Restituisce l'esito, che finisce anche nel journal.
+    """
+    from devin.ui.routers.chat import ChatRequest as _Richiesta, api_chat as _chat
+    try:
+        risposta = await _chat(_Richiesta(message="ciao", riscaldamento=True))
+        if isinstance(risposta, dict):
+            esito = f"non riuscito: {risposta.get('error') or risposta}"
+        else:
+            pezzi = [p if isinstance(p, str) else p.decode() async for p in risposta.body_iterator]
+            errori = [blocco.split("data: ", 1)[-1] for blocco in "".join(pezzi).split("\n\n")
+                      if blocco.startswith("event: error")]
+            # la chat trasforma un errore del modello in un evento: va letto, non ignorato
+            esito = f"non riuscito: {errori[0][:300]}" if errori else "completato"
+    except Exception as exc:  # noqa: BLE001 - lo si dice nel journal, la chat funziona comunque
+        esito = f"non riuscito: {type(exc).__name__}: {exc}"
+    print(f"[Chat] riscaldamento {esito}")
+    return esito
+
+
+@app.on_event("startup")
+async def _riscaldamento_all_avvio():
+    if os.environ.get("DEVIN_RISCALDAMENTO", "1") == "0":
+        return
+    asyncio.get_running_loop().create_task(riscalda_cache_del_modello())
+
+
 app.include_router(knowledge_misc_router)
 app.include_router(explorer_router)
 app.include_router(training_router)
