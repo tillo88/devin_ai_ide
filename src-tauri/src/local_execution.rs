@@ -198,6 +198,52 @@ fn safe_cwd(root: &Path, raw: &str) -> Result<(PathBuf, String), String> {
     Ok((target, value.replace('\\', "/")))
 }
 
+/// Il Python dell'ambiente virtuale del progetto (21/10): DEVIN analizzando
+/// spyengine ha provato `.venv/Scripts/python.exe -m pytest` ed era rifiutato,
+/// perche' come programma la policy accettava solo nomi. Si ammette un
+/// interprete (o pytest) dentro una cartella `Scripts`/`bin` accanto a un
+/// `pyvenv.cfg`, cioe' un ambiente virtuale vero, sempre dentro la cartella
+/// autorizzata. Restituisce il tipo ("python" o "pytest", per le stesse regole
+/// sugli argomenti) e il percorso da eseguire; None se `raw` non e' un percorso.
+fn project_venv_program(root: &Path, raw: &str) -> Result<Option<(String, PathBuf)>, String> {
+    let value = raw.trim().replace('\\', "/");
+    if !value.contains('/') {
+        return Ok(None);
+    }
+    let refuse = || Err("Programma con percorso non consentito: solo il Python di un ambiente virtuale del progetto (es. .venv/Scripts/python.exe)".to_string());
+    if value.starts_with('/') || value.contains(':') || value.contains('\0') {
+        return refuse();
+    }
+    let parts: Vec<&str> = value.split('/').collect();
+    if parts.len() < 3 || parts.iter().any(|part| part.is_empty() || *part == "." || *part == "..") {
+        return refuse();
+    }
+    let file = parts[parts.len() - 1].to_ascii_lowercase();
+    let kind = match file.as_str() {
+        "python.exe" | "python" | "python3.exe" | "python3" => "python",
+        "pytest.exe" | "pytest" => "pytest",
+        _ => return refuse(),
+    };
+    let folder = parts[parts.len() - 2].to_ascii_lowercase();
+    if folder != "scripts" && folder != "bin" {
+        return refuse();
+    }
+    let relative: PathBuf = parts.iter().collect();
+    let scripts = root
+        .join(relative.parent().unwrap_or(Path::new("")))
+        .canonicalize()
+        .map_err(|_| "Ambiente virtuale del progetto non trovato".to_string())?;
+    let environment = scripts.parent().unwrap_or(&scripts);
+    if !scripts.starts_with(root) || scripts == *root || !environment.join("pyvenv.cfg").is_file() {
+        return refuse();
+    }
+    let target = scripts.join(relative.file_name().unwrap_or_default());
+    if !target.is_file() {
+        return Err("Interprete dell'ambiente virtuale non trovato".to_string());
+    }
+    Ok(Some((kind.to_string(), target)))
+}
+
 fn resolved_command(program: &str, args: &[String]) -> (String, Vec<String>) {
     match program {
         "python" | "python3" => {
@@ -351,11 +397,18 @@ fn run_command_blocking(
     timeout_seconds: u64,
 ) -> Result<LocalCommandReceipt, String> {
     let (working_directory, display_cwd) = safe_cwd(&root, &cwd)?;
-    let normalized = normalized_program(&display_program)?;
+    let venv = project_venv_program(&root, &display_program)?;
+    let normalized = match &venv {
+        Some((kind, _)) => kind.clone(),
+        None => normalized_program(&display_program)?,
+    };
     validate_args(&normalized, &args)?;
-    let (program, resolved_args) = resolved_command(&normalized, &args);
+    let (program, resolved_args) = match &venv {
+        Some((_, path)) => (path.to_string_lossy().into_owned(), args.clone()),
+        None => resolved_command(&normalized, &args),
+    };
     let digest_payload = serde_json::json!({
-        "program": normalized,
+        "program": if venv.is_some() { display_program.replace('\\', "/") } else { normalized.clone() },
         "args": args,
         "cwd": display_cwd,
         "timeout_seconds": timeout_seconds,
@@ -538,6 +591,55 @@ mod tests {
         assert!(validate_args("python", &["C:\\outside.py".into()]).is_err());
         assert!(validate_args("python", &["../outside.py".into()]).is_err());
         assert!(validate_args("git", &["status".into(), "--short".into()]).is_ok());
+    }
+
+    #[test]
+    fn project_venv_python_is_allowed_only_inside_a_real_venv() {
+        let base = std::env::temp_dir().join(format!("devin-venv-{}", Uuid::new_v4()));
+        let root_dir = base.join("progetto");
+        let scripts = root_dir.join(".venv").join("Scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::write(root_dir.join(".venv").join("pyvenv.cfg"), "home = C:/Python312\n").unwrap();
+        std::fs::write(scripts.join("python.exe"), b"MZ").unwrap();
+        std::fs::write(scripts.join("pytest.exe"), b"MZ").unwrap();
+        // esistono davvero: a rifiutarli dev'essere la policy, non un file mancante
+        std::fs::write(scripts.join("pip.exe"), b"MZ").unwrap();
+        std::fs::write(scripts.join("cmd.exe"), b"MZ").unwrap();
+        std::fs::create_dir_all(root_dir.join(".venv").join("Lib")).unwrap();
+        std::fs::write(root_dir.join(".venv").join("Lib").join("python.exe"), b"MZ").unwrap();
+        let finto = root_dir.join("tools").join("bin");
+        std::fs::create_dir_all(&finto).unwrap();
+        std::fs::write(finto.join("python.exe"), b"MZ").unwrap();
+        let root = root_dir.canonicalize().unwrap();
+
+        let (kind, path) = project_venv_program(&root, ".venv/Scripts/python.exe").unwrap().unwrap();
+        assert_eq!(kind, "python");
+        assert!(path.starts_with(&root) && path.ends_with("python.exe"));
+        assert_eq!(project_venv_program(&root, ".venv\\Scripts\\pytest.exe").unwrap().unwrap().0, "pytest");
+        assert!(project_venv_program(&root, "python").unwrap().is_none(), "un nome resta alla policy normale");
+        // niente pyvenv.cfg: non e' un ambiente virtuale
+        assert!(project_venv_program(&root, "tools/bin/python.exe").is_err());
+        // fuori dalla cartella, assoluti, altri programmi
+        assert!(project_venv_program(&root, "../x/.venv/Scripts/python.exe").is_err());
+        assert!(project_venv_program(&root, "C:/Python312/python.exe").is_err());
+        assert!(project_venv_program(&root, "/usr/bin/python3").is_err());
+        assert!(project_venv_program(&root, ".venv/Scripts/pip.exe").is_err());
+        assert!(project_venv_program(&root, ".venv/Scripts/cmd.exe").is_err());
+        assert!(project_venv_program(&root, ".venv/Lib/python.exe").is_err());
+        assert!(project_venv_program(&root, ".venv/Scripts/assente.exe").is_err());
+        // un collegamento dentro la cartella che porta a un ambiente virtuale fuori
+        #[cfg(unix)]
+        {
+            let fuori = base.join("fuori");
+            std::fs::create_dir_all(fuori.join("bin")).unwrap();
+            std::fs::write(fuori.join("pyvenv.cfg"), "home = /usr\n").unwrap();
+            std::fs::write(fuori.join("bin").join("python"), b"#!").unwrap();
+            std::os::unix::fs::symlink(&fuori, root_dir.join("esterno")).unwrap();
+            assert!(project_venv_program(&root, "esterno/bin/python").is_err());
+        }
+        // il codice inline resta vietato anche col Python del progetto
+        assert!(validate_args(&kind, &["-c".into(), "print(1)".into()]).is_err());
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

@@ -76,6 +76,9 @@ mutante sono rifiutati. Rust:
 - ricalcola l'origine Tauri e la registrazione del workspace;
 - limita `cwd` e path degli argomenti alla radice autorizzata;
 - azzera l'ambiente ereditato e ricostruisce una allowlist minima;
+- ammette come programma anche il Python (o pytest) di un ambiente virtuale
+  del progetto: `Scripts`/`bin` accanto a un `pyvenv.cfg`, dentro la cartella
+  autorizzata, con le stesse regole sugli argomenti (21/10);
 - disabilita stdin e limita il timeout a 1–900 secondi (default 180);
 - inserisce il processo in un Windows Job con terminazione dell'intero albero;
 - conserva al massimo 96 KiB per stream, con testa/coda e SHA-256 dell'output
