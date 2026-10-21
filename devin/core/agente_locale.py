@@ -78,21 +78,20 @@ STRUMENTI: List[Dict[str, Any]] = [
             "required": ["programma"], "additionalProperties": False}}},
     {"type": "function", "function": {
         "name": "proponi_modifiche",
-        "description": ("Propone modifiche ai file: l'utente le approva prima che vengano applicate, poi "
-                        "ricevi l'esito e puoi verificare con esegui. Per modificare un file esistente serve "
-                        "expected_sha256 (te lo da' leggi); per un file nuovo usa null. replace sostituisce "
-                        "il testo 'before' (esatto e univoco) con 'content'; write scrive il file intero."),
+        "description": ("Propone UNA modifica a un file: l'utente la approva prima che venga applicata, poi "
+                        "ricevi l'esito e puoi verificare con esegui. Per piu' file fai piu' chiamate. "
+                        "operation: write scrive il file intero (content), replace sostituisce il testo "
+                        "'before' (esatto e univoco) con 'content', delete lo elimina. Per un file esistente "
+                        "serve expected_sha256 (te lo da' leggi); per un file nuovo lascialo vuoto. "
+                        "Scrivi before e content come testo normale, a righe, senza virgolette ne' escape."),
         "parameters": {"type": "object", "properties": {
-            "summary": {"type": "string"},
-            "operations": {"type": "array", "minItems": 1, "maxItems": 20, "items": {
-                "type": "object", "properties": {
-                    "path": {"type": "string"},
-                    "operation": {"type": "string", "enum": ["write", "replace", "delete"]},
-                    "content": {"type": "string"},
-                    "before": {"type": "string"},
-                    "expected_sha256": {"type": ["string", "null"]}},
-                "required": ["path", "operation"], "additionalProperties": False}}},
-            "required": ["summary", "operations"], "additionalProperties": False}}},
+            "summary": {"type": "string", "description": "cosa cambia e perche', una riga"},
+            "path": {"type": "string", "description": "percorso relativo, con /"},
+            "operation": {"type": "string", "enum": ["write", "replace", "delete"]},
+            "expected_sha256": {"type": "string", "description": "sha256 da leggi; vuoto per un file nuovo"},
+            "before": {"type": "string", "description": "solo per replace: il testo esatto da sostituire"},
+            "content": {"type": "string", "description": "il testo nuovo (write: il file intero)"}},
+            "required": ["summary", "path", "operation"], "additionalProperties": False}}},
 ]
 NOMI = {s["function"]["name"] for s in STRUMENTI}
 
@@ -124,6 +123,8 @@ def etichetta(nome: str, argomenti: Dict[str, Any]) -> str:
         comando = " ".join([str(a.get("programma", "?"))] + [str(x) for x in (a.get("argomenti") or [])])
         return f"▶ Eseguo {comando[:160]}"
     if nome == "proponi_modifiche":
+        if a.get("path") and not a.get("operations"):
+            return f"📝 Propongo: {a.get('operation', '?')} {a['path']} — {str(a.get('summary', ''))[:120]}"
         n = len(a.get("operations") or [])
         return f"📝 Propongo {n} modific{'a' if n == 1 else 'he'}: {str(a.get('summary', ''))[:120]}"
     return f"🔧 {nome}"

@@ -822,7 +822,7 @@ def _campi_ricevuti(argomenti: dict) -> str:
     convinto di averlo aggiunto; con solo il nome dell'errore non poteva
     capire che cosa del suo messaggio non arrivava.
     """
-    operations = argomenti.get("operations")
+    operations = _piano_da_argomenti(argomenti).get("operations")
     if not isinstance(operations, list):
         return f"Ho ricevuto operations di tipo {type(operations).__name__}, serve una lista."
     parti = []
@@ -837,6 +837,22 @@ def _campi_ricevuti(argomenti: dict) -> str:
     return ("Campi arrivati per ogni operazione: " + "; ".join(parti) + ". Se un campo che hai scritto "
             "qui non c'e' o ha un altro nome, e' quello da correggere: i nomi sono path, operation, before, "
             "content, expected_sha256. Se il testo e' molto lungo proponi una operazione alla volta.")
+
+
+def _piano_da_argomenti(argomenti: dict) -> dict:
+    """proponi_modifiche piatta (una operazione, campi in cima) -> piano con operations.
+
+    21/10: con before/content annidati in una lista JSON il testo multi-riga
+    del modello non arrivava (sei piani di fila "senza content"). Come
+    parametri di primo livello sono testo semplice, senza escape. La forma
+    con operations resta accettata.
+    """
+    if "operations" in argomenti or "path" not in argomenti:
+        return argomenti
+    operazione = {k: argomenti[k] for k in ("path", "operation", "before", "content") if k in argomenti}
+    sha = str(argomenti.get("expected_sha256") or "").strip()
+    operazione["expected_sha256"] = sha or None
+    return {"summary": argomenti.get("summary") or "", "operations": [operazione]}
 
 
 def _prepara_chiamate_locali(chiamate: list, troncato: bool = False) -> list:
@@ -874,7 +890,7 @@ def _prepara_chiamate_locali(chiamate: list, troncato: bool = False) -> list:
                               + ", ".join(sorted(agente_locale.NOMI)))
         elif nome == "proponi_modifiche":
             try:
-                piano = _parse_local_agent_action(json.dumps({"status": "plan", **argomenti}))
+                piano = _parse_local_agent_action(json.dumps({"status": "plan", **_piano_da_argomenti(argomenti)}))
                 voce["arguments"] = {k: piano[k] for k in ("summary", "operations") if k in piano}
             except ValueError as exc:
                 voce["errore"] = f"ERRORE: piano di modifiche non valido ({exc}). {_campi_ricevuti(argomenti)}"

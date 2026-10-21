@@ -92,7 +92,7 @@ cartella del progetto.
 
 ## Scritture
 
-`proponi_modifiche` contiene al massimo 20 operazioni e 2 MiB di payload. Ogni
+`proponi_modifiche` propone una operazione per chiamata, con `path`, `operation`, `before`, `content` come parametri di testo di primo livello: annidati in una lista JSON il testo multi-riga del modello non arrivava (21/10, sei piani di fila "senza content"). Il backend accetta anche la vecchia forma con `operations` (max 20 operazioni, 2 MiB di payload). Ogni
 file esistente richiede lo SHA-256 restituito da `leggi`; se il contenuto e'
 cambiato il piano fallisce. Per file nuovi o piccoli `write`; per un file
 grande `replace` con un anchor `before` esatto e univoco. Tauri verifica
