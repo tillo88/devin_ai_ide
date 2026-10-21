@@ -48,6 +48,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from pydantic import BaseModel
 
+from devin.ai.client import AVVISO_TRONCATO
 from devin.ai.document_extract import extract_text as extract_document_text
 from devin.ai.web_search import (
     fetch_top_results,
@@ -814,11 +815,37 @@ def _sse(evento: str, dati: dict) -> str:
     return f"event: {evento}\ndata: {json.dumps(dati, ensure_ascii=False)}\n\n"
 
 
-def _prepara_chiamate_locali(chiamate: list) -> list:
+def _campi_ricevuti(argomenti: dict) -> str:
+    """Cosa e' arrivato davvero del piano: il modello lo vede e non riscrive alla cieca.
+
+    21/10: DEVIN ha riproposto tre volte lo stesso piano "senza content"
+    convinto di averlo aggiunto; con solo il nome dell'errore non poteva
+    capire che cosa del suo messaggio non arrivava.
+    """
+    operations = argomenti.get("operations")
+    if not isinstance(operations, list):
+        return f"Ho ricevuto operations di tipo {type(operations).__name__}, serve una lista."
+    parti = []
+    for numero, op in enumerate(operations[:20], 1):
+        if not isinstance(op, dict):
+            parti.append(f"{numero}) {type(op).__name__}")
+            continue
+        campi = ", ".join(
+            f"{k} ({len(v)} caratteri)" if isinstance(v, str) else f"{k} ({'null' if v is None else type(v).__name__})"
+            for k, v in op.items())
+        parti.append(f"{numero}) {campi or 'nessun campo'}")
+    return ("Campi arrivati per ogni operazione: " + "; ".join(parti) + ". Se un campo che hai scritto "
+            "qui non c'e' o ha un altro nome, e' quello da correggere: i nomi sono path, operation, before, "
+            "content, expected_sha256. Se il testo e' molto lungo proponi una operazione alla volta.")
+
+
+def _prepara_chiamate_locali(chiamate: list, troncato: bool = False) -> list:
     """Le chiamate del modello pronte per il PC, o con l'errore gia' scritto.
 
     Nome sconosciuto, argomenti non JSON, piano di modifiche non valido: non si
-    mandano al desktop, il modello riceve subito l'errore spiegato.
+    mandano al desktop, il modello riceve subito l'errore spiegato. Se il
+    server ha tagliato la risposta per il limite di token, le chiamate sono
+    incomplete anche quando sembrano valide: non si eseguono e lo si dice.
     """
     from devin.core import agente_locale
 
@@ -827,6 +854,12 @@ def _prepara_chiamate_locali(chiamate: list) -> list:
         funzione = chiamata.get("function") or {}
         nome = str(funzione.get("name") or "")
         voce = {"id": str(chiamata.get("id") or f"locale_{indice}"), "name": nome, "arguments": {}, "errore": None}
+        if troncato:
+            voce["errore"] = ("ERRORE: la tua risposta e' stata tagliata dal limite di token prima della fine, "
+                              "quindi questa chiamata e' incompleta e non e' stata eseguita. Scrivi meno per "
+                              "volta: una operazione per piano, replace con un before corto.")
+            pronte.append(voce)
+            continue
         try:
             argomenti = json.loads(funzione.get("arguments") or "{}")
             if not isinstance(argomenti, dict):
@@ -844,7 +877,7 @@ def _prepara_chiamate_locali(chiamate: list) -> list:
                 piano = _parse_local_agent_action(json.dumps({"status": "plan", **argomenti}))
                 voce["arguments"] = {k: piano[k] for k in ("summary", "operations") if k in piano}
             except ValueError as exc:
-                voce["errore"] = f"ERRORE: piano di modifiche non valido ({exc})"
+                voce["errore"] = f"ERRORE: piano di modifiche non valido ({exc}). {_campi_ricevuti(argomenti)}"
         pronte.append(voce)
     return pronte
 
@@ -911,8 +944,13 @@ async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
                 sessione.messaggi.append(messaggio_stop(sessione.fermato))
                 yield _sse("warning", {"message": avviso})
             verdetto = None
+            note = agente_locale.note_arrivate(sessione)
+            if note:
+                yield _sse("info", {"message": f"📝 DEVIN ha letto {len(note)} "
+                                               f"{'nota' if len(note) == 1 else 'note'} e ne tiene conto"})
             strumenti = None if sessione.fermato else agente_locale.STRUMENTI
             chiamate: list = []
+            troncato = False
             testo_giro = ""
             pensiero = 0
             inizio = time.time()
@@ -930,6 +968,7 @@ async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
                     elif tipo == "lettura":
                         yield _sse("prefill", {k: evento.get(k) for k in ("total", "cache", "processed", "time_ms")})
                     elif tipo == "avviso":
+                        troncato = troncato or AVVISO_TRONCATO in testo
                         yield _sse("warning", {"message": testo.strip()})
                     elif tipo == "uso":
                         _registra_lettura("agente locale", evento)
@@ -961,7 +1000,7 @@ async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
                 return
             sessione.giri += 1
             sessione.messaggi.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
-            sessione.in_attesa = _prepara_chiamate_locali(chiamate)
+            sessione.in_attesa = _prepara_chiamate_locali(chiamate, troncato=troncato)
             for voce in sessione.in_attesa:
                 yield _sse("info", {"message": agente_locale.etichetta(voce["name"], voce["arguments"])})
             sul_pc = [{k: voce[k] for k in ("id", "name", "arguments")}

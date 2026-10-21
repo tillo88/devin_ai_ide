@@ -27,6 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from devin.core import note_utente
 from devin.core.sorvegliante import Sorvegliante
 
 MAX_GIRI = 60
@@ -141,17 +142,28 @@ class Sessione:
     testo: str = ""                      # tutto il testo scritto dal modello: va nello storico
     ultimo_uso: float = field(default_factory=time.time)
 
+    @property
+    def chiave_note(self) -> str:
+        """Le note dell'utente (/api/chat/nota) arrivano qui per tutta la sessione."""
+        return note_utente.chiave_chat(self.project_path, self.chat_id)
+
 
 _SESSIONI: Dict[str, Sessione] = {}
 _LOCK = threading.Lock()
 
 
+def _togli(session_id: str) -> None:
+    sessione = _SESSIONI.pop(session_id, None)
+    if sessione is not None:
+        note_utente.chiudi(sessione.chiave_note)
+
+
 def _pulisci(adesso: float) -> None:
     for chiave in [k for k, s in _SESSIONI.items() if adesso - s.ultimo_uso > DURATA_SESSIONE]:
-        _SESSIONI.pop(chiave, None)
+        _togli(chiave)
     while len(_SESSIONI) >= MAX_SESSIONI:
         piu_vecchia = min(_SESSIONI.values(), key=lambda s: s.ultimo_uso)
-        _SESSIONI.pop(piu_vecchia.id, None)
+        _togli(piu_vecchia.id)
 
 
 def nuova_sessione(project_path: str, chat_id: Optional[str], compito: str,
@@ -169,6 +181,9 @@ def nuova_sessione(project_path: str, chat_id: Optional[str], compito: str,
     with _LOCK:
         _pulisci(time.time())
         _SESSIONI[sessione.id] = sessione
+    # mentre la sessione e' viva l'utente puo' scrivergli: anche quando il
+    # turno e' sul PC (strumenti in esecuzione) la nota resta in coda
+    note_utente.apri(sessione.chiave_note)
     return sessione
 
 
@@ -183,7 +198,15 @@ def prendi(session_id: str, project_path: str) -> Optional[Sessione]:
 
 def chiudi(session_id: str) -> None:
     with _LOCK:
-        _SESSIONI.pop(session_id, None)
+        _togli(session_id)
+
+
+def note_arrivate(sessione: Sessione) -> List[str]:
+    """Le note scritte dall'utente dall'ultimo giro: entrano subito nella conversazione."""
+    note = note_utente.prendi(sessione.chiave_note)
+    if note:
+        sessione.messaggi.append({"role": "user", "content": note_utente.formatta(note)})
+    return note
 
 
 def accetta_risultati(sessione: Sessione, risultati: List[Dict[str, Any]]) -> List[str]:
