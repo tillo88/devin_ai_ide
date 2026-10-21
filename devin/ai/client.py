@@ -73,6 +73,10 @@ _APRE_PENSIERO = "<think>"
 _CHIUDE_PENSIERO = "</think>"
 
 
+# l'avviso di stream_eventi quando il server taglia per il limite di token:
+# l'agente locale lo riconosce e non esegue chiamate rimaste a meta'
+AVVISO_TRONCATO = "Output troncato dal modello: limite token raggiunto"
+
 class RigUnavailableError(RuntimeError):
     """The required DEVIN model slot is not safely reachable."""
 
@@ -1366,7 +1370,7 @@ class AIClient:
                     if finish_reason in {"length", "max_tokens"}:
                         yield {
                             "tipo": "avviso",
-                            "testo": "\n[Output troncato dal modello: limite token raggiunto]",
+                            "testo": f"\n[{AVVISO_TRONCATO}]",
                         }
                     return
 

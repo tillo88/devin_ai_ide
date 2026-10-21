@@ -162,3 +162,44 @@ def test_l_etichetta_dice_cosa_succede_sul_pc():
     assert agente_locale.etichetta("leggi", {"percorso": "a.py", "da_riga": 200}) == "📖 Leggo a.py dalla riga 200"
     assert agente_locale.etichetta("esegui", {"programma": "pytest", "argomenti": ["-q"]}) == "▶ Eseguo pytest -q"
     assert agente_locale.etichetta("cerca", {"testo": "normalizza", "cartella": "src"}) == "🔎 Cerco «normalizza» in src"
+
+
+def test_la_nota_dell_utente_arriva_mentre_il_turno_e_sul_pc(ambiente):
+    """21/10: «Nota non consegnata: DEVIN non sta lavorando qui» mentre l'agente locale lavorava."""
+    from devin.core import note_utente
+    progetto, con = ambiente
+    ai = con(AIFinta([[_chiamata(0, "leggi", percorso="a.py")], "ok, uso content"]))
+    sessione = _eventi(_passo(progetto, task="sistema"), "sessione")[0]["session_id"]
+    # il turno e' sul PC (nessuno stream aperto): la nota va accettata e tenuta
+    chiave = note_utente.chiave_chat(str(progetto), "c1")
+    assert note_utente.aggiungi(chiave, "il testo nuovo va in content") == 1
+    secondo = _passo(progetto, session_id=sessione, results=[{"id": "c0", "content": "1: x"}])
+    assert "il testo nuovo va in content" in ai.visti[1][-1]["content"], "la nota entra nel giro successivo"
+    assert ai.visti[1][-1]["role"] == "user" and ai.visti[1][-2]["role"] == "tool"
+    assert any("ha letto 1 nota" in e["message"] for e in _eventi(secondo, "info"))
+    # a sessione chiusa la nota si rifiuta (e lo si dice), non si perde in silenzio
+    with pytest.raises(note_utente.NotaRifiutata):
+        note_utente.aggiungi(chiave, "tardi")
+
+
+def test_il_piano_rifiutato_dice_quali_campi_sono_arrivati(ambiente):
+    progetto, con = ambiente
+    ai = con(AIFinta([[_chiamata(0, "proponi_modifiche", summary="x", operations=[
+        {"path": "a.py", "operation": "replace", "before": "x = 1", "new": "x = 2",
+         "expected_sha256": "a" * 64}])], "capito"]))
+    _passo(progetto, task="sistema")
+    errore = ai.visti[1][-1]["content"]
+    assert "replace senza contenuto finale" in errore
+    assert "before (5 caratteri)" in errore and "new (5 caratteri)" in errore, errore
+    assert "content" in errore.split("i nomi sono", 1)[1]
+
+
+def test_una_chiamata_tagliata_dal_limite_di_token_non_va_al_pc(ambiente):
+    from devin.ai.client import AVVISO_TRONCATO
+    progetto, con = ambiente
+    tagliata = _chiamata(0, "proponi_modifiche", summary="x", operations=[
+        {"path": "a.py", "operation": "write", "content": "x = 1\n"}])
+    ai = con(AIFinta([[tagliata, {"tipo": "avviso", "testo": f"\n[{AVVISO_TRONCATO}]"}], "riprovo piu' corto"]))
+    sse = _passo(progetto, task="sistema")
+    assert not _eventi(sse, "strumenti"), "una chiamata a meta' non si esegue"
+    assert "tagliata dal limite di token" in ai.visti[1][-1]["content"]
