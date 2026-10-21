@@ -275,10 +275,13 @@ prova("l'allegato si vede: scheda con miniatura, nome, dimensione e x", async ()
   const vassoio = nodi["chat-attachments"];
   assert.equal(vassoio.hidden, false);
   assert.equal(vassoio.children.length, 2);
-  const [img, nome, togli] = vassoio.children[0].children;
+  const [img, nome, segna, togli] = vassoio.children[0].children;
   assert.equal(img.tagName, "IMG");
   assert.equal(nome.textContent, "1234.png · 2 KB");
+  assert.equal(segna.className, "chat-attachment-draw", "sulle immagini c'e' la matita per disegnare");
   assert.equal(togli.textContent, "×");
+  assert.ok(!vassoio.children[1].children.some((c) => c.className === "chat-attachment-draw"),
+    "niente matita sui file di testo");
   assert.equal(vassoio.children[1].children[0].textContent, "📄");
   f.svuotaAllegati();
   assert.equal(vassoio.hidden, true);
