@@ -6261,3 +6261,22 @@ body.codex-shell {
   opacity: 0.6;
   font-style: italic;
 }
+
+/* Immagine allegata aperta in grande (21/10): clic per chiudere. */
+.chat-attachments.sent .chat-attachment img { cursor: zoom-in; }
+.immagine-grande {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+.immagine-grande img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
