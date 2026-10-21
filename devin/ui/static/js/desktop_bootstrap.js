@@ -546,11 +546,16 @@ async function connectConfigured() {
 // L'interfaccia e' compilata dentro l'app: una UI nuova arriva solo con una
 // build nuova. GitHub Actions ne pubblica una a ogni merge; qui si avvisa e,
 // su richiesta, Rust apre il download dell'installer nel browser.
-let updateChecked = false;
+// 22/10: non solo all'avvio. DEVIN resta aperto per ore: si ricontrolla ogni
+// 30 minuti e quando torni sulla finestra (al massimo una volta ogni 30
+// minuti). «Più tardi» nasconde quella versione; una piu' nuova riavvisa.
+const UPDATE_EVERY_MS = 30 * 60 * 1000;
+let lastUpdateCheck = 0;
+let dismissedUpdate = "";
 
-async function checkForUpdate() {
-  if (updateChecked) return;
-  updateChecked = true;
+async function checkForUpdate(now = Date.now()) {
+  if (lastUpdateCheck && now - lastUpdateCheck < UPDATE_EVERY_MS) return;
+  lastUpdateCheck = now;
   let status;
   try {
     status = await tauriInvoke("desktop_update_check");
@@ -558,7 +563,7 @@ async function checkForUpdate() {
     return;
   }
   const update = status && status.available;
-  if (!update || document.getElementById("devin-update-banner")) return;
+  if (!update || update.version === dismissedUpdate || document.getElementById("devin-update-banner")) return;
 
   const banner = element("div", "devin-update-banner");
   banner.id = "devin-update-banner";
@@ -583,7 +588,10 @@ async function checkForUpdate() {
       download.disabled = false;
     }
   });
-  const later = action("Più tardi", "secondary", () => banner.remove());
+  const later = action("Più tardi", "secondary", () => {
+    dismissedUpdate = update.version;
+    banner.remove();
+  });
   row.appendChild(download);
   row.appendChild(later);
   banner.appendChild(row);
@@ -613,4 +621,6 @@ async function boot() {
   await connectConfigured();
 }
 
+setInterval(() => void checkForUpdate(), UPDATE_EVERY_MS);
+window.addEventListener("focus", () => void checkForUpdate());
 boot();
