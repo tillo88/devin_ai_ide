@@ -3272,20 +3272,6 @@ function localAgentBoundedText(value, maxChars = 6000) {
   return `${text.slice(0, headChars)}\n[CLIENT: omessi ${omitted} caratteri centrali]\n${text.slice(-tailChars)}`;
 }
 
-function localAgentEvidencePack(sections, maxChars) {
-  const limit = Math.max(3000, Number(maxChars) || 3000);
-  const joined = sections.filter(Boolean).join("\n\n");
-  if (joined.length <= limit) return joined;
-  const marker = "\n\n[CLIENT: evidence pack troncato per riservare contesto alla risposta]";
-  const keep = Math.max(0, limit - marker.length);
-  return `${joined.slice(0, keep).trimEnd()}${marker}`;
-}
-
-function localCommandLabel(step) {
-  const quote = (value) => /\s/.test(value) ? JSON.stringify(value) : value;
-  return [step.program, ...(step.args || [])].map((value) => quote(String(value))).join(" ");
-}
-
 function localExecutionTrainingEvidence(receipt) {
   const allowed = [
     "command_digest", "program", "args", "cwd", "exit_code", "success", "timed_out",
@@ -3293,15 +3279,6 @@ function localExecutionTrainingEvidence(receipt) {
     "stderr_sha256", "output_truncated", "policy",
   ];
   return Object.fromEntries(allowed.filter((key) => key in receipt).map((key) => [key, receipt[key]]));
-}
-
-async function persistLocalAgentResponse(projectPath, response) {
-  const result = await postJson("/api/local-workspace/agent-complete", {
-    project_path: projectPath,
-    chat_id: state.selectedChatId || null,
-    response,
-  });
-  if (result.error) throw new Error(result.error);
 }
 
 function attachLocalTrainingReview(assistantNode, attemptId, projectPath) {
@@ -3399,149 +3376,191 @@ async function recordLocalAgentTrainingAttempt({
   }
 }
 
-async function runLocalWorkspaceAgent(task, workspace, assistantNode) {
-  const projectPath = state.selectedProjectPath;
-  const episodeId = localUuid();
-  const toolHistory = [];
-  const executions = [];
-  assistantNode.textContent = "Agente locale · calcolo il budget del modello…";
-  const capabilities = await postJson("/api/local-workspace/agent-capabilities", {
-    task,
-    project_path: projectPath,
-  });
-  if (capabilities.error) throw new Error(capabilities.error);
-  if (capabilities.schema !== "devin_context_budget_v2") {
-    throw new Error("Budget contesto locale non valido");
-  }
-  const evidenceLimit = Number(capabilities.evidence_char_budget) || 3000;
-  const auxiliaryReserve = state.webForced ? 2600 : 700;
-  const localEvidenceLimit = Math.max(3000, evidenceLimit - auxiliaryReserve);
-  assistantNode.textContent = `Agente locale · indicizzo il workspace entro ${localEvidenceLimit.toLocaleString("it-IT")} caratteri…`;
-  const localEvidence = await desktopInvoke("local_workspace_evidence_v2", {
-    bridgeId: workspace.bridge_id,
-    query: task,
-    maxChars: localEvidenceLimit,
-  });
-  if (localEvidence?.schema !== "devin_local_evidence_v2" || !localEvidence.content) {
-    throw new Error("Evidence pack locale v2 non valido");
-  }
-  const receipt = localEvidence.receipt || {};
-  toolHistory.push(
-    `evidence_v2 ${receipt.selected_chunks || 0} chunk / ${receipt.indexed_files || 0} file indicizzati`,
-  );
-  const evidenceSections = [
-    localEvidence.content,
-    `CONTEXT RECEIPT LOCALE\n${JSON.stringify(receipt)}`,
-  ];
-  if (state.webForced) {
-    assistantNode.textContent = "Agente locale · raccolgo fonti web abilitate…";
-    const web = await postJson("/api/local-workspace/web-search", {
-      project_path: projectPath,
-      query: task,
-    });
-    if (web.error) throw new Error(web.error);
-    evidenceSections.push(
-      `EVIDENZA WEB VERIFICABILE\n${localAgentBoundedText(web.content || "Nessun risultato.", 2000)}`,
-    );
-    toolHistory.push("web_search");
-  }
+// Agente locale a passaggi (21/10). Prima l'app sceglieva da sola 18 estratti
+// della cartella del PC e DEVIN dava una sola risposta senza strumenti: su un
+// progetto vero "non poteva analizzare tutto". Ora DEVIN chiede (elenca, leggi,
+// cerca, esegui, proponi_modifiche), l'app esegue sul PC e gli rimanda il
+// risultato, finche' ha finito. Il cervello e' sul rig, le mani sono qui.
+const AGENTE_LOCALE_RIGHE = 400;
+const AGENTE_LOCALE_MAX_RIGHE = 800;
+const AGENTE_LOCALE_MAX_CARATTERI = 40000;
+const AGENTE_LOCALE_MAX_ELENCO = 400;
 
-  const evidencePack = localAgentEvidencePack(evidenceSections, evidenceLimit);
-  assistantNode.textContent = "Agente locale · singola inferenza, nessun retry…";
-  const step = await postJson("/api/local-workspace/agent-once", {
-    task,
-    project_path: projectPath,
-    evidence_pack: evidencePack,
-    reasoning_effort: state.reasoningEffort || "medium",
-  });
-  if (step.error) throw new Error(step.error);
-  if (step.status === "done") {
-    const response = step.message || "Agente locale concluso senza modifiche.";
-    assistantNode.textContent = response;
-    await persistLocalAgentResponse(projectPath, response);
-    await recordLocalAgentTrainingAttempt({
-      projectPath, episodeId, task, response, outcome: "analysis_completed",
-      toolHistory, executions,
-      contextReceipt: { local: receipt, model: step.context_receipt || {} }, assistantNode,
-    });
-    return;
+function formatoRigheLocali(contenuto, daRiga, righe) {
+  const tutte = String(contenuto || "").split("\n");
+  const inizio = Math.max(1, Math.floor(Number(daRiga) || 1));
+  const quante = Math.min(AGENTE_LOCALE_MAX_RIGHE, Math.max(1, Math.floor(Number(righe) || AGENTE_LOCALE_RIGHE)));
+  const fine = Math.min(tutte.length, inizio + quante - 1);
+  const corpo = [];
+  let caratteri = 0;
+  let ultima = inizio - 1;
+  for (let n = inizio; n <= fine; n += 1) {
+    const riga = `${n}: ${tutte[n - 1]}`;
+    if (caratteri + riga.length > AGENTE_LOCALE_MAX_CARATTERI) break;
+    corpo.push(riga);
+    caratteri += riga.length + 1;
+    ultima = n;
   }
-  if (step.status !== "plan" || !Array.isArray(step.operations)) {
-    throw new Error("DEVIN non ha prodotto una conclusione one-shot valida.");
-  }
-  const operationSummary = step.operations
-    .map((operation) => {
-      if (operation.operation === "delete") return `ELIMINA ${operation.path}`;
-      if (operation.operation === "replace") {
-        const before = localAgentBoundedText(operation.before || "", 500);
-        const after = localAgentBoundedText(operation.content || "", 500);
-        return `MODIFICA ${operation.path}\nPRIMA:\n${before}\nDOPO:\n${after}`;
-      }
-      return `SCRIVI ${operation.path}\n${localAgentBoundedText(operation.content || "", 700)}`;
-    })
-    .join("\n\n");
-  const approved = await confirmModal(
-    `${step.summary || "DEVIN propone modifiche locali"}\n\n${operationSummary}\n\nApplicare queste modifiche alla cartella Windows?`,
+  return { testo: corpo.join("\n"), da: inizio, a: ultima, totale: tutte.length };
+}
+
+function elencoLocale(albero, cartella) {
+  const prefisso = String(cartella || "").replaceAll("\\", "/").replace(/^\.?\/+|\/+$/g, "");
+  const files = (albero?.files || []).filter((f) => !prefisso || f.path === prefisso || f.path.startsWith(`${prefisso}/`));
+  if (!files.length) return `ERRORE: nessun file in '${prefisso || "."}'`;
+  const righe = files.slice(0, AGENTE_LOCALE_MAX_ELENCO).map((f) => `${f.path} (${f.size} byte)${f.is_text ? "" : " [binario]"}`);
+  const note = [];
+  if (files.length > AGENTE_LOCALE_MAX_ELENCO) note.push(`altri ${files.length - AGENTE_LOCALE_MAX_ELENCO} file non elencati: restringi la cartella`);
+  if (albero?.truncated) note.push("il progetto e' piu' grande del limite dell'elenco: alcuni file mancano, usa cerca");
+  return `${files.length} file in '${prefisso || "."}'\n${righe.join("\n")}${note.length ? `\n(${note.join("; ")})` : ""}`;
+}
+
+async function proponiModificheLocali(argomenti, workspace) {
+  const operazioni = Array.isArray(argomenti.operations) ? argomenti.operations : [];
+  const riepilogo = operazioni.map((operation) => {
+    if (operation.operation === "delete") return `ELIMINA ${operation.path}`;
+    if (operation.operation === "replace") {
+      return `MODIFICA ${operation.path}\nPRIMA:\n${localAgentBoundedText(operation.before || "", 500)}`
+        + `\nDOPO:\n${localAgentBoundedText(operation.content || "", 500)}`;
+    }
+    return `SCRIVI ${operation.path}\n${localAgentBoundedText(operation.content || "", 700)}`;
+  }).join("\n\n");
+  const approvato = await confirmModal(
+    `${argomenti.summary || "DEVIN propone modifiche"}\n\n${riepilogo}\n\nApplicare queste modifiche alla cartella del PC?`,
     { okLabel: "Applica modifiche", danger: true },
   );
-  if (!approved) {
-    const response = `Piano locale non applicato.\n\n${step.summary || ""}`.trim();
-    assistantNode.textContent = response;
-    await persistLocalAgentResponse(projectPath, response);
-    await recordLocalAgentTrainingAttempt({
-      projectPath, episodeId, task, response, outcome: "plan_rejected",
-      toolHistory, executions,
-      contextReceipt: { local: receipt, model: step.context_receipt || {} }, assistantNode,
-    });
-    return;
-  }
-  const applyReceipt = await desktopInvoke("apply_local_workspace_plan", {
-    bridgeId: workspace.bridge_id,
-    operations: step.operations,
-  });
-  let persistedResponse = `${step.summary || "Modifiche applicate."}\n\n${applyReceipt.files} file applicati atomicamente con recovery locale disponibile sul PC.`;
-  if (step.verification?.program) {
-    const commandLabel = localCommandLabel(step.verification);
-    const verifyApproved = await confirmModal(
-      `Modifiche applicate. Eseguire ora la verifica locale proposta?\n\n${commandLabel}\n\ncwd: ${step.verification.cwd || "."}\ntimeout: ${step.verification.timeout_seconds}s\n\nMotivo: ${step.verification.reason || "verifica delle modifiche"}`,
-      { okLabel: "Esegui verifica", danger: true },
-    );
-    toolHistory.push(`run ${step.verification.cwd || "."} :: ${commandLabel}`);
-    if (verifyApproved) {
+  if (!approvato) return { esito: "rifiutato", testo: "L'utente NON ha approvato le modifiche: non sono state applicate." };
+  const ricevuta = await desktopInvoke("apply_local_workspace_plan", { bridgeId: workspace.bridge_id, operations: operazioni });
+  return {
+    esito: "applicato",
+    testo: `Modifiche applicate: ${ricevuta.files} file, in modo atomico, con copia di ripristino sul PC `
+      + `(${ricevuta.recovery_path}). Verifica con esegui (test o avvio del programma).`,
+  };
+}
+
+async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
+  const a = chiamata.arguments || {};
+  try {
+    if (chiamata.name === "elenca") {
+      ctx.albero ||= await desktopInvoke("local_workspace_tree", { bridgeId: workspace.bridge_id });
+      return elencoLocale(ctx.albero, a.cartella);
+    }
+    if (chiamata.name === "leggi") {
+      const file = await desktopInvoke("local_workspace_read", { bridgeId: workspace.bridge_id, path: String(a.percorso || "") });
+      const pezzo = formatoRigheLocali(file.content, a.da_riga, a.righe);
+      const fine = pezzo.a < pezzo.totale ? ` (continua: leggi da_riga ${pezzo.a + 1})` : "";
+      const tagliato = file.truncated ? " · file oltre 256 KB: si legge solo l'inizio" : "";
+      return `${file.path} · righe ${pezzo.da}-${pezzo.a} di ${pezzo.totale} · sha256 ${file.sha256}${tagliato}${fine}\n`
+        + `(il numero all'inizio di ogni riga non fa parte del file)\n${pezzo.testo}`;
+    }
+    if (chiamata.name === "cerca") {
+      const trovati = await desktopInvoke("local_workspace_search", {
+        bridgeId: workspace.bridge_id, query: String(a.testo || ""), folder: String(a.cartella || ""), maxResults: 80,
+      });
+      if (!trovati.matches.length) return `nessun risultato per '${trovati.query}' (${trovati.scanned_files} file letti)`;
+      const righe = trovati.matches.map((m) => `${m.path}:${m.line}: ${m.text}`);
+      return `${trovati.matches.length} risultati in ${trovati.scanned_files} file${trovati.truncated ? " (limite raggiunto: restringi)" : ""}\n${righe.join("\n")}`;
+    }
+    if (chiamata.name === "esegui") {
       const commandId = localUuid();
       state.localCommandId = commandId;
-      assistantNode.textContent = `Esecuzione locale · ${commandLabel}\nUsa Stop per interrompere il processo.`;
-      let commandReceipt;
+      let ricevuta;
       try {
-        commandReceipt = await desktopInvoke("run_local_workspace_command", {
+        ricevuta = await desktopInvoke("run_local_workspace_command", {
           bridgeId: workspace.bridge_id,
           commandId,
-          program: step.verification.program,
-          args: step.verification.args || [],
-          cwd: step.verification.cwd || ".",
-          timeoutSeconds: step.verification.timeout_seconds || 180,
+          program: String(a.programma || ""),
+          args: Array.isArray(a.argomenti) ? a.argomenti.map(String) : [],
+          cwd: String(a.cartella || "."),
+          timeoutSeconds: Math.min(900, Math.max(1, Number(a.secondi) || 180)),
         });
       } finally {
         if (state.localCommandId === commandId) state.localCommandId = null;
       }
-      executions.push(localExecutionTrainingEvidence(commandReceipt));
-      persistedResponse += `\n\nVerifica: ${commandLabel}\nexit ${commandReceipt.exit_code} · ${commandReceipt.duration_ms} ms`
-        + `${commandReceipt.timed_out ? " · TIMEOUT" : ""}${commandReceipt.cancelled ? " · CANCELLATA" : ""}`
-        + `\nstdout sha256 ${commandReceipt.stdout_sha256} (${commandReceipt.stdout_bytes} byte)`
-        + `\nstderr sha256 ${commandReceipt.stderr_sha256} (${commandReceipt.stderr_bytes} byte)`;
-    } else {
-      persistedResponse += `\n\nVerifica non eseguita: ${commandLabel}.`;
+      ctx.esecuzioni.push(localExecutionTrainingEvidence(ricevuta));
+      return `exit ${ricevuta.exit_code} · ${ricevuta.duration_ms} ms`
+        + `${ricevuta.timed_out ? " · TEMPO SCADUTO" : ""}${ricevuta.cancelled ? " · ANNULLATO" : ""}\n`
+        + `--- stdout ---\n${localAgentBoundedText(ricevuta.stdout || "", 12000)}\n`
+        + `--- stderr ---\n${localAgentBoundedText(ricevuta.stderr || "", 8000)}`;
+    }
+    if (chiamata.name === "proponi_modifiche") {
+      const risultato = await proponiModificheLocali(a, workspace);
+      ctx.piani.push(risultato.esito);
+      return risultato.testo;
+    }
+    return `ERRORE: strumento sconosciuto ${chiamata.name}`;
+  } catch (error) {
+    return `ERRORE: ${errorMessage(error)}`;
+  }
+}
+
+async function runLocalWorkspaceAgent(task, workspace, assistantNode, signal) {
+  const projectPath = state.selectedProjectPath;
+  const chatId = state.selectedChatId || null;
+  const episodeId = localUuid();
+  const ctx = { albero: null, esecuzioni: [], piani: [], storia: [] };
+  let sessionId = "";
+  let risultati = null;
+  assistantNode.textContent = "Agente locale · avvio sul PC…";
+  for (let giro = 0; giro < 500; giro += 1) {
+    const corpo = sessionId
+      ? { project_path: projectPath, chat_id: chatId, session_id: sessionId, results: risultati,
+          reasoning_effort: state.reasoningEffort || null }
+      : { project_path: projectPath, chat_id: chatId, task, reasoning_effort: state.reasoningEffort || null };
+    const response = await apiFetch("/api/local-workspace/agent-step", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo), signal,
+    });
+    if ((response.headers.get("content-type") || "").includes("application/json")) {
+      const payload = await response.json();
+      throw new Error(payload.error || payload.message || `agente locale: ${response.status}`);
+    }
+    if (!response.ok || !response.body) throw new Error(`agente locale: ${response.status}`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let chiamate = null;
+    let finito = false;
+    const gestisci = (blocco) => {
+      const evento = parseSseBlock(blocco);
+      if (evento.type === "sessione" || evento.type === "strumenti" || evento.type === "done") {
+        let dati = {};
+        try { dati = JSON.parse(evento.data || "{}"); } catch { dati = {}; }
+        if (evento.type === "sessione") sessionId = dati.session_id || sessionId;
+        if (evento.type === "strumenti") chiamate = dati.chiamate || [];
+        if (evento.type === "done") finito = true;
+      }
+      if (evento.type !== "sessione" && evento.type !== "strumenti") applyChatEvent(evento, assistantNode);
+    };
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocchi = buffer.split("\n\n");
+      buffer = blocchi.pop() ?? "";
+      blocchi.forEach(gestisci);
+    }
+    if (buffer.trim()) gestisci(buffer);
+    if (finito) break;
+    if (!chiamate) throw new Error("l'agente locale si e' interrotto senza concludere");
+    risultati = [];
+    for (const chiamata of chiamate) {
+      ctx.storia.push(`${chiamata.name} ${JSON.stringify(chiamata.arguments || {}).slice(0, 200)}`);
+      risultati.push({ id: chiamata.id, content: await eseguiStrumentoLocale(chiamata, workspace, ctx) });
     }
   }
-  assistantNode.textContent = `${persistedResponse}\nRecovery locale: ${applyReceipt.recovery_path}`;
-  await persistLocalAgentResponse(projectPath, persistedResponse);
+  const finale = dividiLavoro(splitReasoning(assistantNode._raw || "").answer).finale;
+  if (finale.trim()) renderMarkdownBody(assistantNode, finale);
+  const esito = ctx.piani.includes("applicato") ? "plan_applied"
+    : ctx.piani.includes("rifiutato") ? "plan_rejected" : "analysis_completed";
   await recordLocalAgentTrainingAttempt({
-    projectPath, episodeId, task, response: persistedResponse, outcome: "plan_applied",
-    toolHistory, executions,
-    contextReceipt: { local: receipt, model: step.context_receipt || {} }, assistantNode,
+    projectPath, episodeId, task, response: finale, outcome: esito,
+    toolHistory: ctx.storia, executions: ctx.esecuzioni,
+    contextReceipt: { local: { mode: "agente_a_passaggi", strumenti: ctx.storia.length } }, assistantNode,
   });
-  await loadProjectTree();
-  await renderActivityRail(projectPath);
+  if (ctx.piani.includes("applicato")) {
+    await loadProjectTree();
+    await renderActivityRail(projectPath);
+  }
 }
 
 async function sendChatMessage(message) {
@@ -3606,7 +3625,7 @@ async function sendChatMessage(message) {
       const payload = await response.json();
       if (payload.error) throw new Error(payload.error);
       if (payload.status === "local_agent_required" && directWorkspace) {
-        await runLocalWorkspaceAgent(message, directWorkspace, assistantNode);
+        await runLocalWorkspaceAgent(message, directWorkspace, assistantNode, flusso.abort.signal);
         return;
       }
       if (payload.run_id && ["started", "queued", "running"].includes(payload.status)) {

@@ -1313,6 +1313,132 @@ pub async fn local_workspace_read(
     })
 }
 
+const DIRECT_SEARCH_MAX_RESULTS: usize = 200;
+const DIRECT_SEARCH_DEFAULT_RESULTS: usize = 80;
+const DIRECT_SEARCH_LINE_CHARS: usize = 240;
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct DirectSearchMatch {
+    path: String,
+    line: usize,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DirectSearchPayload {
+    scope: String,
+    query: String,
+    folder: String,
+    matches: Vec<DirectSearchMatch>,
+    scanned_files: usize,
+    truncated: bool,
+}
+
+/// Righe che contengono `needle` (senza distinzione di maiuscole), numerate da 1.
+fn search_lines(content: &str, needle: &str, limit: usize) -> Vec<(usize, String)> {
+    let wanted = needle.to_lowercase();
+    let mut found = Vec::new();
+    if wanted.is_empty() {
+        return found;
+    }
+    for (index, line) in content.lines().enumerate() {
+        if line.to_lowercase().contains(&wanted) {
+            let mut text: String = line.trim().chars().take(DIRECT_SEARCH_LINE_CHARS).collect();
+            if line.trim().chars().count() > DIRECT_SEARCH_LINE_CHARS {
+                text.push('…');
+            }
+            found.push((index + 1, text));
+            if found.len() >= limit {
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// Cartella relativa del workspace in cui cercare: "" e "." sono la radice.
+fn search_folder(raw: &str) -> Result<String, String> {
+    let value = raw.trim().replace('\\', "/");
+    let value = value.trim_matches('/');
+    if value.is_empty() || value == "." {
+        return Ok(String::new());
+    }
+    if value.contains(':') || value.contains('\0') || value.split('/').any(|part| part == ".." || part.is_empty()) {
+        return Err("Cartella di ricerca fuori dal workspace autorizzato".to_string());
+    }
+    Ok(value.to_string())
+}
+
+/// Cerca un testo nei file di testo della cartella autorizzata (sola lettura).
+/// E' lo strumento "cerca" dell'agente locale a passaggi: DEVIN decide cosa
+/// cercare, il desktop esegue sul PC e gli rimanda le righe trovate.
+#[tauri::command]
+pub async fn local_workspace_search(
+    window: WebviewWindow,
+    bridge_id: String,
+    query: String,
+    folder: Option<String>,
+    max_results: Option<usize>,
+) -> Result<DirectSearchPayload, String> {
+    authorize_local_ui(&window)?;
+    let root = direct_workspace_root(&bridge_id)?;
+    let needle = query.trim().to_string();
+    if needle.is_empty() || needle.chars().count() > 200 {
+        return Err("Testo da cercare vuoto o troppo lungo".to_string());
+    }
+    let folder = search_folder(folder.as_deref().unwrap_or(""))?;
+    let limit = max_results
+        .unwrap_or(DIRECT_SEARCH_DEFAULT_RESULTS)
+        .clamp(1, DIRECT_SEARCH_MAX_RESULTS);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut matches = Vec::new();
+        let mut scanned_files = 0usize;
+        let mut walked = 0usize;
+        let mut truncated = false;
+        for item in WalkDir::new(&root)
+            .follow_links(false)
+            .max_depth(DIRECT_TREE_MAX_DEPTH)
+            .into_iter()
+            .filter_entry(walk_allowed)
+        {
+            walked += 1;
+            if walked > DIRECT_TREE_MAX_WALK || scanned_files >= DIRECT_EVIDENCE_MAX_SCAN_FILES {
+                truncated = true;
+                break;
+            }
+            let Ok(entry) = item else { continue };
+            if !entry.file_type().is_file() || is_excluded_file(entry.path())
+                || !is_probably_text_path(entry.path())
+            {
+                continue;
+            }
+            let Ok(relative) = direct_relative(&root, entry.path()) else { continue };
+            if !folder.is_empty() && relative != folder && !relative.starts_with(&format!("{folder}/")) {
+                continue;
+            }
+            let Ok((content, _, _)) = read_direct_text(entry.path(), DIRECT_READ_MAX_BYTES) else { continue };
+            scanned_files += 1;
+            for (line, text) in search_lines(&content, &needle, limit - matches.len()) {
+                matches.push(DirectSearchMatch { path: relative.clone(), line, text });
+            }
+            if matches.len() >= limit {
+                truncated = true;
+                break;
+            }
+        }
+        Ok(DirectSearchPayload {
+            scope: "local_direct".to_string(),
+            query: needle,
+            folder,
+            matches,
+            scanned_files,
+            truncated,
+        })
+    })
+    .await
+    .map_err(|err| format!("Worker ricerca locale fallito: {err}"))?
+}
+
 #[tauri::command]
 pub async fn local_workspace_context(
     window: WebviewWindow,
@@ -2118,6 +2244,30 @@ pub async fn apply_local_workspace_changes(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn search_lines_finds_case_insensitive_numbered_and_bounded() {
+        let text = "uno\nNormalizza prezzi\ntre\nnormalizza ancora\n";
+        assert_eq!(
+            search_lines(text, "normalizza", 10),
+            vec![(2, "Normalizza prezzi".to_string()), (4, "normalizza ancora".to_string())]
+        );
+        assert_eq!(search_lines(text, "normalizza", 1).len(), 1);
+        assert!(search_lines(text, "", 10).is_empty());
+        let long = "x".repeat(DIRECT_SEARCH_LINE_CHARS + 50);
+        let found = search_lines(&long, "x", 1);
+        assert!(found[0].1.ends_with('…') && found[0].1.chars().count() == DIRECT_SEARCH_LINE_CHARS + 1);
+    }
+
+    #[test]
+    fn search_folder_stays_inside_the_workspace() {
+        assert_eq!(search_folder("").unwrap(), "");
+        assert_eq!(search_folder(".").unwrap(), "");
+        assert_eq!(search_folder("src\\core/").unwrap(), "src/core");
+        assert!(search_folder("../fuori").is_err());
+        assert!(search_folder("C:/Windows").is_err());
+        assert!(search_folder("src//x").is_err());
+    }
     use super::*;
 
     #[test]

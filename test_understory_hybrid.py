@@ -592,7 +592,7 @@ def test_local_agent_action_parser_normalizes_and_rejects_unsafe_plans():
         }))
 
 
-def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, monkeypatch):
+def test_local_agent_one_shot_resta_per_i_client_vecchi(tmp_path, monkeypatch):
     import asyncio
     from devin.ui import fast_app
     from devin.ui.routers import chat as chat_router
@@ -630,15 +630,8 @@ def test_local_agent_one_shot_uses_one_attempt_and_rejects_old_loop(tmp_path, mo
         lambda path: {"mode": "direct", "bridge_id": "fixture"},
     )
 
-    disabled = asyncio.run(chat_router.api_local_workspace_agent_step(
-        chat_router.LocalAgentStepRequest(
-            task="Spiega il progetto e indica cosa va debuggato",
-            project_path=str(tmp_path),
-        )
-    ))
-    assert "multi-step disabilitata" in disabled["error"]
-    assert captured["messages"] == []
-
+    # 21/10: il multi-step non e' piu' disabilitato (vedi test_agente_locale.py);
+    # agent-once resta per i client desktop non ancora aggiornati.
     result = asyncio.run(chat_router.api_local_workspace_agent_once(
         chat_router.LocalAgentOnceRequest(
             task="Spiega il progetto e indica cosa va debuggato",
@@ -835,20 +828,20 @@ def test_codex_app_shell_is_local_first_and_wired():
     assert '/events/stream' in js
     assert '/api/chat' in js
     assert '/api/chat/document' in js
-    assert 'desktopInvoke("local_workspace_evidence_v2"' in js
-    assert 'devin_local_evidence_v2' in js
-    assert 'CONTEXT RECEIPT LOCALE' in js
-    assert '/api/local-workspace/agent-capabilities' in js
+    # 21/10: l'agente locale lavora a passaggi (elenca, leggi, cerca, esegui,
+    # proponi_modifiche eseguiti dal desktop sul PC), non piu' una sola
+    # inferenza su 18 estratti scelti dall'app.
+    assert '/api/local-workspace/agent-step' in js
+    assert 'singola inferenza, nessun retry' not in js
+    assert 'desktopInvoke("local_workspace_tree"' in js
+    assert 'desktopInvoke("local_workspace_read"' in js
+    assert 'desktopInvoke("local_workspace_search"' in js
+    assert 'desktopInvoke("apply_local_workspace_plan"' in js
     assert 'localAgentFileObservation' not in js
     assert 'RETRIEVAL AGGIUNTIVO BOUNDED' not in js
-    assert 'localAgentEvidencePack(evidenceSections, evidenceLimit)' in js
-    assert '/api/local-workspace/agent-once' in js
-    assert '/api/local-workspace/agent-step' not in js
-    assert 'singola inferenza, nessun retry' in js
     assert 'desktopInvoke("run_local_workspace_command"' in js
     assert 'desktopInvoke("cancel_local_workspace_command"' in js
     assert '/api/training/local-agent/attempt' in js
-    assert '/api/local-workspace/agent-complete' in js
     assert 'id="chat-stop"' in html
     assert 'payload.run_id && ["started", "queued", "running"]' in js
     assert 'await selectRun(payload.run_id)' in js
@@ -1075,6 +1068,7 @@ def test_tauri_desktop_shell_targets_workspace_app():
         "allow-sync-local-workspace",
         "allow-local-workspace-tree",
         "allow-local-workspace-read",
+        "allow-local-workspace-search",
         "allow-local-workspace-context",
         "allow-local-workspace-evidence-v2",
         "allow-run-local-workspace-command",

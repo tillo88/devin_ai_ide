@@ -9,6 +9,7 @@ fn main() {
             "sync_local_workspace",
             "local_workspace_tree",
             "local_workspace_read",
+            "local_workspace_search",
             "local_workspace_context",
             "local_workspace_evidence_v2",
             "run_local_workspace_command",

@@ -365,23 +365,21 @@ class ChatRequest(BaseModel):
     images: Optional[List[str]] = None
 
 
-class LocalAgentStepRequest(BaseModel):
-    task: str
-    project_path: str
-    local_context: str = ""
-    observations: str = ""
-    tool_history: str = ""
-    step_number: int = 1
-    max_steps: int = 8
-    force_conclusion: bool = False
-    use_web_search: bool = False
-    reasoning_effort: Optional[str] = None
-
-
 class LocalAgentOnceRequest(BaseModel):
     task: str
     project_path: str
     evidence_pack: str
+    reasoning_effort: Optional[str] = None
+
+
+class LocalAgentStepRequest(BaseModel):
+    """Un giro dell'agente locale a passaggi (21/10): il compito al primo giro,
+    poi la sessione con i risultati degli strumenti eseguiti sul PC."""
+    project_path: str
+    chat_id: Optional[str] = None
+    task: str = ""
+    session_id: str = ""
+    results: List[dict] = []
     reasoning_effort: Optional[str] = None
 
 
@@ -663,23 +661,6 @@ def _parse_local_agent_action(raw: str) -> dict:
     }
 
 
-@router.post("/api/local-workspace/agent-step")
-async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
-    """Fail closed for desktop bundles that still implement the unsafe loop.
-
-    Multiple sequential generations on the same model process have repeatedly
-    coincided with non-clean rig reboots.  Keeping the route explicit prevents
-    an old open WebView from silently re-enabling that execution pattern after
-    the backend is updated.
-    """
-    return {
-        "error": (
-            "Modalita' agente multi-step disabilitata: aggiorna il client "
-            "desktop e usa l'inferenza one-shot."
-        )
-    }
-
-
 def _local_agent_context_budget(ai, task: str):
     config = getattr(ai, "config", {})
     return context_budget(
@@ -812,6 +793,175 @@ async def api_local_workspace_agent_once(req: LocalAgentOnceRequest):
         return action
     except ValueError as exc:
         return {"error": str(exc)}
+
+
+def _sse(evento: str, dati: dict) -> str:
+    return f"event: {evento}\ndata: {json.dumps(dati, ensure_ascii=False)}\n\n"
+
+
+def _prepara_chiamate_locali(chiamate: list) -> list:
+    """Le chiamate del modello pronte per il PC, o con l'errore gia' scritto.
+
+    Nome sconosciuto, argomenti non JSON, piano di modifiche non valido: non si
+    mandano al desktop, il modello riceve subito l'errore spiegato.
+    """
+    from devin.core import agente_locale
+
+    pronte = []
+    for indice, chiamata in enumerate(chiamate):
+        funzione = chiamata.get("function") or {}
+        nome = str(funzione.get("name") or "")
+        voce = {"id": str(chiamata.get("id") or f"locale_{indice}"), "name": nome, "arguments": {}, "errore": None}
+        try:
+            argomenti = json.loads(funzione.get("arguments") or "{}")
+            if not isinstance(argomenti, dict):
+                raise ValueError("gli argomenti devono essere un oggetto")
+        except ValueError as exc:
+            voce["errore"] = f"ERRORE: argomenti non JSON validi ({exc}); riprova"
+            pronte.append(voce)
+            continue
+        voce["arguments"] = argomenti
+        if nome not in agente_locale.NOMI:
+            voce["errore"] = (f"ERRORE: lo strumento {nome!r} non esiste. Strumenti: "
+                              + ", ".join(sorted(agente_locale.NOMI)))
+        elif nome == "proponi_modifiche":
+            try:
+                piano = _parse_local_agent_action(json.dumps({"status": "plan", **argomenti}))
+                voce["arguments"] = {k: piano[k] for k in ("summary", "operations") if k in piano}
+            except ValueError as exc:
+                voce["errore"] = f"ERRORE: piano di modifiche non valido ({exc})"
+        pronte.append(voce)
+    return pronte
+
+
+@router.post("/api/local-workspace/agent-step")
+async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
+    """Agente locale a passaggi (21/10): DEVIN usa strumenti che l'app esegue sul PC.
+
+    Ogni chiamata e' un giro del modello, trasmesso come la chat (pensiero,
+    testo, lettura del contesto). Se il modello chiede strumenti arriva
+    l'evento ``strumenti``: l'app li esegue e richiama con ``session_id`` e
+    ``results``. Se risponde, la risposta va nello storico della chat e la
+    sessione si chiude. Il sorvegliante ferma solo chi gira in tondo.
+    """
+    from devin.core import agente_locale
+    from devin.ui.fast_app import _get_ai_client, _get_launcher, _validated_project_path
+
+    project_path = _validated_project_path(req.project_path, allow_general=False)
+    metadata = local_workspace_for_project(project_path)
+    if not metadata or metadata.get("mode") != "direct":
+        return {"error": "il progetto non e' una cartella Windows diretta"}
+    verdetto = None
+    if req.session_id:
+        sessione = agente_locale.prendi(req.session_id, project_path)
+        if sessione is None:
+            return {"error": "sessione dell'agente locale scaduta o sconosciuta: riscrivi la richiesta"}
+        if not sessione.in_attesa:
+            return {"error": "nessuno strumento in attesa in questa sessione"}
+        agente_locale.accetta_risultati(sessione, list(req.results or []))
+        verdetto = sessione.sorvegliante.fine_giro()
+    else:
+        task = req.task.strip()
+        if not task:
+            return {"error": "task locale vuoto"}
+        storia = ChatPersistence(project_path, chat_id=req.chat_id).load()
+        # /api/chat ha appena salvato il compito: non va ripetuto due volte
+        if storia and storia[-1].get("role") == "user" and storia[-1].get("content") == task:
+            storia = storia[:-1]
+        sessione = agente_locale.nuova_sessione(
+            project_path, req.chat_id, task[:8000], storia, str(metadata.get("display_name") or ""))
+    ai = _get_ai_client()
+    launcher = _get_launcher()
+    if launcher:
+        await asyncio.to_thread(launcher.ensure_models)
+
+    async def genera():
+        yield _sse("sessione", {"session_id": sessione.id})
+        nonlocal verdetto
+        for _ in range(agente_locale.MAX_GIRI + 2):
+            if verdetto is not None and verdetto.stato == "avviso":
+                sessione.messaggi.append(messaggio_avviso(verdetto.motivo))
+                yield _sse("info", {"message": f"🔁 Sorvegliante: DEVIN si sta ripetendo ({verdetto.motivo[:200]}). "
+                                               "Gli ho chiesto di cambiare approccio."})
+            elif not sessione.fermato and ((verdetto is not None and verdetto.stato == "stop")
+                                           or sessione.giri >= agente_locale.MAX_GIRI):
+                if verdetto is not None and verdetto.stato == "stop":
+                    sessione.fermato = verdetto.motivo
+                    avviso = (f"DEVIN è stato fermato perché girava in tondo: {verdetto.motivo[:200]}. "
+                              "Ti risponde con quello che ha; scrivi «continua» per farlo riprovare.")
+                else:
+                    sessione.fermato = f"raggiunto il tetto di sicurezza di {agente_locale.MAX_GIRI} passaggi"
+                    avviso = (f"DEVIN ha raggiunto il tetto di sicurezza di {agente_locale.MAX_GIRI} passaggi: "
+                              "ti risponde con quello che ha; scrivi «continua» per farlo proseguire.")
+                sessione.messaggi.append(messaggio_stop(sessione.fermato))
+                yield _sse("warning", {"message": avviso})
+            verdetto = None
+            strumenti = None if sessione.fermato else agente_locale.STRUMENTI
+            chiamate: list = []
+            testo_giro = ""
+            pensiero = 0
+            inizio = time.time()
+            primo_testo = None
+            try:
+                flusso = ai.stream_eventi(sessione.messaggi, mode="reasoning",
+                                          sforzo=req.reasoning_effort or "", tools=strumenti)
+                async for evento in iterate_in_threadpool(flusso):
+                    tipo, testo = evento.get("tipo"), evento.get("testo") or ""
+                    if tipo == "chiamate":
+                        chiamate = evento.get("chiamate") or []
+                    elif tipo == "ragionamento":
+                        pensiero += 1
+                        yield _sse("reasoning", {"token": testo})
+                    elif tipo == "lettura":
+                        yield _sse("prefill", {k: evento.get(k) for k in ("total", "cache", "processed", "time_ms")})
+                    elif tipo == "avviso":
+                        yield _sse("warning", {"message": testo.strip()})
+                    elif tipo == "risposta":
+                        if primo_testo is None:
+                            primo_testo = time.time()
+                            yield _sse("reasoning_done", {"tokens": pensiero,
+                                                          "seconds": round(primo_testo - inizio, 1)})
+                        testo_giro += testo
+                        yield f"data: {json.dumps({'token': testo})}\n\n"
+            except Exception as exc:                     # noqa: BLE001 - lo si dice, non si nasconde
+                agente_locale.chiudi(sessione.id)
+                yield _sse("error", {"error": f"agente locale interrotto: {type(exc).__name__}: {exc}"[:600]})
+                return
+            sessione.testo += testo_giro
+            if not chiamate:
+                if CHIAMATA_SCRITTA_RE.search(testo_giro):
+                    yield _sse("warning", {"message": (
+                        "DEVIN ha scritto una chiamata a uno strumento come testo: non e' stata eseguita. "
+                        "Scrivi «continua» per farlo riprovare.")})
+                risposta = sessione.testo.strip() or "(DEVIN non ha scritto una risposta)"
+                persistenza = ChatPersistence(project_path, chat_id=sessione.chat_id)
+                persistenza.append("assistant", risposta)
+                yield _sse("salvato", {"assistant_index": len(persistenza.load()) - 1})
+                yield _sse("done", {"giri": sessione.giri, "fermato": sessione.fermato,
+                                    "reasoning_tokens": pensiero,
+                                    "reasoning_seconds": round((primo_testo or time.time()) - inizio, 1)})
+                agente_locale.chiudi(sessione.id)
+                return
+            sessione.giri += 1
+            sessione.messaggi.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
+            sessione.in_attesa = _prepara_chiamate_locali(chiamate)
+            for voce in sessione.in_attesa:
+                yield _sse("info", {"message": agente_locale.etichetta(voce["name"], voce["arguments"])})
+            sul_pc = [{k: voce[k] for k in ("id", "name", "arguments")}
+                      for voce in sessione.in_attesa if not voce["errore"]]
+            if sul_pc:
+                yield _sse("strumenti", {"session_id": sessione.id, "chiamate": sul_pc})
+                return
+            # tutte respinte qui (nome o argomenti sbagliati): il modello riceve
+            # subito gli errori, senza andare e tornare dal PC
+            agente_locale.accetta_risultati(
+                sessione, [{"id": v["id"], "content": v["errore"]} for v in sessione.in_attesa])
+            verdetto = sessione.sorvegliante.fine_giro()
+        agente_locale.chiudi(sessione.id)
+        yield _sse("error", {"error": "agente locale: troppi giri senza risposta"})
+
+    return StreamingResponse(genera(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.post("/api/local-workspace/web-search")
