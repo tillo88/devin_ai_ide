@@ -203,3 +203,35 @@ def test_una_chiamata_tagliata_dal_limite_di_token_non_va_al_pc(ambiente):
     sse = _passo(progetto, task="sistema")
     assert not _eventi(sse, "strumenti"), "una chiamata a meta' non si esegue"
     assert "tagliata dal limite di token" in ai.visti[1][-1]["content"]
+
+
+def test_proponi_modifiche_piatta_arriva_al_pc_come_piano(ambiente):
+    """21/10: con content annidato in operations il testo multi-riga non arrivava mai."""
+    progetto, con = ambiente
+    schema = next(s for s in agente_locale.STRUMENTI if s["function"]["name"] == "proponi_modifiche")
+    proprieta = schema["function"]["parameters"]["properties"]
+    assert "operations" not in proprieta and proprieta["content"]["type"] == "string", \
+        "il modello vede before/content come parametri di testo di primo livello"
+    con(AIFinta([[_chiamata(0, "proponi_modifiche", summary="prezzo prudente", path="utils/selectors.py",
+                            operation="replace", before="def parse_euro_price(t):\n    ...\n",
+                            content="from utils.text import parse_euro_price\n",
+                            expected_sha256="b" * 64)], "fatto"]))
+    (strumenti,) = _eventi(_passo(progetto, task="correggi"), "strumenti")
+    (chiamata,) = strumenti["chiamate"]
+    assert chiamata["arguments"]["summary"] == "prezzo prudente"
+    assert chiamata["arguments"]["operations"] == [{
+        "path": "utils/selectors.py", "operation": "replace", "content": "from utils.text import parse_euro_price\n",
+        "expected_sha256": "b" * 64, "before": "def parse_euro_price(t):\n    ...\n"}]
+
+
+def test_file_nuovo_con_sha_vuoto_e_etichetta(ambiente):
+    progetto, con = ambiente
+    con(AIFinta([[_chiamata(0, "proponi_modifiche", summary="test", path="tests/test_prezzi.py",
+                            operation="write", content="def test_x():\n    assert True\n",
+                            expected_sha256="")], "ok"]))
+    sse = _passo(progetto, task="aggiungi test")
+    (chiamata,) = _eventi(sse, "strumenti")[0]["chiamate"]
+    assert chiamata["arguments"]["operations"][0]["expected_sha256"] is None
+    assert any("Propongo 1 modifica" in e["message"] for e in _eventi(sse, "info"))
+    assert agente_locale.etichetta("proponi_modifiche", {"path": "a.py", "operation": "write", "summary": "x"}) \
+        == "📝 Propongo: write a.py — x"
