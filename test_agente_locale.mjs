@@ -56,7 +56,7 @@ function ambiente({ desktop = {}, passi = [], conferma = true } = {}) {
     loadProjectTree: async () => {}, renderActivityRail: async () => {},
   };
   const NOMI = ["parseSseBlock", "localAgentBoundedText", "localExecutionTrainingEvidence", "formatoRigheLocali",
-    "elencoLocale", "proponiModificheLocali", "eseguiStrumentoLocale", "runLocalWorkspaceAgent"];
+    "elencoLocale", "proponiModificheLocali", "eseguiStrumentoLocale", "chiudiRisposta", "runLocalWorkspaceAgent"];
   const COSTANTI = ["AGENTE_LOCALE_RIGHE", "AGENTE_LOCALE_MAX_RIGHE", "AGENTE_LOCALE_MAX_CARATTERI", "AGENTE_LOCALE_MAX_ELENCO"];
   const corpo = COSTANTI.map(costante).join("\n") + "\n" + NOMI.map(estrai).join("\n") + `\nreturn { ${NOMI.join(", ")} };`;
   const f = new Function(...Object.keys(stub), corpo)(...Object.values(stub));
@@ -147,6 +147,7 @@ prova("il ciclo: compito, strumenti al PC, risultati con la sessione, risposta",
   assert.ok(!("task" in log.richieste[1].corpo));
   assert.ok(log.eventi.includes("info") && !log.eventi.includes("strumenti"), "strumenti e sessione non si disegnano");
   assert.equal(nodo.reso, "Non c'e' run().");
+  assert.equal(nodo._chiusa, true, "a fine ciclo la risposta e' chiusa: niente piu' testo attenuato");
   assert.equal(log.training[0].outcome, "analysis_completed");
 });
 

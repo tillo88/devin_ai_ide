@@ -6254,3 +6254,10 @@ body.codex-shell {
   padding: 2px 4px;
 }
 .chat-attachment-remove:hover { color: var(--text); }
+
+/* Testo dopo l'ultimo strumento mentre DEVIN lavora ancora (21/10): puo' essere
+   il commento prima del passo successivo, non la risposta finale. */
+.chat-message-body.lavoro-in-corso {
+  opacity: 0.6;
+  font-style: italic;
+}

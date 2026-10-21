@@ -2951,10 +2951,19 @@ function aggiornaTornaInFondo() {
   if (bottone) bottone.hidden = !serve;
 }
 
+function chiudiRisposta(node) {
+  node._chiusa = true;
+  node.classList?.remove("lavoro-in-corso");
+}
+
 function renderAssistantStream(node, raw) {
   const { lavoro, passi, finale } = dividiLavoro(splitReasoning(raw).answer);
   const reasoning = reasoningCompleto(node, raw);
   rendiRispostaInCorso(node, finale);
+  // Dopo uno strumento il testo che arriva puo' essere il commento prima del
+  // passo successivo, non la risposta: finche' la risposta non e' chiusa si
+  // mostra attenuato (21/10).
+  node.classList?.toggle("lavoro-in-corso", passi.length > 0 && !node._chiusa);
   const article = node.parentElement;
   if (!article) return;
   renderLavoro(node, lavoro, passi);
@@ -3548,6 +3557,7 @@ async function runLocalWorkspaceAgent(task, workspace, assistantNode, signal) {
       risultati.push({ id: chiamata.id, content: await eseguiStrumentoLocale(chiamata, workspace, ctx) });
     }
   }
+  chiudiRisposta(assistantNode);
   const finale = dividiLavoro(splitReasoning(assistantNode._raw || "").answer).finale;
   if (finale.trim()) renderMarkdownBody(assistantNode, finale);
   const esito = ctx.piani.includes("applicato") ? "plan_applied"
@@ -3577,6 +3587,12 @@ async function sendChatMessage(message) {
   assistantNode._utente = userNode;
   const flusso = { nodo: assistantNode, abort: new AbortController() };
   state.chatStreams.set(chiave, flusso);
+  if (state.chatStreams.size > 1) {
+    // Sul rig c'e' un solo posto per il modello: questa richiesta aspetta che
+    // finisca l'altra chat. Senza questa riga la bolla vuota sembrava ferma.
+    assistantNode._letturaMostrata = true;
+    assistantNode.textContent = "In coda: DEVIN sta rispondendo in un'altra chat, questa parte appena ha finito.";
+  }
   setChatBusy(true);
 
   try {
@@ -3660,6 +3676,7 @@ async function sendChatMessage(message) {
     }
 
     if (buffer.trim()) applyChatEvent(parseSseBlock(buffer), assistantNode);
+    chiudiRisposta(assistantNode);
     // A risposta finita il testo diventa markdown reso. Durante lo stream resta
     // testo semplice: ri-analizzare tutto a ogni token costerebbe O(n^2).
     const finale = dividiLavoro(splitReasoning(assistantNode._raw || "").answer).finale;
