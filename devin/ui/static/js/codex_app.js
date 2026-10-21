@@ -2096,6 +2096,8 @@ async function renderActivityRail(projectPath) {
     const direct = localWorkspace.mode === "direct";
     workBox.innerHTML = `<i class="folder-ico">PC</i> <span title="${direct ? "Accesso diretto autorizzato sul PC" : "Mirror gestito sul rig"}">${escapeHtml(localWorkspace.display_name || "workspace locale")} · ${direct ? "accesso diretto" : "snapshot verificato"}</span>`;
     workBox.classList.add("linked");
+    const modifiche = $("workdir-changes-button");
+    if (modifiche) modifiche.hidden = !direct;
     const button = $("workdir-set-button");
     if (button) {
       button.textContent = direct ? "Verifica" : "Sincronizza";
@@ -3643,8 +3645,11 @@ function elencoLocale(albero, cartella) {
   return `${files.length} file in '${prefisso || "."}'\n${righe.join("\n")}${note.length ? `\n(${note.join("; ")})` : ""}`;
 }
 
-async function proponiModificheLocali(argomenti, workspace) {
+async function proponiModificheLocali(argomenti, workspace, ctx = {}) {
   const operazioni = Array.isArray(argomenti.operations) ? argomenti.operations : [];
+  // 22/10: con «applica da solo» (il default) DEVIN applica senza chiedere;
+  // ogni piano lascia un backup sul PC e si annulla con un clic.
+  if (modoApplica() === "auto") return applicaModificheLocali(argomenti, operazioni, workspace, ctx);
   const riepilogo = operazioni.map((operation) => {
     if (operation.operation === "delete") return `ELIMINA ${operation.path}`;
     if (operation.operation === "replace") {
@@ -3658,12 +3663,95 @@ async function proponiModificheLocali(argomenti, workspace) {
     { okLabel: "Applica modifiche", danger: true },
   );
   if (!approvato) return { esito: "rifiutato", testo: "L'utente NON ha approvato le modifiche: non sono state applicate." };
+  return applicaModificheLocali(argomenti, operazioni, workspace, ctx);
+}
+
+async function applicaModificheLocali(argomenti, operazioni, workspace, ctx) {
   const ricevuta = await desktopInvoke("apply_local_workspace_plan", { bridgeId: workspace.bridge_id, operations: operazioni });
+  (ctx.applicati ||= []).push({
+    run_id: ricevuta.run_id,
+    descrizione: argomenti.summary || operazioni.map((o) => o.path).join(", "),
+  });
   return {
     esito: "applicato",
-    testo: `Modifiche applicate: ${ricevuta.files} file, in modo atomico, con copia di ripristino sul PC `
-      + `(${ricevuta.recovery_path}). Verifica con esegui (test o avvio del programma).`,
+    testo: `Modifiche applicate: ${ricevuta.files} file, in modo atomico, con backup sul PC: l'utente puo' `
+      + "annullarle con un clic. Ora verifica con esegui (test o avvio del programma); se qualcosa non va "
+      + "correggi e riprova.",
   };
+}
+
+// Le modifiche che DEVIN ha applicato: una riga per piano, con Annulla.
+// Si annulla dalla piu' recente: se un file e' cambiato di nuovo dopo,
+// il desktop non tocca niente e lo dice.
+function rigaModificaLocale(modifica, workspace, quando = "") {
+  const riga = document.createElement("div");
+  riga.className = "modifica-locale";
+  const testo = document.createElement("span");
+  testo.textContent = `${quando ? `${quando} · ` : ""}${modifica.descrizione}`;
+  const bottone = document.createElement("button");
+  bottone.type = "button";
+  bottone.className = "tiny-button";
+  const segnaAnnullata = () => {
+    riga.classList.add("annullata");
+    bottone.disabled = true;
+    bottone.textContent = "annullata";
+  };
+  bottone.textContent = "\u21a9 Annulla";
+  if (modifica.undone) segnaAnnullata();
+  bottone.addEventListener("click", async () => {
+    bottone.disabled = true;
+    try {
+      await desktopInvoke("undo_local_workspace_plan", { bridgeId: workspace.bridge_id, runId: modifica.run_id });
+      segnaAnnullata();
+      await loadProjectTree().catch(() => {});
+    } catch (error) {
+      bottone.disabled = false;
+      testo.textContent = `${testo.textContent}: ${errorMessage(error)}`;
+    }
+  });
+  riga.append(testo, bottone);
+  return riga;
+}
+
+function mostraModificheApplicate(assistantNode, workspace, applicati) {
+  if (!applicati?.length) return;
+  const box = document.createElement("div");
+  box.className = "modifiche-locali";
+  const titolo = document.createElement("div");
+  titolo.className = "modifiche-locali-titolo";
+  titolo.textContent = `\u2705 DEVIN ha applicato ${applicati.length} `
+    + `${applicati.length === 1 ? "modifica" : "modifiche"} sul PC (con backup):`;
+  box.append(titolo, ...[...applicati].reverse().map((m) => rigaModificaLocale(m, workspace)));
+  (assistantNode.closest(".chat-message") || assistantNode).append(box);
+}
+
+async function apriModificheLocali(workspace) {
+  const modifiche = await desktopInvoke("local_workspace_changes", { bridgeId: workspace.bridge_id });
+  const overlay = document.createElement("div");
+  overlay.className = "app-modal-overlay";
+  overlay.innerHTML = `
+    <div class="app-modal modifiche-locali-modal" role="dialog" aria-modal="true" aria-label="Modifiche di DEVIN">
+      <p class="app-modal-msg"></p>
+      <div class="modifiche-locali"></div>
+      <div class="app-modal-actions"><button type="button" class="tiny-button app-modal-cancel">Chiudi</button></div>
+    </div>`;
+  overlay.querySelector(".app-modal-msg").textContent = modifiche.length
+    ? "Modifiche applicate da DEVIN su questa cartella, dalla piu' recente. Ognuna ha un backup sul PC."
+    : "DEVIN non ha ancora applicato modifiche su questa cartella.";
+  const lista = overlay.querySelector(".modifiche-locali");
+  for (const modifica of modifiche) {
+    const quando = new Date(Number(modifica.applied_at) * 1000).toLocaleString("it-IT",
+      { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    const descrizione = modifica.files.map((f) => `${f.operation === "create" ? "+" : f.operation === "delete" ? "-" : "~"}${f.path}`).join(", ");
+    lista.append(rigaModificaLocale({ ...modifica, descrizione }, workspace, quando));
+  }
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".app-modal-cancel").addEventListener("click", close);
+  overlay.addEventListener("mousedown", (event) => { if (event.target === overlay) close(); });
+  overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+  overlay.tabIndex = -1;
+  overlay.focus();
 }
 
 async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
@@ -3712,7 +3800,7 @@ async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
         + `--- stderr ---\n${localAgentBoundedText(ricevuta.stderr || "", 8000)}`;
     }
     if (chiamata.name === "proponi_modifiche") {
-      const risultato = await proponiModificheLocali(a, workspace);
+      const risultato = await proponiModificheLocali(a, workspace, ctx);
       ctx.piani.push(risultato.esito);
       return risultato.testo;
     }
@@ -3726,55 +3814,61 @@ async function runLocalWorkspaceAgent(task, workspace, assistantNode, signal) {
   const projectPath = state.selectedProjectPath;
   const chatId = state.selectedChatId || null;
   const episodeId = localUuid();
-  const ctx = { albero: null, esecuzioni: [], piani: [], storia: [] };
+  const ctx = { albero: null, esecuzioni: [], piani: [], storia: [], applicati: [] };
   let sessionId = "";
   let risultati = null;
   assistantNode.textContent = "Agente locale · avvio sul PC…";
-  for (let giro = 0; giro < 500; giro += 1) {
-    const corpo = sessionId
-      ? { project_path: projectPath, chat_id: chatId, session_id: sessionId, results: risultati,
-          reasoning_effort: state.reasoningEffort || null }
-      : { project_path: projectPath, chat_id: chatId, task, reasoning_effort: state.reasoningEffort || null };
-    const response = await apiFetch("/api/local-workspace/agent-step", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo), signal,
-    });
-    if ((response.headers.get("content-type") || "").includes("application/json")) {
-      const payload = await response.json();
-      throw new Error(payload.error || payload.message || `agente locale: ${response.status}`);
-    }
-    if (!response.ok || !response.body) throw new Error(`agente locale: ${response.status}`);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let chiamate = null;
-    let finito = false;
-    const gestisci = (blocco) => {
-      const evento = parseSseBlock(blocco);
-      if (evento.type === "sessione" || evento.type === "strumenti" || evento.type === "done") {
-        let dati = {};
-        try { dati = JSON.parse(evento.data || "{}"); } catch { dati = {}; }
-        if (evento.type === "sessione") sessionId = dati.session_id || sessionId;
-        if (evento.type === "strumenti") chiamate = dati.chiamate || [];
-        if (evento.type === "done") finito = true;
+  try {
+    for (let giro = 0; giro < 500; giro += 1) {
+      const corpo = sessionId
+        ? { project_path: projectPath, chat_id: chatId, session_id: sessionId, results: risultati,
+            reasoning_effort: state.reasoningEffort || null }
+        : { project_path: projectPath, chat_id: chatId, task, reasoning_effort: state.reasoningEffort || null };
+      const response = await apiFetch("/api/local-workspace/agent-step", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo), signal,
+      });
+      if ((response.headers.get("content-type") || "").includes("application/json")) {
+        const payload = await response.json();
+        throw new Error(payload.error || payload.message || `agente locale: ${response.status}`);
       }
-      if (evento.type !== "sessione" && evento.type !== "strumenti") applyChatEvent(evento, assistantNode);
-    };
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocchi = buffer.split("\n\n");
-      buffer = blocchi.pop() ?? "";
-      blocchi.forEach(gestisci);
+      if (!response.ok || !response.body) throw new Error(`agente locale: ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let chiamate = null;
+      let finito = false;
+      const gestisci = (blocco) => {
+        const evento = parseSseBlock(blocco);
+        if (evento.type === "sessione" || evento.type === "strumenti" || evento.type === "done") {
+          let dati = {};
+          try { dati = JSON.parse(evento.data || "{}"); } catch { dati = {}; }
+          if (evento.type === "sessione") sessionId = dati.session_id || sessionId;
+          if (evento.type === "strumenti") chiamate = dati.chiamate || [];
+          if (evento.type === "done") finito = true;
+        }
+        if (evento.type !== "sessione" && evento.type !== "strumenti") applyChatEvent(evento, assistantNode);
+      };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocchi = buffer.split("\n\n");
+        buffer = blocchi.pop() ?? "";
+        blocchi.forEach(gestisci);
+      }
+      if (buffer.trim()) gestisci(buffer);
+      if (finito) break;
+      if (!chiamate) throw new Error("l'agente locale si e' interrotto senza concludere");
+      risultati = [];
+      for (const chiamata of chiamate) {
+        ctx.storia.push(`${chiamata.name} ${JSON.stringify(chiamata.arguments || {}).slice(0, 200)}`);
+        risultati.push({ id: chiamata.id, content: await eseguiStrumentoLocale(chiamata, workspace, ctx) });
+      }
     }
-    if (buffer.trim()) gestisci(buffer);
-    if (finito) break;
-    if (!chiamate) throw new Error("l'agente locale si e' interrotto senza concludere");
-    risultati = [];
-    for (const chiamata of chiamate) {
-      ctx.storia.push(`${chiamata.name} ${JSON.stringify(chiamata.arguments || {}).slice(0, 200)}`);
-      risultati.push({ id: chiamata.id, content: await eseguiStrumentoLocale(chiamata, workspace, ctx) });
-    }
+  } finally {
+    // anche se il ciclo si ferma (Stop, errore) le modifiche gia' applicate
+    // restano visibili e annullabili
+    mostraModificheApplicate(assistantNode, workspace, ctx.applicati);
   }
   chiudiRisposta(assistantNode);
   const finale = dividiLavoro(splitReasoning(assistantNode._raw || "").answer).finale;
@@ -4260,6 +4354,15 @@ function setupChatComposer() {
     });
   });
 
+  $("workdir-changes-button")?.addEventListener("click", () => {
+    const workspace = selectedDirectWorkspace();
+    if (!workspace) return;
+    apriModificheLocali(workspace).catch((err) => {
+      console.error(err);
+      appendChatMessage("assistant", `[error] ${errorMessage(err)}`);
+    });
+  });
+
   $("workdir-set-button")?.addEventListener("click", () => {
     setProjectWorkDir().catch((err) => {
       console.error(err);
@@ -4563,9 +4666,9 @@ $("effort-mode-chip")?.addEventListener("click", (event) => {
 // La scelta resta in questo PC; senza localStorage vale il default.
 const MODI_APPLICA = {
   auto: { etichetta: "\u2705 applica da solo",
-    titolo: "Costruisci da questa chat: applica da solo cio' che passa test e prova dell'app. Clicca per chiedere prima a te." },
+    titolo: "DEVIN applica da solo le modifiche (sulla cartella del PC con un backup, annullabili da \u21a9 Modifiche). Clicca per chiedere prima a te." },
   revisione: { etichetta: "\u{1F441} chiedi prima",
-    titolo: "Costruisci da questa chat: le modifiche verificate aspettano Diff / Applica. Clicca per farle applicare da solo." },
+    titolo: "DEVIN ti chiede prima di applicare le modifiche. Clicca per fargliele applicare da solo." },
 };
 
 function modoApplica() {

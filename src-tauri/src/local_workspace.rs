@@ -1840,6 +1840,15 @@ fn apply_export(
         &manifest.run_id,
         &manifest.decision_status,
     )?;
+    apply_export_in(root, manifest, files, recovery)
+}
+
+fn apply_export_in(
+    root: &Path,
+    manifest: &ExportManifest,
+    files: &HashMap<String, Vec<u8>>,
+    recovery: PathBuf,
+) -> Result<PathBuf, String> {
     let mut validated = Vec::new();
     for entry in &manifest.entries {
         if !matches!(entry.operation.as_str(), "create" | "modify" | "delete") {
@@ -1940,7 +1949,239 @@ fn apply_export(
         }
         completed.push((entry, target, backup));
     }
+    write_restore_record(&recovery, manifest)?;
     Ok(recovery)
+}
+
+// 22/10: DEVIN applica da solo le modifiche alla cartella del PC; si torna
+// indietro sempre. Accanto al backup di ogni piano applicato resta un
+// <cartella>.ripristino.json: cosa e' cambiato, com'era prima e com'e'
+// adesso. Sta accanto alla cartella del backup, non dentro: li' dentro i
+// percorsi sono quelli del progetto e un suo file omonimo lo coprirebbe.
+const RESTORE_FILE: &str = "ripristino.json";
+const RESTORE_SCHEMA: &str = "devin_local_workspace_restore_v1";
+const MAX_LISTED_CHANGES: usize = 50;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RestoreRecord {
+    schema: String,
+    bridge_id: String,
+    run_id: String,
+    applied_at: u64,
+    #[serde(default)]
+    undone_at: Option<u64>,
+    entries: Vec<ExportEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalChange {
+    run_id: String,
+    applied_at: u64,
+    undone: bool,
+    files: Vec<LocalChangeFile>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalChangeFile {
+    path: String,
+    operation: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UndoReceipt {
+    run_id: String,
+    files: usize,
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0)
+}
+
+fn sibling_of(recovery: &Path, suffix: &str) -> Result<PathBuf, String> {
+    let name = recovery
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Cartella di recovery non valida".to_string())?;
+    let parent = recovery
+        .parent()
+        .ok_or_else(|| "Cartella di recovery non valida".to_string())?;
+    Ok(parent.join(format!("{name}.{suffix}")))
+}
+
+fn write_restore_record(recovery: &Path, manifest: &ExportManifest) -> Result<(), String> {
+    let record = RestoreRecord {
+        schema: RESTORE_SCHEMA.to_string(),
+        bridge_id: manifest.bridge_id.clone(),
+        run_id: manifest.run_id.clone(),
+        applied_at: unix_now(),
+        undone_at: None,
+        entries: manifest.entries.clone(),
+    };
+    let body = serde_json::to_vec_pretty(&record)
+        .map_err(|err| format!("Ripristino non serializzabile: {err}"))?;
+    write_local_file(&sibling_of(recovery, RESTORE_FILE)?, &body)
+}
+
+fn read_restore_record(recovery: &Path) -> Result<RestoreRecord, String> {
+    let body = fs::read(sibling_of(recovery, RESTORE_FILE)?)
+        .map_err(|err| format!("Ripristino non leggibile: {err}"))?;
+    let record: RestoreRecord = serde_json::from_slice(&body)
+        .map_err(|err| format!("Ripristino non valido: {err}"))?;
+    if record.schema != RESTORE_SCHEMA {
+        return Err("Ripristino con schema sconosciuto".to_string());
+    }
+    Ok(record)
+}
+
+fn recovery_base(bridge_id: &str) -> Result<PathBuf, String> {
+    Ok(registry_path()?
+        .parent()
+        .ok_or_else(|| "Directory DEVIN non valida".to_string())?
+        .join("local-workspace-recovery")
+        .join(bridge_id))
+}
+
+fn list_changes_in(base: &Path) -> Result<Vec<LocalChange>, String> {
+    let mut changes = Vec::new();
+    let entries = match fs::read_dir(base) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(changes),
+        Err(err) => return Err(format!("Recovery locale non leggibile: {err}")),
+    };
+    for entry in entries.flatten() {
+        // piani applicati prima del 22/10: solo backup, senza ripristino
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Ok(record) = read_restore_record(&entry.path()) else {
+            continue;
+        };
+        changes.push(LocalChange {
+            run_id: record.run_id,
+            applied_at: record.applied_at,
+            undone: record.undone_at.is_some(),
+            files: record
+                .entries
+                .iter()
+                .map(|item| LocalChangeFile {
+                    path: item.path.clone(),
+                    operation: item.operation.clone(),
+                })
+                .collect(),
+        });
+    }
+    changes.sort_by(|a, b| b.applied_at.cmp(&a.applied_at).then(b.run_id.cmp(&a.run_id)));
+    changes.truncate(MAX_LISTED_CHANGES);
+    Ok(changes)
+}
+
+fn find_recovery_dir(base: &Path, run_id: &str) -> Result<PathBuf, String> {
+    if run_id.is_empty()
+        || !run_id
+            .chars()
+            .all(|char| char.is_ascii_alphanumeric() || matches!(char, '_' | '-'))
+    {
+        return Err("run_id non valido".to_string());
+    }
+    let entries =
+        fs::read_dir(base).map_err(|err| format!("Nessun backup per questa cartella: {err}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if let Ok(record) = read_restore_record(&path) {
+            if record.run_id == run_id {
+                return Ok(path);
+            }
+        }
+    }
+    Err(format!("Nessun ripristino per la modifica {run_id}"))
+}
+
+/// Riporta i file com'erano prima del piano. Prima controlla tutto: se un
+/// file e' stato cambiato di nuovo dopo il piano non tocca niente e lo dice
+/// (si annullano prima le modifiche piu' recenti). Un file gia' tornato com'era
+/// si salta, cosi' un annullamento interrotto si puo' ripetere.
+fn undo_in(root: &Path, recovery: &Path) -> Result<UndoReceipt, String> {
+    let mut record = read_restore_record(recovery)?;
+    if record.undone_at.is_some() {
+        return Err("Questa modifica e' gia' stata annullata".to_string());
+    }
+    let mut steps = Vec::new();
+    let mut conflicts = Vec::new();
+    for entry in &record.entries {
+        let relative = safe_relative(&entry.path)?;
+        let target = safe_local_target(root, &relative)?;
+        let current = local_fingerprint(&target)?;
+        if same_content(&current, &entry.after) {
+            steps.push((entry.clone(), relative, target));
+        } else if !same_content(&current, &entry.before) {
+            conflicts.push(entry.path.clone());
+        }
+    }
+    if !conflicts.is_empty() {
+        return Err(format!(
+            "Non annullo niente: questi file sono cambiati dopo la modifica (annulla prima le modifiche piu' recenti): {}",
+            conflicts.join(", ")
+        ));
+    }
+    for (entry, relative, target) in steps.iter().rev() {
+        match entry.operation.as_str() {
+            "modify" | "delete" => {
+                let body = fs::read(recovery.join(relative))
+                    .map_err(|err| format!("Backup mancante per {}: {err}", entry.path))?;
+                write_local_file(target, &body)?;
+            }
+            "create" => {
+                let parked = sibling_of(recovery, "annullati")?.join(relative);
+                if let Some(parent) = parked.parent() {
+                    fs::create_dir_all(parent)
+                        .map_err(|err| format!("Cartella annullati non creabile: {err}"))?;
+                }
+                fs::rename(target, &parked)
+                    .map_err(|err| format!("Non riesco a togliere {}: {err}", entry.path))?;
+            }
+            other => return Err(format!("Operazione sconosciuta nel ripristino: {other}")),
+        }
+        if !same_content(&local_fingerprint(target)?, &entry.before) {
+            return Err(format!("Verifica dopo il ripristino fallita: {}", entry.path));
+        }
+    }
+    record.undone_at = Some(unix_now());
+    let body = serde_json::to_vec_pretty(&record)
+        .map_err(|err| format!("Ripristino non serializzabile: {err}"))?;
+    write_local_file(&sibling_of(recovery, RESTORE_FILE)?, &body)?;
+    Ok(UndoReceipt {
+        run_id: record.run_id,
+        files: record.entries.len(),
+    })
+}
+
+#[tauri::command]
+pub async fn local_workspace_changes(
+    window: WebviewWindow,
+    bridge_id: String,
+) -> Result<Vec<LocalChange>, String> {
+    authorize_local_ui(&window)?;
+    Uuid::parse_str(&bridge_id).map_err(|_| "bridge_id locale non valido".to_string())?;
+    list_changes_in(&recovery_base(&bridge_id)?)
+}
+
+#[tauri::command]
+pub async fn undo_local_workspace_plan(
+    window: WebviewWindow,
+    bridge_id: String,
+    run_id: String,
+) -> Result<UndoReceipt, String> {
+    authorize_local_ui(&window)?;
+    Uuid::parse_str(&bridge_id).map_err(|_| "bridge_id locale non valido".to_string())?;
+    let root = direct_workspace_root(&bridge_id)?;
+    let recovery = find_recovery_dir(&recovery_base(&bridge_id)?, &run_id)?;
+    undo_in(&root, &recovery)
 }
 
 fn write_local_file(path: &Path, body: &[u8]) -> Result<(), String> {
@@ -2539,6 +2780,89 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("non univoco"));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn applied_plans_can_always_be_undone_in_order() {
+        let base = std::env::temp_dir().join(format!("devin-undo-{}", Uuid::new_v4()));
+        let root = base.join("progetto");
+        let recoveries = base.join("recovery");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/a.py"), b"x = 1\n").unwrap();
+        fs::write(root.join("vecchio.txt"), b"da togliere\n").unwrap();
+        // un file del progetto con lo stesso nome del ripristino non lo copre
+        fs::write(root.join("ripristino.json"), b"{}\n").unwrap();
+        let bridge = "12345678-1234-4234-9234-123456789abc";
+        let sha = |path: &str| local_fingerprint(&root.join(path)).unwrap().unwrap().sha256;
+        let apply = |operations: Vec<DirectPlanOperation>| {
+            let (manifest, files) = direct_plan_export(&root, bridge, operations).unwrap();
+            let recovery = recoveries.join(format!("{}-approved", manifest.run_id));
+            fs::create_dir_all(&recovery).unwrap();
+            apply_export_in(&root, &manifest, &files, recovery).unwrap();
+            manifest.run_id
+        };
+        let primo = apply(vec![
+            DirectPlanOperation {
+                path: "src/a.py".to_string(),
+                operation: "write".to_string(),
+                content: Some("x = 2\n".to_string()),
+                before: None,
+                expected_sha256: Some(sha("src/a.py")),
+            },
+            DirectPlanOperation {
+                path: "src/nuovo.py".to_string(),
+                operation: "write".to_string(),
+                content: Some("y = 1\n".to_string()),
+                before: None,
+                expected_sha256: None,
+            },
+            DirectPlanOperation {
+                path: "vecchio.txt".to_string(),
+                operation: "delete".to_string(),
+                content: None,
+                before: None,
+                expected_sha256: Some(sha("vecchio.txt")),
+            },
+            DirectPlanOperation {
+                path: "ripristino.json".to_string(),
+                operation: "write".to_string(),
+                content: Some("{\"mio\": true}\n".to_string()),
+                before: None,
+                expected_sha256: Some(sha("ripristino.json")),
+            },
+        ]);
+        let secondo = apply(vec![DirectPlanOperation {
+            path: "src/a.py".to_string(),
+            operation: "write".to_string(),
+            content: Some("x = 3\n".to_string()),
+            before: None,
+            expected_sha256: Some(sha("src/a.py")),
+        }]);
+
+        let listed = list_changes_in(&recoveries).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().all(|change| !change.undone));
+        assert_eq!(listed.iter().find(|c| c.run_id == primo).unwrap().files.len(), 4);
+
+        // il primo non si annulla finche' il secondo ha cambiato di nuovo a.py
+        let dir = |run: &str| find_recovery_dir(&recoveries, run).unwrap();
+        let blocked = undo_in(&root, &dir(&primo)).unwrap_err();
+        assert!(blocked.contains("src/a.py"), "{blocked}");
+        assert_eq!(fs::read(root.join("src/a.py")).unwrap(), b"x = 3\n", "niente toccato");
+        assert!(root.join("src/nuovo.py").exists());
+
+        assert_eq!(undo_in(&root, &dir(&secondo)).unwrap().files, 1);
+        assert_eq!(fs::read(root.join("src/a.py")).unwrap(), b"x = 2\n");
+        assert!(undo_in(&root, &dir(&secondo)).unwrap_err().contains("gia' stata annullata"));
+
+        assert_eq!(undo_in(&root, &dir(&primo)).unwrap().files, 4);
+        assert_eq!(fs::read(root.join("src/a.py")).unwrap(), b"x = 1\n");
+        assert_eq!(fs::read(root.join("vecchio.txt")).unwrap(), b"da togliere\n");
+        assert_eq!(fs::read(root.join("ripristino.json")).unwrap(), b"{}\n");
+        assert!(!root.join("src/nuovo.py").exists(), "il file creato se ne va");
+        assert!(list_changes_in(&recoveries).unwrap().iter().all(|change| change.undone));
+        assert!(find_recovery_dir(&recoveries, "../fuori").is_err());
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

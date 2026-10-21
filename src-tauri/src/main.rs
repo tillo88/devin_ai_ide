@@ -30,7 +30,8 @@ use local_execution::{
 };
 use local_workspace::{
     apply_local_workspace_changes, apply_local_workspace_plan, local_workspace_context,
-    local_workspace_evidence_v2, local_workspace_read, local_workspace_search, local_workspace_tree,
+    local_workspace_changes, local_workspace_evidence_v2, local_workspace_read, local_workspace_search,
+    local_workspace_tree, undo_local_workspace_plan,
     select_and_sync_local_workspace, sync_local_workspace,
 };
 
@@ -419,6 +420,8 @@ fn main() {
             cancel_local_workspace_command,
             apply_local_workspace_plan,
             apply_local_workspace_changes,
+            local_workspace_changes,
+            undo_local_workspace_plan,
             desktop_update_check,
             desktop_update_open
         ])

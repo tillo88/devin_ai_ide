@@ -16,6 +16,8 @@ fn main() {
             "cancel_local_workspace_command",
             "apply_local_workspace_plan",
             "apply_local_workspace_changes",
+            "local_workspace_changes",
+            "undo_local_workspace_plan",
             "desktop_http_stream",
             "desktop_http_cancel",
             "desktop_update_check",

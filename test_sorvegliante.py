@@ -84,3 +84,53 @@ def test_i_messaggi_dicono_cosa_e_perche() -> None:
     assert avviso["role"] == stop["role"] == "user"
     assert "ripete la ricerca 'x'" in avviso["content"] and "Cambia approccio" in avviso["content"]
     assert "non hai piu' strumenti" in stop["content"] and "continua" in stop["content"]
+
+
+def test_dopo_un_avviso_il_lavoro_buono_fa_dimenticare_l_avviso() -> None:
+    """22/10: «sbaglia e riprova finche' riesce» - un intoppo vecchio non costa lo stop a uno nuovo."""
+    from devin.core.sorvegliante import GIRI_PER_PERDONO
+    s = Sorvegliante()
+    for _ in range(2):
+        s.registra("leggi", {"percorso": "a.py"}, "x = 1")
+    assert s.fine_giro().stato == "ok"
+    s.registra("leggi", {"percorso": "a.py"}, "x = 1")
+    assert s.fine_giro().stato == "avviso"
+    for giro in range(GIRI_PER_PERDONO):
+        s.registra("esegui", {"programma": "pytest"}, f"{giro} failed")
+        assert s.fine_giro().stato == "ok"
+    for _ in range(3):
+        s.registra("leggi", {"percorso": "b.py"}, "y = 2")
+    assert s.fine_giro().stato == "avviso", "un intoppo nuovo dopo tanto lavoro buono riavvisa, non ferma"
+
+
+def test_senza_lavoro_buono_dopo_l_avviso_si_ferma() -> None:
+    from devin.core.sorvegliante import GIRI_PER_PERDONO
+    s = Sorvegliante()
+    for _ in range(3):
+        s.registra("leggi", {"percorso": "a.py"}, "x = 1")
+    assert s.fine_giro().stato == "avviso"
+    for giro in range(GIRI_PER_PERDONO - 2):
+        s.registra("esegui", {"programma": "pytest"}, f"{giro} failed")
+        assert s.fine_giro().stato == "ok"
+    for _ in range(2):
+        s.registra("leggi", {"percorso": "a.py"}, "x = 1")
+    assert s.fine_giro().stato == "stop"
+
+
+def test_una_ripetizione_dopo_l_avviso_azzera_il_conto_dei_giri_buoni() -> None:
+    from devin.core.sorvegliante import GIRI_PER_PERDONO
+    s = Sorvegliante()
+    for _ in range(3):
+        s.registra("leggi", {"percorso": "a.py"}, "x = 1")
+    assert s.fine_giro().stato == "avviso"
+    passo = iter(range(100))
+    for _ in range(GIRI_PER_PERDONO - 1):
+        s.registra("esegui", {"programma": "pytest"}, f"{next(passo)} failed")
+        s.fine_giro()
+    s.registra("leggi", {"percorso": "a.py"}, "x = 1")   # una sola: sotto soglia, ma non e' lavoro buono
+    assert s.fine_giro().stato == "ok"
+    for _ in range(GIRI_PER_PERDONO - 1):
+        s.registra("esegui", {"programma": "pytest"}, f"{next(passo)} failed")
+        s.fine_giro()
+    s.registra("leggi", {"percorso": "a.py"}, "x = 1")
+    assert s.fine_giro().stato == "stop"

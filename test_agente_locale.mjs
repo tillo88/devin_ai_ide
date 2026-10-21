@@ -19,8 +19,8 @@ function costante(nome) {
   return riga[0];
 }
 
-function ambiente({ desktop = {}, passi = [], conferma = true } = {}) {
-  const log = { invoke: [], richieste: [], eventi: [], training: [], conferme: 0 };
+function ambiente({ desktop = {}, passi = [], conferma = true, modo = "revisione" } = {}) {
+  const log = { invoke: [], richieste: [], eventi: [], training: [], conferme: 0, mostrate: [] };
   const state = { selectedProjectPath: "/w/spyengine", selectedChatId: "c1", reasoningEffort: "", localCommandId: null };
   const sse = (eventi) => eventi.map(([tipo, dati]) => (tipo ? `event: ${tipo}\n` : "") + `data: ${JSON.stringify(dati)}\n\n`).join("");
   const stub = {
@@ -33,6 +33,8 @@ function ambiente({ desktop = {}, passi = [], conferma = true } = {}) {
       return typeof r === "function" ? r(args) : r;
     },
     confirmModal: async () => { log.conferme += 1; return conferma; },
+    modoApplica: () => modo,
+    mostraModificheApplicate: (nodo, ws, applicati) => { log.mostrate.push([...(applicati || [])]); },
     errorMessage: (e) => String(e?.message || e),
     apiFetch: async (url, opzioni) => {
       log.richieste.push({ url, corpo: JSON.parse(opzioni.body) });
@@ -56,7 +58,7 @@ function ambiente({ desktop = {}, passi = [], conferma = true } = {}) {
     loadProjectTree: async () => {}, renderActivityRail: async () => {},
   };
   const NOMI = ["parseSseBlock", "localAgentBoundedText", "localExecutionTrainingEvidence", "formatoRigheLocali",
-    "elencoLocale", "proponiModificheLocali", "eseguiStrumentoLocale", "chiudiRisposta", "runLocalWorkspaceAgent"];
+    "elencoLocale", "proponiModificheLocali", "applicaModificheLocali", "eseguiStrumentoLocale", "chiudiRisposta", "runLocalWorkspaceAgent"];
   const COSTANTI = ["AGENTE_LOCALE_RIGHE", "AGENTE_LOCALE_MAX_RIGHE", "AGENTE_LOCALE_MAX_CARATTERI", "AGENTE_LOCALE_MAX_ELENCO"];
   const corpo = COSTANTI.map(costante).join("\n") + "\n" + NOMI.map(estrai).join("\n") + `\nreturn { ${NOMI.join(", ")} };`;
   const f = new Function(...Object.keys(stub), corpo)(...Object.values(stub));
@@ -128,6 +130,33 @@ prova("proponi_modifiche: senza approvazione non si applica niente", async () =>
   assert.equal(log.conferme, 1);
   assert.ok(!log.invoke.some(([c]) => c === "apply_local_workspace_plan"));
   assert.deepEqual(ctx.piani, ["rifiutato"]);
+});
+
+prova("applica da solo: niente conferma, backup e Annulla", async () => {
+  const { f, log } = ambiente({ modo: "auto", desktop: {
+    apply_local_workspace_plan: { run_id: "r1", files: 1, recovery_path: "C:/x" } } });
+  const ctx = { esecuzioni: [], piani: [], applicati: [] };
+  const r = await f.eseguiStrumentoLocale({ name: "proponi_modifiche", arguments: {
+    summary: "prezzo prudente", operations: [{ path: "a.py", operation: "write", content: "x" }] } }, WS, ctx);
+  assert.equal(log.conferme, 0, "con applica da solo non si chiede");
+  assert.deepEqual(log.invoke[0], ["apply_local_workspace_plan",
+    { bridgeId: "b1", operations: [{ path: "a.py", operation: "write", content: "x" }] }]);
+  assert.match(r, /backup/);
+  assert.match(r, /correggi e riprova/);
+  assert.deepEqual(ctx.applicati, [{ run_id: "r1", descrizione: "prezzo prudente" }]);
+  assert.deepEqual(ctx.piani, ["applicato"]);
+});
+
+prova("le modifiche applicate restano annullabili anche se il ciclo si interrompe", async () => {
+  const { f, log } = ambiente({ modo: "auto",
+    desktop: { apply_local_workspace_plan: { run_id: "r9", files: 1, recovery_path: "C:/x" } },
+    passi: [
+      [["sessione", { session_id: "s1" }], ["strumenti", { session_id: "s1", chiamate: [{ id: "c0", name: "proponi_modifiche",
+        arguments: { summary: "fix", operations: [{ path: "a.py", operation: "write", content: "x" }] } }] }]],
+      [["sessione", { session_id: "s1" }]],
+    ] });
+  await assert.rejects(f.runLocalWorkspaceAgent("x", WS, { textContent: "" }, null), /senza concludere/);
+  assert.deepEqual(log.mostrate, [[{ run_id: "r9", descrizione: "fix" }]]);
 });
 
 prova("il ciclo: compito, strumenti al PC, risultati con la sessione, risposta", async () => {

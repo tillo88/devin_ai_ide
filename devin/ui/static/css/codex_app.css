@@ -6333,3 +6333,13 @@ body.codex-shell {
   touch-action: none;
   border-radius: 6px;
 }
+
+/* modifiche applicate da DEVIN sulla cartella del PC, annullabili (22/10) */
+.modifiche-locali { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 12px; }
+.modifiche-locali-titolo { color: var(--muted, #9aa4b2); }
+.modifica-locale { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.modifica-locale > span { overflow-wrap: anywhere; }
+.modifica-locale.annullata > span { text-decoration: line-through; opacity: 0.6; }
+.modifiche-locali-modal { max-width: 640px; }
+.modifiche-locali-modal .modifiche-locali { max-height: 50vh; overflow-y: auto; }
+#workdir-changes-button[hidden] { display: none; }

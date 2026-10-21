@@ -69,6 +69,11 @@ await page.addInitScript(() => {
       stdout_sha256:'ab'.repeat(32),stderr_sha256:'cd'.repeat(32),output_truncated:false,
     };
     if (command === 'cancel_local_workspace_command') return {status:'cancelling',command_id:args.commandId};
+    if (command === 'undo_local_workspace_plan') return {run_id:args.runId,files:1};
+    if (command === 'local_workspace_changes') return [
+      {run_id:'local_fixture',applied_at:1792600000,undone:false,files:[{path:'src/main.py',operation:'modify'}]},
+      {run_id:'local_vecchio',applied_at:1792500000,undone:true,files:[{path:'src/nuovo.py',operation:'create'}]},
+    ];
     return {
       status: 'registered', project_path: args?.projectPath || '/projects/beta',
       local_workspace: {schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:bridgeId,display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0,updated_at:'2026-09-30T10:00:00Z'},
@@ -297,6 +302,29 @@ try {
   assert.equal(Object.hasOwn(bridgeCall.args,'path'),false);
   assert.equal(await page.locator('#workdir-box').textContent().then(text => text.includes('/backend/')),false);
   await page.locator('#show-chat-view').click();
+  // 22/10: «applica da solo» (default) applica senza chiedere, con backup e Annulla
+  await page.locator('#chat-input').fill('Modifica il file principale');
+  await page.locator('#chat-send').click();
+  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Aggiornato src/main.py.'));
+  assert.equal(await page.locator('.app-modal-overlay').count(),0,'applica da solo non chiede conferma');
+  const barra = page.locator('.chat-message.assistant .modifiche-locali').last();
+  await barra.waitFor({state:'visible'});
+  assert.match(await barra.textContent(), /applicato 1 modifica/);
+  await barra.locator('button').click();
+  await page.waitForFunction(() => window.__bridgeCalls.some(call => call.command === 'undo_local_workspace_plan'));
+  const undoCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'undo_local_workspace_plan'));
+  assert.deepEqual(undoCall.args, {bridgeId:'12345678-1234-4234-9234-123456789abc', runId:'local_fixture'});
+  await page.waitForFunction(() => document.querySelector('.modifiche-locali .modifica-locale.annullata'));
+  // lo storico dal pannello della cartella
+  await page.locator('#workdir-changes-button').click();
+  const storico = page.locator('.modifiche-locali-modal');
+  await storico.waitFor({state:'visible'});
+  assert.equal(await storico.locator('.modifica-locale').count(), 2);
+  assert.match(await storico.locator('.modifica-locale').first().textContent(), /~src\/main\.py/);
+  assert.equal(await storico.locator('.modifica-locale.annullata').count(), 1);
+  await storico.locator('.app-modal-cancel').click();
+  // «chiedi prima»: torna la conferma a ogni piano
+  await page.locator('#apply-mode-chip').click();
   await page.locator('#chat-input').fill('Modifica il file principale');
   await page.locator('#chat-send').click();
   const planPrompt = await Promise.race([
@@ -305,8 +333,9 @@ try {
   ]);
   assert.equal(planPrompt, 'modal', await page.locator('#chat-thread').textContent());
   await page.locator('.app-modal-ok').click();
-  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Aggiornato src/main.py.'));
-  const planSteps = writes.filter(write => write.path === '/api/local-workspace/agent-step');
+  await page.waitForFunction(() => document.querySelectorAll('.chat-message.assistant .modifiche-locali').length === 2);
+  await page.locator('#apply-mode-chip').click();
+  const planSteps = writes.filter(write => write.path === '/api/local-workspace/agent-step').slice(-2);
   assert.equal(planSteps.length,2);
   assert.equal(planSteps[0].data.task,'Modifica il file principale');
   assert.equal(planSteps[1].data.session_id,'s_fixture');

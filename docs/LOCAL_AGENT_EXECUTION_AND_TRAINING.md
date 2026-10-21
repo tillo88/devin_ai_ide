@@ -1,6 +1,6 @@
 # Agente locale Windows: lettura, esecuzione, modifiche e training
 
-**Aggiornato:** 2026-10-21
+**Aggiornato:** 2026-10-22
 **Stato:** contratto operativo dell'agente per workspace `mode=direct`.
 
 ## Obiettivo e confine
@@ -43,8 +43,10 @@ che l'app non restituisce diventa un `ERRORE` esplicito, mai un buco.
 **Nessun tetto fisso di passaggi.** Il sorvegliante delle ripetizioni
 (`devin/core/sorvegliante.py`, lo stesso della chat e dell'agente dei
 progetti) avvisa e poi ferma solo chi gira in tondo: stessa chiamata con lo
-stesso risultato, stesso errore per 3 giri. Resta un tetto di sicurezza di 60
-passaggi, dichiarato al modello e all'utente.
+stesso risultato, stesso errore per 3 giri. Dopo un avviso, 6 giri di lavoro
+buono lo fanno dimenticare: su un compito lungo ("sbaglia e riprova finche'
+riesce", 22/10) un intoppo vecchio non costa lo stop a uno nuovo. Resta un tetto
+di sicurezza di 150 passaggi, dichiarato al modello e all'utente.
 
 `/api/local-workspace/agent-once` resta per i client desktop non ancora
 aggiornati.
@@ -57,12 +59,14 @@ aggiornati.
 | `leggi` | `local_workspace_read` (fino a 256 KiB); l'app restituisce le righe richieste, numerate, max 800 righe / 40.000 caratteri, con SHA-256 | no |
 | `cerca` | `local_workspace_search`: testo senza distinzione di maiuscole nei file di testo, max 80 risultati `path:riga: testo` | no |
 | `esegui` | `run_local_workspace_command`, policy sotto | no |
-| `proponi_modifiche` | `apply_local_workspace_plan` | **si'**, a ogni piano |
+| `proponi_modifiche` | `apply_local_workspace_plan` | no con **applica da solo** (default), si' con **chiedi prima** |
 
 Lettura ed esecuzione sono libere per decisione dell'operatore (21/10): DEVIN
-deve poter controllare e testare i programmi da solo. Le modifiche restano col
-piano approvato; la scrittura autonoma con punto di ripristino e' il passo
-successivo.
+deve poter controllare e testare i programmi da solo. Dal 22/10 anche le
+modifiche (decisione dell'operatore: "l'importante e' avere un backup sempre"):
+con il chip **applica da solo** DEVIN applica, lancia i test, corregge e
+riprova finche' passa; ogni piano lascia un backup e si annulla con un clic.
+Il chip **chiedi prima** rimette la conferma a ogni piano.
 
 ## Esecuzione locale
 
@@ -98,6 +102,24 @@ cambiato il piano fallisce. Per file nuovi o piccoli `write`; per un file
 grande `replace` con un anchor `before` esatto e univoco. Tauri verifica
 l'anchor, applica atomicamente e conserva il recovery sul PC. L'esito
 (applicato o rifiutato) torna al modello, che puo' verificare con `esegui`.
+
+## Annullare
+
+Ogni piano applicato lascia, in `%APPDATA%\DEVIN\local-workspace-recovery\<bridge>\`,
+la cartella `<run>-approved` con le copie dei file com'erano e accanto
+`<run>-approved.ripristino.json` (com'era prima e com'e' dopo ogni file; accanto
+e non dentro, cosi' un file del progetto omonimo non lo copre).
+
+- `local_workspace_changes`: le ultime 50 modifiche, dalla piu' recente;
+- `undo_local_workspace_plan`: riporta i file com'erano (i file creati vanno in
+  `<run>-approved.annullati`, non si cancellano). Prima controlla tutto: se un
+  file e' cambiato di nuovo dopo il piano non tocca niente e dice quale (si
+  annulla prima la modifica piu' recente). Un file gia' tornato com'era si
+  salta, quindi un annullamento interrotto si ripete.
+
+Nell'app: sotto la risposta di DEVIN la lista delle modifiche applicate con
+**↩ Annulla** (anche se il ciclo si e' fermato a meta'), e nel pannello
+"Cartella di lavoro" il bottone **↩ Modifiche** con lo storico.
 
 ## Traccia di training anti-contaminazione
 

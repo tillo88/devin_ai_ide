@@ -1,9 +1,22 @@
 # DEVIN AI IDE — stato corrente e ripresa
 
-**Aggiornato:** 2026-10-21 (sezione in testa); il resto descrive il 2026-10-02
+**Aggiornato:** 2026-10-22 (sezioni in testa); il resto descrive il 2026-10-02
 
 **Punto di ingresso:** questo file, poi `AGENTS.md` e
 `docs/CURRENT_ARCHITECTURE.md`.
+
+## Aggiornamento 22/10: DEVIN applica da solo, con backup e Annulla
+
+Decisione dell'operatore: le modifiche DEVIN puo' farle da sola, "l'importante e'
+avere un backup sempre"; e "autoscaffold fino alla fine" vuol dire ragionare,
+sbagliare e riprovare finche' riesce. Con il chip **applica da solo** (default)
+l'agente locale applica senza conferma, lancia i test e riprova; ogni piano
+lascia un backup e un `ripristino.json` sul PC e si annulla con **↩ Annulla**
+sotto la risposta o da **↩ Modifiche** nel pannello della cartella
+(`undo_local_workspace_plan`, `local_workspace_changes`). Il sorvegliante
+dimentica un avviso dopo 6 giri buoni; tetto di sicurezza 150.
+`proponi_modifiche` ha i campi di testo al primo livello (#96) e le note
+arrivano all'agente locale (#95).
 
 ## Aggiornamento 21/10: l'agente locale torna a passaggi
 
@@ -13,7 +26,7 @@ chiede `elenca`, `leggi`, `cerca`, `esegui`, `proponi_modifiche`, l'app desktop
 li esegue sul PC e rimanda i risultati (`/api/local-workspace/agent-step`, SSE,
 sessioni in `devin/core/agente_locale.py`). Lettura ed esecuzione sono libere,
 le modifiche restano col piano approvato. Niente tetto fisso: il sorvegliante
-delle ripetizioni ferma solo chi gira in tondo (tetto di sicurezza 60).
+delle ripetizioni ferma solo chi gira in tondo (tetto di sicurezza 60, 150 dal 22/10).
 Contratto completo: `docs/LOCAL_AGENT_EXECUTION_AND_TRAINING.md`.
 
 Perche' il multi-step disabilitato il 10/10 (sotto) torna: i riavvii duri di
