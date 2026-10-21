@@ -795,6 +795,16 @@ async def api_local_workspace_agent_once(req: LocalAgentOnceRequest):
         return {"error": str(exc)}
 
 
+def _registra_lettura(dove: str, evento: dict) -> None:
+    """Una riga nel journal per ogni richiesta al modello: quanto contesto e quanto
+    era gia' in memoria (cache del prompt del server). Serve a misurare il riuso
+    del prefisso fra chat e turni (21/10), leggibile con devin-session-diagnose."""
+    totale = int(evento.get("prompt_tokens") or 0)
+    cache = int(evento.get("cache_tokens") or 0)
+    quota = round(100 * cache / totale) if totale else 0
+    print(f"[Chat] lettura {dove}: {totale} token, {cache} gia' in cache ({quota}%)")
+
+
 def _sse(evento: str, dati: dict) -> str:
     return f"event: {evento}\ndata: {json.dumps(dati, ensure_ascii=False)}\n\n"
 
@@ -916,6 +926,8 @@ async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
                         yield _sse("prefill", {k: evento.get(k) for k in ("total", "cache", "processed", "time_ms")})
                     elif tipo == "avviso":
                         yield _sse("warning", {"message": testo.strip()})
+                    elif tipo == "uso":
+                        _registra_lettura("agente locale", evento)
                     elif tipo == "risposta":
                         if primo_testo is None:
                             primo_testo = time.time()
@@ -1242,10 +1254,13 @@ async def api_chat(req: ChatRequest):
             "istruzioni: cita da dove vengono. NON puoi eseguire comandi (bash/curl): non "
             "fingere di farlo.")
         if ricerca_chiesta:
-            system_parts.append(
-                "L'utente in questo messaggio ti chiede di cercare sul web: chiama cerca_web. "
-                "Scrivi tu la domanda di ricerca, breve e precisa, sull'argomento della "
-                "conversazione (non copiare la frase dell'utente); se serve, fai piu' ricerche.")
+            # Nel messaggio dell'utente, non nel system (21/10): il system sta
+            # prima della descrizione degli strumenti, e una frase che c'e' solo
+            # a volte costringeva il rig a rileggere anche quei ~10k token.
+            content = ("[NOTA DEL SISTEMA: in questo messaggio l'utente ti chiede di cercare sul web: "
+                       "chiama cerca_web. Scrivi tu la domanda di ricerca, breve e precisa, "
+                       "sull'argomento della conversazione (non copiare la frase dell'utente); "
+                       "se serve, fai piu' ricerche.]\n\n" + content)
 
     # Lingua (fix 2026-07-10: rispondeva in inglese anche con istruzioni in italiano).
     # Nudge leggero e sempre presente, non hardcoda l'italiano: mirror della lingua utente.
@@ -1465,6 +1480,7 @@ async def api_chat(req: ChatRequest):
                     # quanti token ha letto davvero il modello (strumenti compresi)
                     uso_prompt.update(prompt_tokens=evento.get("prompt_tokens"),
                                       cache_tokens=evento.get("cache_tokens"))
+                    _registra_lettura("chat", evento)
                     return
                 if tipo == "lettura":
                     # avanzamento della lettura del contesto: non e' risposta

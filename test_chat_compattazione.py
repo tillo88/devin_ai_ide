@@ -183,3 +183,35 @@ def test_varianti_della_ricerca_web():
     assert v[1] == "20 turni 21 turni 4 squadre tabella schema M P N riposo esempio settimana"
     assert v[2] == "20 turni 21 turni 4 squadre tabella schema"
     assert _varianti_ricerca("eclissi 2027") == ["eclissi 2027"]
+
+
+def test_il_prefisso_stabile_non_cambia_se_chiedi_di_cercare(tmp_path, monkeypatch, capsys):
+    """21/10: la frase "l'utente ti chiede di cercare" stava nel system, prima della
+    descrizione degli strumenti: c'era solo a volte, e il rig rileggeva anche gli
+    strumenti. Ora sta nel messaggio dell'utente; ogni lettura finisce nel journal."""
+    def system_per(messaggio):
+        ai = FintoAI("non usato")
+        ai.copione = [[{"tipo": "uso", "testo": "", "prompt_tokens": 12000, "cache_tokens": 10500},
+                       {"tipo": "risposta", "testo": "ok"}]]
+        persist = ChatPersistence(str(tmp_path / messaggio[:5]), chat_id="c1")
+        monkeypatch.setattr(fast_app, "_get_ai_client", lambda: ai)
+        monkeypatch.setattr(fast_app, "_get_launcher", lambda: None)
+        monkeypatch.setattr(fast_app, "_validated_project_path", lambda p, allow_general=False: p)
+        monkeypatch.setattr(fast_app, "_build_project_context", lambda *a, **k: ([], {}))
+        monkeypatch.setattr(fast_app, "_get_automem", lambda: None)
+
+        async def scenario():
+            risposta = await chat_router.api_chat(chat_router.ChatRequest(
+                message=messaggio, project_path=str(tmp_path / messaggio[:5]), chat_id="c1", mode="reasoning"))
+            async for _ in risposta.body_iterator:
+                pass
+        asyncio.run(scenario())
+        inviati = ai.inviati[0]
+        return inviati[0]["content"], inviati[-1]["content"], persist.load()
+
+    sistema_normale, _, _ = system_per("come funziona il ciclo 1/21?")
+    sistema_cerca, ultimo, storia = system_per("cerca sul web come funziona il ciclo 1/21")
+    assert sistema_cerca == sistema_normale, "il system (prima degli strumenti) resta identico"
+    assert ultimo.startswith("[NOTA DEL SISTEMA: in questo messaggio l'utente ti chiede di cercare sul web")
+    assert storia[0]["content"] == "cerca sul web come funziona il ciclo 1/21", "la nota non entra nello storico"
+    assert "[Chat] lettura chat: 12000 token, 10500 gia' in cache (88%)" in capsys.readouterr().out
