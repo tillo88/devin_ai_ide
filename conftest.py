@@ -8,3 +8,5 @@ def _richieste_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVIN_RICHIESTE_DIR", str(tmp_path / "richieste"))
     # Il backend all'avvio riscalda la cache del modello (21/10): nei test mai.
     monkeypatch.setenv("DEVIN_RISCALDAMENTO", "0")
+    # nei test nessuno riavvierebbe il processo: il riavvio col codice nuovo resta spento
+    monkeypatch.setenv("DEVIN_RIAVVIO_AUTOMATICO", "0")

@@ -49,8 +49,14 @@ done
 If the columns disagree, **realign first, investigate second**. A defect found
 on a stale copy is not a defect of the system.
 
-Deploy is a `git pull --ff-only` in `/opt` run as `tillo`; the backend picks up new code
-on its next activation (it is `PartOf` the model slot), so no manual restart.
+Deploy is a `git pull --ff-only` in `/opt` run as `tillo` (`devin-frontend-refresh-v1`).
+Since 2026-10-22 the backend restarts itself on new code: every minute it compares
+the checkout's commit with the one it started on and, when DEVIN is idle (no reply
+streaming, no run, no local-agent session used in the last 15 minutes), exits with
+75 so systemd (`Restart=on-failure`) starts it again on the new code. While DEVIN
+works it waits and says so in the journal (`[Riavvio] ... aspetto`). Code:
+`devin/core/riavvio_codice.py`. Before that, new code waited for the next activation
+of the model slot: on 2026-10-21 three fixes sat unused for hours.
 
 The Tauri copy under `%LOCALAPPDATA%\DEVIN\desktop-host` is generated runtime
 output, not a source repository.
