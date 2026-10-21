@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-undo-local-workspace-plan"
+description = "Enables the undo_local_workspace_plan command without any pre-configured scope."
+commands.allow = ["undo_local_workspace_plan"]
+
+[[permission]]
+identifier = "deny-undo-local-workspace-plan"
+description = "Denies the undo_local_workspace_plan command without any pre-configured scope."
+commands.deny = ["undo_local_workspace_plan"]

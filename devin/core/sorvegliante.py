@@ -23,7 +23,10 @@ volta, e le ripetizioni si riconoscono con esattezza senza intelligenza.
   giri consecutivi vuol dire che sta riprovando la stessa cosa.
 
 La prima volta il sorvegliante **avvisa** il modello ("ti stai ripetendo su X, cambia
-approccio"); se dopo l'avviso succede di nuovo, **ferma**: chi lo usa toglie gli
+approccio"); se dopo l'avviso succede di nuovo, **ferma**. Se invece dopo l'avviso
+lavora per ``GIRI_PER_PERDONO`` giri senza ripetersi, l'avviso si dimentica: su un
+compito lungo ("sbaglia e riprova finche' riesce", 22/10) un intoppo al passo 10 non
+deve costare lo stop a un intoppo diverso al passo 80. Quando ferma, chi lo usa toglie gli
 strumenti e chiede una risposta con quello che c'e', e lo dice all'utente.
 """
 from __future__ import annotations
@@ -36,6 +39,7 @@ from typing import Any, Dict, List, Optional
 
 RIPETIZIONI = 2            # chiamate senza niente di nuovo prima di intervenire
 ERRORI_UGUALI = 3          # giri consecutivi con lo stesso errore prima di intervenire
+GIRI_PER_PERDONO = 6       # giri buoni dopo un avviso perche' il prossimo intoppo riavvisi
 SIMILITUDINE_RICERCHE = 0.8
 SEGNO = "[messaggio del sistema, non dell'utente]"
 _CIFRE = re.compile(r"\d+")
@@ -114,6 +118,8 @@ class Sorvegliante:
         self._errore_giri = 0
         self._errori_del_giro: List[str] = []
         self.avvisato = False
+        self._giri_buoni = 0
+        self._ripetuto_nel_giro = False
         self.interventi: List[Verdetto] = []
 
     # --- prima di eseguire ---------------------------------------------------
@@ -122,6 +128,7 @@ class Sorvegliante:
         for vecchia in self._ricerche:
             if simili(vecchia, domanda):
                 self._ripetizioni.append(f"la ricerca '{str(domanda)[:80]}'")
+                self._ripetuto_nel_giro = True
                 return vecchia
         self._ricerche.append(str(domanda))
         return None
@@ -135,6 +142,7 @@ class Sorvegliante:
             self._errori_del_giro.append(errore)
         if chiave in self._viste:
             self._ripetizioni.append(f"{nome} con gli stessi argomenti e lo stesso risultato")
+            self._ripetuto_nel_giro = True
             return True
         self._viste[chiave] = nome
         return False
@@ -155,8 +163,17 @@ class Sorvegliante:
         elif self._errore_giri >= self.soglia_errori:
             motivo = (f"lo stesso errore da {self._errore_giri} giri di fila: "
                       f"{self._errore_corrente[:160]}")
+        ripetuto, self._ripetuto_nel_giro = self._ripetuto_nel_giro, False
         if not motivo:
+            if ripetuto or self._errore_giri > 1:
+                self._giri_buoni = 0
+            elif self.avvisato:
+                self._giri_buoni += 1
+                if self._giri_buoni >= GIRI_PER_PERDONO:
+                    self.avvisato = False
+                    self._giri_buoni = 0
             return Verdetto("ok")
+        self._giri_buoni = 0
         self._ripetizioni = []
         self._errore_giri = 0
         verdetto = Verdetto("stop" if self.avvisato else "avviso", motivo)
