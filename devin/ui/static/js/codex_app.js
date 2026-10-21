@@ -301,7 +301,8 @@ function schedaAllegato(file, indice, rimovibile) {
     const url = URL.createObjectURL(file);
     img.src = url;
     img.alt = file.name || "immagine";
-    img.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+    if (rimovibile) img.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+    else img.addEventListener("click", () => apriImmagine(url, file.name));
     scheda.appendChild(img);
   } else {
     const ico = document.createElement("span");
@@ -366,6 +367,67 @@ function mostraAllegatiInviati(corpo, files) {
   const riga = document.createElement("div");
   riga.className = "chat-attachments sent";
   files.forEach((file, i) => riga.appendChild(schedaAllegato(file, i, false)));
+  article.appendChild(riga);
+}
+
+// Le immagini restano nella chat (21/10): il backend le salva per impronta
+// accanto allo storico e nello storico resta la riga "[Immagine allegata: ...
+// sha256=<id>...]". Ridisegnando la chat la riga diventa di nuovo la miniatura.
+const NOTA_IMMAGINE_RE = /^\[Immagine allegata: (.+?) \| (image\/[a-z]+) \| size=(\d+) bytes \| sha256=([0-9a-f]{16})\.\.\..*\]$/;
+
+function separaImmaginiAllegate(content) {
+  const immagini = [];
+  const righe = [];
+  for (const riga of String(content || "").split("\n")) {
+    const trovata = riga.match(NOTA_IMMAGINE_RE);
+    if (trovata) immagini.push({ nome: trovata[1], tipo: trovata[2], size: Number(trovata[3]), id: trovata[4] });
+    else righe.push(riga);
+  }
+  return { testo: righe.join("\n").trim(), immagini };
+}
+
+function apriImmagine(src, nome) {
+  const velo = document.createElement("div");
+  velo.className = "immagine-grande";
+  velo.title = "Clic per chiudere";
+  const img = document.createElement("img");
+  img.src = src;
+  img.alt = nome || "immagine";
+  velo.appendChild(img);
+  velo.addEventListener("click", () => velo.remove());
+  document.body.appendChild(velo);
+}
+
+function mostraImmaginiStorico(corpo, immagini, progetto, chatId) {
+  const article = corpo?.parentElement;
+  if (!article || !immagini.length) return;
+  const riga = document.createElement("div");
+  riga.className = "chat-attachments sent";
+  for (const immagine of immagini) {
+    const scheda = document.createElement("span");
+    scheda.className = "chat-attachment";
+    const img = document.createElement("img");
+    img.alt = immagine.nome;
+    img.title = immagine.nome;
+    const nome = document.createElement("span");
+    nome.className = "chat-attachment-name";
+    nome.textContent = `${immagine.nome} · ${formatoDimensione(immagine.size)}`;
+    scheda.appendChild(img);
+    scheda.appendChild(nome);
+    riga.appendChild(scheda);
+    const query = new URLSearchParams({ id: immagine.id, project_path: progetto || "", chat_id: chatId || "" });
+    apiFetch(`/api/chat/allegato?${query.toString()}`)
+      .then((risposta) => (risposta.ok ? risposta.blob() : null))
+      .then((dati) => {
+        if (!dati) throw new Error("assente");
+        img.src = URL.createObjectURL(dati);
+        img.addEventListener("click", () => apriImmagine(img.src, immagine.nome));
+      })
+      .catch(() => {
+        img.remove();
+        nome.textContent += " · non piu' disponibile";
+      });
+  }
   article.appendChild(riga);
 }
 
@@ -2628,10 +2690,16 @@ function appendChatMessage(role, content = "", options = {}) {
   const body = article.querySelector(".chat-message-body");
   // Le risposte di DEVIN sono markdown: rese con nodi DOM, mai innerHTML.
   // Quello che scrive l'utente resta testo com'e'.
+  let immagini = [];
   if (role === "assistant" && content) renderMarkdownBody(body, content);
-  else body.textContent = content;
+  else if (role === "user") {
+    const separato = separaImmaginiAllegate(content);
+    immagini = separato.immagini;
+    body.textContent = immagini.length ? separato.testo : content;
+  } else body.textContent = content;
   aggiungiCancella(article, options.historyIndex);
   thread.appendChild(article);
+  if (immagini.length) mostraImmaginiStorico(body, immagini, state.selectedProjectPath, state.selectedChatId);
   thread.scrollTop = thread.scrollHeight;
   return body;
 }

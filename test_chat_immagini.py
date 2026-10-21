@@ -115,3 +115,41 @@ def test_immagini_non_valide_o_troppe_si_rifiutano_prima_del_modello(monkeypatch
     assert "solo data URL" in asyncio.run(chat.api_chat(finta))["error"]
     vecchia = chat.ChatRequest(message="x", image_base64=base64.b64encode(WEBP).decode())
     assert "formati ammessi" in asyncio.run(chat.api_chat(vecchia))["error"]
+
+
+# --- 21/10: le immagini restano nella chat -------------------------------------
+NOTA_JS = r"^\[Immagine allegata: (.+?) \| (image/[a-z]+) \| size=(\d+) bytes \| sha256=([0-9a-f]{16})\.\.\..*\]$"
+
+
+def test_la_nota_e_quella_che_l_app_riconosce() -> None:
+    """L'app ridisegna la miniatura dalla riga nello storico: formato e regex devono combaciare."""
+    import hashlib
+    import re
+    from pathlib import Path
+    js = Path(__file__).resolve().parent.joinpath("devin/ui/static/js/codex_app.js").read_text(encoding="utf-8")
+    assert NOTA_JS.replace("/", "\\/").replace("^", "/^", 1) in js, "regex dell'app cambiata: aggiorna anche qui"
+    trovata = re.match(NOTA_JS, chat._image_note("C:\\foto\\pezzo.png", PNG))
+    assert trovata and trovata.group(1) == "pezzo.png" and trovata.group(2) == "image/png"
+    assert trovata.group(4) == hashlib.sha256(PNG).hexdigest()[:16]
+
+
+def test_l_immagine_allegata_si_salva_e_si_rivede(tmp_path, monkeypatch) -> None:
+    from devin.ui import fast_app
+    monkeypatch.setattr(fast_app, "_validated_project_path", lambda p, allow_general=False: str(tmp_path / "progetto"))
+    monkeypatch.setattr(fast_app, "GENERAL_CHAT_PROJECT_KEY", str(tmp_path / "generale"))
+
+    async def finta_api_chat(req):
+        return {"ok": True}
+
+    monkeypatch.setattr(chat, "api_chat", finta_api_chat)
+    for progetto, chat_id in (("/w/progetto", "chat_1"), ("", "")):
+        asyncio.run(chat.api_chat_document(
+            message="cosa vedi?", document=None, files=[_upload("foto.jpg", JPEG)], mode="auto",
+            project_path=progetto, use_web_search=False, chat_id=chat_id, reasoning_effort="", local_context=""))
+        ident = __import__("hashlib").sha256(JPEG).hexdigest()[:16]
+        risposta = asyncio.run(chat.api_chat_allegato(id=ident, project_path=progetto, chat_id=chat_id))
+        assert risposta.status_code == 200 and risposta.body == JPEG and risposta.media_type == "image/jpeg"
+    assert (tmp_path / "progetto" / ".devin" / "chats" / "allegati").is_dir(), "accanto allo storico della chat"
+    assert (tmp_path / "generale" / ".devin_chat" / "allegati").is_dir()
+    assert asyncio.run(chat.api_chat_allegato(id="../../etc/passwd")).status_code == 400
+    assert asyncio.run(chat.api_chat_allegato(id="0" * 16)).status_code == 404

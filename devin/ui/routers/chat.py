@@ -44,7 +44,7 @@ from pathlib import Path, PurePosixPath
 from typing import List, Optional
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from pydantic import BaseModel
 
@@ -1850,6 +1850,53 @@ def _image_note(filename: str, raw: bytes) -> str:
             f"sha256={digest[:16]}... — il modello la vede in questo messaggio]")
 
 
+ESTENSIONI_IMMAGINE = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/bmp": ".bmp"}
+ID_ALLEGATO_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def _cartella_allegati(project_path: str, chat_id: str) -> Path:
+    """Le immagini di una chat stanno accanto al suo storico, per impronta (21/10).
+
+    Prima restava solo la riga di testo: l'immagine spariva dalla chat appena
+    inviata e non si poteva piu' rivedere.
+    """
+    from devin.ui.fast_app import GENERAL_CHAT_PROJECT_KEY, _validated_project_path
+
+    chiave = (_validated_project_path(project_path, allow_general=False)
+              if project_path else GENERAL_CHAT_PROJECT_KEY)
+    return ChatPersistence(chiave, chat_id=chat_id or None).chat_dir / "allegati"
+
+
+def _salva_immagine(project_path: str, chat_id: str, raw: bytes) -> str:
+    """Salva l'immagine e restituisce il suo id (i primi 16 caratteri dello sha256)."""
+    ident = hashlib.sha256(raw).hexdigest()[:16]
+    cartella = _cartella_allegati(project_path, chat_id)
+    cartella.mkdir(parents=True, exist_ok=True)
+    destinazione = cartella / (ident + ESTENSIONI_IMMAGINE.get(_image_mime(raw) or "", ".img"))
+    if not destinazione.exists():
+        provvisorio = destinazione.with_suffix(destinazione.suffix + ".tmp")
+        provvisorio.write_bytes(raw)
+        provvisorio.replace(destinazione)
+    return ident
+
+
+@router.get("/api/chat/allegato")
+async def api_chat_allegato(id: str, project_path: str = "", chat_id: str = ""):
+    """Un'immagine allegata a una chat, per rivederla nello storico."""
+    if not ID_ALLEGATO_RE.fullmatch(id or ""):
+        return Response(status_code=400, content="id allegato non valido")
+    cartella = _cartella_allegati(project_path, chat_id)
+    for estensione in ESTENSIONI_IMMAGINE.values():
+        percorso = cartella / (id + estensione)
+        if percorso.is_file() and not percorso.is_symlink():
+            dati = percorso.read_bytes()
+            tipo = _image_mime(dati)
+            if tipo:
+                return Response(content=dati, media_type=tipo,
+                                headers={"Cache-Control": "private, max-age=86400"})
+    return Response(status_code=404, content="allegato non trovato")
+
+
 def _with_images(messages: list, images: list) -> list:
     """Copia dei messaggi con le immagini nell'ultimo messaggio dell'utente (formato OpenAI)."""
     if not images:
@@ -1970,6 +2017,10 @@ async def api_chat_document(message: str = Form(""), document: UploadFile = File
                 return {"error": f"{upload.filename}: immagine troppo grande (max {MAX_IMAGE_BYTES // (1024 * 1024)} MB)"}
             images.append(_image_data_url(raw))
             attachment_blocks.append(_image_note(upload.filename, raw))
+            try:
+                await asyncio.to_thread(_salva_immagine, project_path, chat_id, raw)
+            except Exception as exc:  # noqa: BLE001 - l'immagine va comunque al modello: lo si dice nel log
+                print(f"[Chat] immagine non salvata nello storico: {type(exc).__name__}: {exc}")
             continue
         if Path(upload.filename or "").suffix.lower() in {".webp", ".heic", ".heif", ".avif", ".tif", ".tiff"}:
             return {"error": f"{upload.filename}: formato d'immagine non letto dal modello, usa PNG o JPEG"}
