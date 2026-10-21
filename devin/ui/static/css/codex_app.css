@@ -6280,3 +6280,56 @@ body.codex-shell {
   border-radius: 8px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
 }
+
+/* Disegno sulle immagini prima di mandarle (21/10). */
+.chat-attachment-draw {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 2px;
+}
+.editor-immagine {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.85);
+}
+.editor-immagine-barra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+.editor-immagine-barra button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(20, 24, 33, 0.95);
+  color: var(--text);
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.editor-immagine-barra button.attivo { border-color: #0a84ff; background: rgba(10, 132, 255, 0.25); }
+.editor-immagine-barra button[data-colore] { font-size: 18px; line-height: 1; }
+.editor-immagine-barra button[data-salva] { border-color: #34c759; }
+.editor-immagine-tela {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.editor-immagine-tela canvas {
+  max-width: 92vw;
+  max-height: 80vh;
+  cursor: crosshair;
+  touch-action: none;
+  border-radius: 6px;
+}
