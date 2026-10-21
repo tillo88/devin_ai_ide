@@ -66,7 +66,8 @@ STRUMENTI: List[Dict[str, Any]] = [
         "description": ("Esegue un comando nella cartella del progetto sul PC: test, build, avvio del "
                         "programma per provarlo. Programmi ammessi: python, py, pytest, node, npm (test/run), "
                         "npx --no-install, cargo (test/check/build/clippy/fmt), git in sola lettura, go, "
-                        "dotnet, java, mvn, gradle, ruff, mypy. Niente shell, niente codice inline "
+                        "dotnet, java, mvn, gradle, ruff, mypy, e il Python dell'ambiente virtuale del progetto "
+                        "(es. .venv/Scripts/python.exe -m pytest). Niente shell, niente codice inline "
                         "(python -c, node -e): scrivi un file. Restituisce exit code, stdout e stderr."),
         "parameters": {"type": "object", "properties": {
             "programma": {"type": "string"},
