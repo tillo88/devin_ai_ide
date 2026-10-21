@@ -131,3 +131,16 @@ def test_l_anteprima_si_vede_e_mostra_il_foro(config, tmp_path):
     assert centro == (255, 255, 255), centro
     pieno = immagine.getpixel((lato // 2, lato + lato // 2 + 10 + 60))
     assert pieno != (255, 255, 255) and pieno[2] > pieno[0]
+
+
+def test_math_e_gia_importato_e_extrude_e_una_funzione(config, tmp_path):
+    """19/10: radians(60) dava NameError e profilo.extrude(...) AttributeError."""
+    codice = ("altezza = 100 * sin(radians(60))\n"
+              "profilo = Plane.YZ * Polygon((0, 0), (80, 0), (80, 4), (80 - 100 * cos(radians(60)), altezza), "
+              "(76 - 100 * cos(radians(60)), altezza), (76, 4), (0, 4), align=None)\n"
+              "risultato = extrude(profilo, amount=70)\n")
+    testo = modella3d.modella(codice, "schienale", tmp_path / "out", config=config)
+    assert testo.startswith("pezzo 'schienale': ingombro 70.0 x 80.0 x 86.603 mm"), testo
+    assert "mesh: chiusa (stampabile), solido valido" in testo
+    assert "radians, degrees, sin, cos" in modella3d.DESCRIZIONE
+    assert "extrude e' una FUNZIONE" in modella3d.PROMEMORIA

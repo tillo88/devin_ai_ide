@@ -107,7 +107,8 @@ function ambiente(opzioni = {}) {
 
   const NOMI = ["chiaveChatCorrente", "streamDellaChat", "aggiornaComposerPerChat", "riattaccaRispostaInCorso",
     "selectedChatFiles", "eImmagine", "formatoDimensione", "schedaAllegato", "renderAllegati", "togliAllegato",
-    "svuotaAllegati", "mostraAllegatiInviati", "formatFileLabel", "sendChatMessage", "inviaNota", "createProjectChat"];
+    "svuotaAllegati", "mostraAllegatiInviati", "formatFileLabel", "chiudiRisposta", "sendChatMessage", "inviaNota",
+    "createProjectChat"];
   const corpo = `const IMMAGINE_ALLEGATO_RE = /\\.(png|jpe?g|gif|bmp)$/i;\n`
     + NOMI.map(estrai).join("\n")
     + `\nreturn { ${NOMI.join(", ")} };`;
@@ -172,6 +173,23 @@ prova("il secondo messaggio parte davvero, con la sua chat e i suoi allegati", a
   await secondo;
   assert.equal(state.chatStreams.size, 0);
   assert.deepEqual(log.occupato, [false]);
+});
+
+prova("la seconda chat dice che e' in coda finche' il rig e' occupato", async () => {
+  const { f, state, thread, chiudi } = ambiente();
+  const primo = f.sendChatMessage("supporto");
+  await attesa();
+  const bollaPrima = thread.children[1].children[0];
+  assert.equal(bollaPrima.textContent, "", "la prima parte subito: niente 'in coda'");
+  state.selectedChatId = "chat_b";
+  f.sendChatMessage("cosa vedi?");
+  await attesa();
+  const bollaSeconda = f.streamDellaChat().nodo;
+  assert.match(bollaSeconda.textContent, /^In coda: DEVIN sta rispondendo in un'altra chat/);
+  assert.equal(bollaSeconda._letturaMostrata, true, "il primo segnale del modello sostituisce la riga");
+  chiudi(0);
+  await primo;
+  assert.equal(bollaPrima._chiusa, true, "finito lo stream la risposta e' chiusa");
 });
 
 prova("la richiesta usa chat e progetto di quando l'hai inviata", async () => {

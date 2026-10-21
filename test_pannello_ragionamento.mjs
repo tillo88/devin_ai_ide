@@ -26,6 +26,12 @@ class Nodo {
     this.isConnected = true;
     this.open = false;
     this.dataset = {};
+    const classi = new Set();
+    this.classi = classi;
+    this.classList = {
+      add: (c) => classi.add(c), remove: (c) => classi.delete(c), contains: (c) => classi.has(c),
+      toggle: (c, si) => { (si ?? !classi.has(c)) ? classi.add(c) : classi.delete(c); return classi.has(c); },
+    };
   }
   set innerHTML(html) {
     // basta riconoscere <summary></summary><pre></pre>
@@ -80,14 +86,16 @@ const sorgente = fs.readFileSync(SORGENTE, "utf8");
 const NOMI = ["splitReasoning", "reasoningCompleto", "formatDurata", "testoRiepilogo",
   "fermaCronometroRagionamento", "avviaCronometroRagionamento", "rendiRispostaInCorso",
   "renderAssistantStream", "testoLettura", "testoCompattazione", "marcatoreCompattazione",
-  "inFondo", "seguiFondo", "renderNote", "dividiLavoro", "renderLavoro", "riprendiRagionamento", "chiudiRipresaRagionamento"];
+  "inFondo", "seguiFondo", "renderNote", "dividiLavoro", "renderLavoro", "riprendiRagionamento", "chiudiRipresaRagionamento",
+  "chiudiRisposta"];
 const corpo = NOMI.map((n) => estrai(sorgente, n)).join("\n");
 
 const fabbrica = new Function("document", "THINK_OPEN", "THINK_CLOSE", "setInterval", "clearInterval",
   "renderMarkdownBody",
   `${corpo}\nreturn { splitReasoning, reasoningCompleto, formatDurata, testoRiepilogo,
      fermaCronometroRagionamento, avviaCronometroRagionamento, renderAssistantStream, testoLettura,
-     testoCompattazione, marcatoreCompattazione, inFondo, seguiFondo, dividiLavoro, riprendiRagionamento, chiudiRipresaRagionamento };`);
+     testoCompattazione, marcatoreCompattazione, inFondo, seguiFondo, dividiLavoro, riprendiRagionamento, chiudiRipresaRagionamento,
+     chiudiRisposta };`);
 
 let intervalliVivi = 0;
 // il markdown vero lo prova test_chat_markdown.mjs: qui conta chi lo chiama e con cosa
@@ -155,12 +163,18 @@ prova("i passaggi con gli strumenti vanno nel riquadro, la risposta resta in vis
   raw += "Il supporto misura 70 x 80 x 100 mm.";
   F.renderAssistantStream(n, raw);
   assert.equal(n.textContent, "Il supporto misura 70 x 80 x 100 mm.");
+  assert.ok(n.classList.contains("lavoro-in-corso"), "dopo uno strumento, finche' non chiude, il testo e' attenuato");
+  F.chiudiRisposta(n);
+  assert.ok(!n.classList.contains("lavoro-in-corso"), "chiusa la risposta, il testo e' la risposta");
+  F.renderAssistantStream(n, raw);
+  assert.ok(!n.classList.contains("lavoro-in-corso"), "un evento tardivo non la riattenua");
   assert.doesNotMatch(n.textContent, /Modello il pezzo/);
   const d = F.dividiLavoro("risposta senza strumenti");
   assert.deepEqual([d.passi.length, d.finale], [0, "risposta senza strumenti"]);
   const prima = nuovoMessaggio();
   F.renderAssistantStream(prima, "solo testo");
   assert.equal(prima.parentElement.querySelector(".work-panel"), null);
+  assert.ok(!prima.classList.contains("lavoro-in-corso"), "senza strumenti la risposta non si attenua");
 });
 
 prova("il pensiero ripreso dopo uno strumento riapre il conteggio e lo somma", () => {

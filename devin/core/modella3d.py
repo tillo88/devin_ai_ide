@@ -29,7 +29,7 @@ MAX_USCITA = 6000
 
 DESCRIZIONE = (
     "Crea un pezzo 3D scrivendo codice Python build123d 0.13 (CAD parametrico, 'from build123d import *' e' gia' "
-    "fatto, unita' in mm) e assegnando il pezzo finale alla variabile risultato. Lo strumento esporta STL e "
+    "fatto, come radians, degrees, sin, cos, tan, atan2, sqrt, hypot e pi di math; unita' in mm) e assegnando il pezzo finale alla variabile risultato. Lo strumento esporta STL e "
     "STEP e restituisce le misure vere: volume, ingombro X/Y/Z, se la mesh e' chiusa (stampabile), "
     "triangoli, e per la stampa FDM sbalzi, appoggio sul piano, orientamento migliore fra i 6 assi, peso se pieno "
     "e, se lo slicer e' installato, tempo di stampa, filamento e costo veri (G-code) per la stampante di "
@@ -52,6 +52,8 @@ PROMEMORIA = """PROMEMORIA build123d 0.13 (esempi verificati, unita' in mm):
 - unione e sottrazione: a + b, a - b; foro: pezzo - Pos(35, 40, 0) * Cylinder(5, 10)
 - raccordo: fillet(pezzo.edges().filter_by(Axis.Z), radius=2)
 - misure dentro il codice: bb = pezzo.bounding_box(); bb.min.X, bb.max.Z, bb.size.Y; corpi: len(pezzo.solids())
+- extrude e' una FUNZIONE: extrude(profilo, amount=70); profilo.extrude(...) non esiste
+- trigonometria gia' importata da math: radians, degrees, sin, cos, tan, atan2, sqrt, hypot, pi
 - NON esistono: Box(..., centered=...), Rotation(asse, angolo), pezzo.rotate(vettore, angolo), is_watertight();
   is_valid e' una proprieta' (pezzo.is_valid, senza parentesi). Le misure le restituisce gia' lo strumento.
 - alla fine: risultato = pezzo"""
@@ -83,7 +85,10 @@ STRUMENTO = {"type": "function", "function": {
         **_parametri_stampa()},
         "required": ["codice"], "additionalProperties": False}}}
 
-PRELUDIO = "from build123d import *\n"
+# 19/10: DEVIN ha scritto radians(60) e lo strumento ha risposto NameError: il preludio
+# importava solo build123d. Le funzioni di math servono a ogni pezzo inclinato.
+PRELUDIO = ("from build123d import *\n"
+            "from math import radians, degrees, sin, cos, tan, asin, acos, atan, atan2, sqrt, hypot, pi\n")
 
 POSTLUDIO = r'''
 
