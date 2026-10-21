@@ -315,6 +315,15 @@ function schedaAllegato(file, indice, rimovibile) {
   nome.textContent = `${file.name || "allegato"} · ${formatoDimensione(file.size)}`;
   nome.title = file.name || "";
   scheda.appendChild(nome);
+  if (rimovibile && eImmagine(file)) {
+    const segna = document.createElement("button");
+    segna.type = "button";
+    segna.className = "chat-attachment-draw";
+    segna.title = "Disegna sull'immagine: evidenzia una zona o scrivi un testo";
+    segna.textContent = "✏️";
+    segna.addEventListener("click", () => apriEditorImmagine(indice));
+    scheda.appendChild(segna);
+  }
   if (rimovibile) {
     const togli = document.createElement("button");
     togli.type = "button";
@@ -352,6 +361,148 @@ function togliAllegato(indice) {
     input.value = "";              // senza DataTransfer: si tolgono tutti
   }
   renderAllegati();
+}
+
+function sostituisciAllegato(indice, nuovo) {
+  const input = $("chat-file");
+  if (!input) return false;
+  const files = selectedChatFiles();
+  if (!files[indice]) return false;
+  const dt = new DataTransfer();
+  files.forEach((file, i) => dt.items.add(i === indice ? nuovo : file));
+  input.files = dt.files;
+  renderAllegati();
+  return true;
+}
+
+// Disegno sulle immagini prima di mandarle (21/10): evidenziare una zona,
+// scrivere un testo che DEVIN deve usare. L'immagine segnata sostituisce
+// l'allegato; l'originale sul PC non si tocca.
+const COLORI_DISEGNO = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff"];
+const LATO_MASSIMO_DISEGNO = 2000;
+
+function nomeSegnato(nome) {
+  return `${String(nome || "immagine").replace(/\.[^.]+$/, "")}-segnato.png`;
+}
+
+function apriEditorImmagine(indice) {
+  const file = selectedChatFiles()[indice];
+  if (!file || !eImmagine(file)) return;
+  const url = URL.createObjectURL(file);
+  const sorgente = new Image();
+  sorgente.onload = () => {
+    URL.revokeObjectURL(url);
+    costruisciEditorImmagine(indice, file, sorgente);
+  };
+  sorgente.src = url;
+}
+
+function costruisciEditorImmagine(indice, file, sorgente) {
+  const scala = Math.min(1, LATO_MASSIMO_DISEGNO / Math.max(sorgente.naturalWidth, sorgente.naturalHeight));
+  const tela = document.createElement("canvas");
+  tela.width = Math.max(1, Math.round(sorgente.naturalWidth * scala));
+  tela.height = Math.max(1, Math.round(sorgente.naturalHeight * scala));
+  const ctx = tela.getContext("2d");
+  ctx.drawImage(sorgente, 0, 0, tela.width, tela.height);
+  const spessore = Math.max(3, Math.round(Math.max(tela.width, tela.height) / 250));
+  const editor = { strumento: "penna", colore: COLORI_DISEGNO[0], storia: [], inizio: null, prima: null };
+
+  const velo = document.createElement("div");
+  velo.className = "editor-immagine";
+  const barra = document.createElement("div");
+  barra.className = "editor-immagine-barra";
+  const pulsante = (testo, titolo, azione, dati = {}) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = testo;
+    b.title = titolo;
+    Object.assign(b.dataset, dati);
+    b.addEventListener("click", azione);
+    barra.appendChild(b);
+    return b;
+  };
+  const scegli = (nome) => {
+    editor.strumento = nome;
+    barra.querySelectorAll("[data-strumento]").forEach((b) => b.classList.toggle("attivo", b.dataset.strumento === nome));
+  };
+  pulsante("✏️ Penna", "Disegno a mano libera", () => scegli("penna"), { strumento: "penna" });
+  pulsante("▭ Riquadro", "Evidenzia una zona", () => scegli("riquadro"), { strumento: "riquadro" });
+  pulsante("T Testo", "Clicca dove scrivere", () => scegli("testo"), { strumento: "testo" });
+  const colore = pulsante("●", "Cambia colore", () => {
+    editor.colore = COLORI_DISEGNO[(COLORI_DISEGNO.indexOf(editor.colore) + 1) % COLORI_DISEGNO.length];
+    colore.style.color = editor.colore;
+  }, { colore: "1" });
+  colore.style.color = editor.colore;
+  pulsante("↶ Annulla", "Annulla l'ultimo segno", () => {
+    const precedente = editor.storia.pop();
+    if (precedente) ctx.putImageData(precedente, 0, 0);
+  }, { annulla: "1" });
+  const chiudi = () => velo.remove();
+  pulsante("Chiudi", "Esci senza salvare", chiudi, { chiudi: "1" });
+  pulsante("✓ Usa questa", "Sostituisce l'allegato con l'immagine segnata", () => {
+    tela.toBlob((blob) => {
+      if (blob) sostituisciAllegato(indice, new File([blob], nomeSegnato(file.name), { type: "image/png" }));
+      chiudi();
+    }, "image/png");
+  }, { salva: "1" });
+  scegli("penna");
+
+  const punto = (evento) => {
+    const r = tela.getBoundingClientRect();
+    return [(evento.clientX - r.left) * (tela.width / r.width), (evento.clientY - r.top) * (tela.height / r.height)];
+  };
+  const ricorda = () => {
+    editor.storia.push(ctx.getImageData(0, 0, tela.width, tela.height));
+    if (editor.storia.length > 20) editor.storia.shift();
+  };
+  tela.addEventListener("pointerdown", async (evento) => {
+    const [x, y] = punto(evento);
+    if (editor.strumento === "testo") {
+      const testo = await promptModal("Testo da scrivere sull'immagine", { okLabel: "Scrivi" });
+      if (!testo) return;
+      ricorda();
+      const corpo = Math.max(18, Math.round(tela.width / 35));
+      ctx.font = `bold ${corpo}px sans-serif`;
+      ctx.lineWidth = Math.max(3, corpo / 6);
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+      ctx.fillStyle = editor.colore;
+      ctx.strokeText(testo, x, y);
+      ctx.fillText(testo, x, y);
+      return;
+    }
+    ricorda();
+    editor.inizio = [x, y];
+    editor.prima = editor.strumento === "riquadro" ? ctx.getImageData(0, 0, tela.width, tela.height) : null;
+    tela.setPointerCapture?.(evento.pointerId);
+  });
+  tela.addEventListener("pointermove", (evento) => {
+    if (!editor.inizio) return;
+    const [x, y] = punto(evento);
+    ctx.strokeStyle = editor.colore;
+    ctx.lineWidth = spessore;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    if (editor.strumento === "penna") {
+      ctx.beginPath();
+      ctx.moveTo(...editor.inizio);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      editor.inizio = [x, y];
+    } else if (editor.strumento === "riquadro") {
+      ctx.putImageData(editor.prima, 0, 0);
+      ctx.strokeRect(editor.inizio[0], editor.inizio[1], x - editor.inizio[0], y - editor.inizio[1]);
+    }
+  });
+  const fine = () => { editor.inizio = null; editor.prima = null; };
+  tela.addEventListener("pointerup", fine);
+  tela.addEventListener("pointercancel", fine);
+
+  const area = document.createElement("div");
+  area.className = "editor-immagine-tela";
+  area.appendChild(tela);
+  velo.appendChild(barra);
+  velo.appendChild(area);
+  document.body.appendChild(velo);
 }
 
 function svuotaAllegati() {
