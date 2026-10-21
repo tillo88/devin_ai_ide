@@ -15,6 +15,7 @@
     "allow-sync-local-workspace",
     "allow-local-workspace-tree",
     "allow-local-workspace-read",
+    "allow-local-workspace-search",
     "allow-local-workspace-context",
     "allow-local-workspace-evidence-v2",
     "allow-run-local-workspace-command",

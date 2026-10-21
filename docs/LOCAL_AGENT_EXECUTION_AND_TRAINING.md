@@ -1,129 +1,122 @@
-# Agente locale Windows: esecuzione, review e training
+# Agente locale Windows: lettura, esecuzione, modifiche e training
 
-**Aggiornato:** 2026-10-02
+**Aggiornato:** 2026-10-21
 **Stato:** contratto operativo dell'agente per workspace `mode=direct`.
 
 ## Obiettivo e confine
 
-DEVIN puo' lavorare su una cartella scelta con Explorer senza caricarla sul
-rig. Il path assoluto resta nel registro locale protetto di Tauri; backend e
-modello vedono un `bridge_id`, path relativi e soltanto le evidenze richieste.
+DEVIN lavora su una cartella del PC scelta con Explorer, senza caricarla sul
+rig. Il cervello (il modello) gira sul rig; le mani sono l'app desktop, che
+esegue sul PC gli strumenti che DEVIN chiede e gli rimanda il risultato. Il
+path assoluto resta nel registro locale protetto di Tauri: backend e modello
+vedono un `bridge_id` e path relativi.
 
-Il desktop prepara prima dell'inferenza `devin_local_evidence_v2`, un evidence
-pack bounded e deterministico. Non carica la cartella intera: scansiona solo
-formati testuali ammessi, estrae una repo map e simboli top-level, spezza i file
-in chunk, deduplica il contenuto identico e seleziona al massimo due chunk per
-file. Sorgenti, manifest ed entrypoint precedono dump e artefatti generati;
-anche una cartella con centinaia di file `data/debug` non puo' nascondere i
-moduli del progetto. Il backend riceve insieme una
-`devin_context_receipt_v2` con conteggi di file/chunk inclusi e omessi, mai il
-path Windows assoluto.
+Fino al 21/10 l'agente era *one-shot*: l'app sceglieva da sola al massimo 18
+estratti da 80 righe e il modello dava una sola risposta senza strumenti. Su un
+progetto vero (spyengine) DEVIN "non poteva analizzare tutto". Il multi-step
+era stato disabilitato il 10/10 perche' le generazioni in sequenza erano
+sospettate di coincidere con i riavvii duri del rig; quei riavvii sono poi
+risultati hardware (alimentazione, PCIe Gen2, wake da PCIe, 18-19/10) e la chat
+esegue gia' da allora decine di generazioni in sequenza senza riavvii.
 
-Il budget non e' piu' una coppia fissa `20.000 caratteri / 1.536 token`.
-`DEVIN_EFFECTIVE_CONTEXT_TOKENS`, fornito dal runtime, e' la sorgente
-autorevole; in sua assenza il backend usa il minimo conservativo dei modelli
-locali o 8K. Prompt, margine di sicurezza, evidenze e output condividono lo
-stesso budget: analisi e piani riservano rispettivamente almeno 2.048 e 3.072
-token di output. Se una risposta completa non entra, il turno fallisce prima
-dell'inferenza invece di produrre JSON troncato. L'evidenza web resta
-opzionale e bounded col toggle web attivo.
+## Il ciclo a passaggi
 
-Il backend invia questo pacchetto al modello una sola volta e accetta soltanto
-`done` o `plan`. Per questo endpoint `AIClient` usa `max_attempts=1`: timeout,
-connessione interrotta o risposta strumentale terminano il turno senza retry.
-La stessa richiesta imposta `response_format=json_object` con uno schema
-bounded per `done|plan`; BeeLlama converte lo schema in un vincolo di
-generazione. Il parser applicativo resta il secondo gate e rifiuta testo
-libero, status strumentali, path non sicuri, fingerprint errati e piani fuori
-budget. Non esiste un fallback che trasformi una risposta libera in un falso
-`done`.
-Il vecchio endpoint `agent-step` fallisce esplicitamente, cosi' un bundle
-desktop rimasto aperto non puo' riattivare il loop multi-inferenza.
+`POST /api/local-workspace/agent-step` (SSE) esegue un giro del modello:
 
-Questa e' una protezione frontend/backend, non un contratto di processo del
-broker: garantisce una richiesta e un tentativo per task, ma non crea da sola
-una nuova istanza modello. Il multi-step resta disabilitato finche' il broker
-non espone e prova un lifecycle di istanza fresca.
+1. primo giro: `task` (gia' salvato nella chat da `/api/chat`), piu' gli ultimi
+   10 messaggi della chat come contesto;
+2. se il modello chiede strumenti arriva l'evento `strumenti` con
+   `session_id` e chiamate; l'app le esegue sul PC e richiama l'endpoint con
+   `session_id` e `results` (`[{id, content}]`);
+3. quando il modello risponde senza strumenti la risposta va nello storico della
+   chat (`salvato`), arriva `done` e la sessione si chiude.
+
+Pensiero, testo e lettura del contesto arrivano con gli stessi eventi della
+chat, nella stessa bolla; ogni strumento compare come riga nel riquadro dei
+passaggi ("📖 Leggo …", "▶ Eseguo …"). Le sessioni vivono nel backend
+(`devin/core/agente_locale.py`), scadono dopo 2 ore e sono legate al progetto.
+
+Chiamate con nome sconosciuto, argomenti non JSON o piano di modifiche non
+valido non vanno al PC: il modello riceve subito l'errore spiegato. Un risultato
+che l'app non restituisce diventa un `ERRORE` esplicito, mai un buco.
+
+**Nessun tetto fisso di passaggi.** Il sorvegliante delle ripetizioni
+(`devin/core/sorvegliante.py`, lo stesso della chat e dell'agente dei
+progetti) avvisa e poi ferma solo chi gira in tondo: stessa chiamata con lo
+stesso risultato, stesso errore per 3 giri. Resta un tetto di sicurezza di 60
+passaggi, dichiarato al modello e all'utente.
+
+`/api/local-workspace/agent-once` resta per i client desktop non ancora
+aggiornati.
+
+## Strumenti
+
+| strumento | sul PC | approvazione |
+|---|---|---|
+| `elenca` | `local_workspace_tree` (fino a 1.500 file, profondita' 12), filtrato per cartella; 400 righe per risposta | no |
+| `leggi` | `local_workspace_read` (fino a 256 KiB); l'app restituisce le righe richieste, numerate, max 800 righe / 40.000 caratteri, con SHA-256 | no |
+| `cerca` | `local_workspace_search`: testo senza distinzione di maiuscole nei file di testo, max 80 risultati `path:riga: testo` | no |
+| `esegui` | `run_local_workspace_command`, policy sotto | no |
+| `proponi_modifiche` | `apply_local_workspace_plan` | **si'**, a ogni piano |
+
+Lettura ed esecuzione sono libere per decisione dell'operatore (21/10): DEVIN
+deve poter controllare e testare i programmi da solo. Le modifiche restano col
+piano approvato; la scrittura autonoma con punto di ripristino e' il passo
+successivo.
 
 ## Esecuzione locale
 
-`run_local_workspace_command` non espone una shell. Accetta un programma da
-una allowlist di tool di sviluppo e argomenti strutturati; PowerShell, `cmd`,
-interpreti interattivi/inline, installazioni e Git mutante sono rifiutati.
-Python viene risolto tramite il launcher Windows `py.exe`; `npx` richiede
-`--no-install`.
-
-In modalita' one-shot il modello puo' allegare a un `plan` un solo comando
-`verification`. Il comando parte soltanto dopo che le modifiche sono state
-approvate e applicate e dopo una seconda conferma esplicita; l'esito viene
-mostrato e registrato senza inviare un'altra inferenza al modello. Prima di
-partire il cockpit mostra programma, argomenti, directory relativa, timeout e
-motivazione. Dopo la conferma, Rust:
+`run_local_workspace_command` non espone una shell. Accetta un programma da una
+allowlist di tool di sviluppo (python/py, pytest, node, npm test/run, npx
+`--no-install`, cargo test/check/build/clippy/fmt/metadata, git in sola lettura,
+go, dotnet, java, mvn, gradle, ruff, mypy) e argomenti strutturati;
+PowerShell, `cmd`, codice inline (`python -c`, `node -e`), installazioni e Git
+mutante sono rifiutati. Rust:
 
 - ricalcola l'origine Tauri e la registrazione del workspace;
 - limita `cwd` e path degli argomenti alla radice autorizzata;
 - azzera l'ambiente ereditato e ricostruisce una allowlist minima;
-- disabilita stdin e limita il timeout a 1–900 secondi;
+- disabilita stdin e limita il timeout a 1–900 secondi (default 180);
 - inserisce il processo in un Windows Job con terminazione dell'intero albero;
-- conserva al massimo 96 KiB per stream, mantenendo testa/coda e SHA-256
-  dell'output completo;
-- produce una ricevuta `devin_local_command_receipt_v1`.
+- conserva al massimo 96 KiB per stream, con testa/coda e SHA-256 dell'output
+  completo; al modello arrivano al massimo 12.000 caratteri di stdout e 8.000
+  di stderr.
 
-Il pulsante **Stop** chiama `cancel_local_workspace_command`; chiudere il Job
-termina anche gli eventuali figli. Questa e' una policy applicativa, non una
-sandbox del sistema operativo: un test approvato gira con i permessi
-dell'utente Windows e puo' usare rete o file normalmente accessibili. Per
-questo l'approvazione e' obbligatoria a ogni comando.
+Il pulsante **Stop** chiama `cancel_local_workspace_command` e interrompe anche
+il ciclo. Questa e' una policy applicativa, non una sandbox del sistema
+operativo: un comando gira con i permessi dell'utente Windows dentro la
+cartella del progetto.
 
 ## Scritture
 
-Le modifiche non passano dai comandi. `plan` contiene al massimo 20 operazioni
-e 2 MiB di payload. Ogni file esistente richiede lo SHA-256 osservato durante
-la lettura; se il contenuto e' cambiato il piano fallisce. Per file nuovi o
-piccoli il modello usa `write`; per un file grande puo' usare `replace` con un
-anchor `before` esatto e univoco e il solo testo sostitutivo. Tauri verifica
-che l'anchor compaia una volta, materializza localmente l'intero file fino a
-30 MiB, conserva tutto il resto byte-per-byte e applica atomicamente. Il
-recovery rimane sul PC: il modello non deve emettere l'intero file nei token di
-output.
+`proponi_modifiche` contiene al massimo 20 operazioni e 2 MiB di payload. Ogni
+file esistente richiede lo SHA-256 restituito da `leggi`; se il contenuto e'
+cambiato il piano fallisce. Per file nuovi o piccoli `write`; per un file
+grande `replace` con un anchor `before` esatto e univoco. Tauri verifica
+l'anchor, applica atomicamente e conserva il recovery sul PC. L'esito
+(applicato o rifiutato) torna al modello, che puo' verificare con `esegui`.
 
 ## Traccia di training anti-contaminazione
 
 Ogni episodio concluso crea un caso `agent_episode` e un attempt
-`pending_review`. Il rig riceve:
-
-- task, risposta finale e sequenza bounded delle etichette tool;
-- ricevuta bounded di contesto (finestra runtime, budget, conteggi repo/chunk e
-  omissioni), senza query, liste di file o path;
-- programma, argomenti relativi, esito, tempi e dimensioni delle esecuzioni;
-- digest di comando/stdout/stderr e flag timeout/cancellazione/troncamento.
-
-Non riceve file letti, path Windows assoluti, recovery, stdout o stderr grezzi.
-Nessun episodio e' promosso automaticamente.
-
-Nel messaggio conclusivo:
-
-- **Utile** registra una review umana `human_confirmed`;
-- **Da correggere** registra `verified_failure` e puo' aggiungere la risposta
-  corretta;
-- le correzioni validate alimentano l'export SFT esistente;
-- Teacher packet e review queue restano il passaggio per le verifiche batch.
-
-Eval e training restano distinti: un test verde e' evidenza dell'esecuzione,
-non autorizzazione automatica ad addestrare. Il repository prepara e filtra i
-dati; un job LoRA/QLoRA sul rig e' una fase successiva separata, con dataset
-versionato, modello base fissato, eval held-out e approvazione operatore.
+`pending_review`. Il rig riceve task, risposta finale, la sequenza bounded
+degli strumenti usati, programma/argomenti/esito/tempi/digest delle esecuzioni.
+Non riceve path Windows assoluti, recovery, stdout o stderr grezzi nella
+traccia. Nessun episodio e' promosso automaticamente; **Utile** e **Da
+correggere** registrano la review umana come prima.
 
 ## Verifica minima
 
 ```powershell
-py -3.10 -m pytest -q test_understory_hybrid.py test_training_endpoints_exports.py test_governance_api.py
+py -3 -m pytest -q test_agente_locale.py test_understory_hybrid.py test_sorvegliante.py
 cargo test --manifest-path src-tauri/Cargo.toml
+node test_agente_locale.mjs
 node --check devin/ui/static/js/codex_app.js
 node scripts/test-workspace-browser.mjs
 ```
 
-I bench di policy devono essere mutation-tested: almeno rifiuto shell, bounding
-output, esclusione output grezzo dal training, persistenza della risposta,
-wiring IPC, registro Governance, output minimo dinamico, ranking anti-rumore e
-unicita' dell'anchor `replace` devono diventare rossi se alterati.
+I bench sono mutation-tested: righe e timeout senza tetto, cache dell'albero,
+cartella di ricerca ignorata, modifiche applicate senza approvazione, errore
+del desktop che interrompe il ciclo, fine stream silenziosa, sessione persa o
+di un altro progetto, nomi e piani non validati, risposta non salvata, compito
+duplicato, avviso e stop del sorvegliante devono diventare rossi se alterati.

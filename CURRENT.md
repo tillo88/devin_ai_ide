@@ -1,9 +1,30 @@
 # DEVIN AI IDE — stato corrente e ripresa
 
-**Aggiornato:** 2026-10-02
+**Aggiornato:** 2026-10-21 (sezione in testa); il resto descrive il 2026-10-02
 
 **Punto di ingresso:** questo file, poi `AGENTS.md` e
 `docs/CURRENT_ARCHITECTURE.md`.
+
+## Aggiornamento 21/10: l'agente locale torna a passaggi
+
+Decisione dell'operatore: DEVIN deve leggere e testare direttamente i progetti
+sul PC, come un agente vero. L'agente locale non e' piu' one-shot: il modello
+chiede `elenca`, `leggi`, `cerca`, `esegui`, `proponi_modifiche`, l'app desktop
+li esegue sul PC e rimanda i risultati (`/api/local-workspace/agent-step`, SSE,
+sessioni in `devin/core/agente_locale.py`). Lettura ed esecuzione sono libere,
+le modifiche restano col piano approvato. Niente tetto fisso: il sorvegliante
+delle ripetizioni ferma solo chi gira in tondo (tetto di sicurezza 60).
+Contratto completo: `docs/LOCAL_AGENT_EXECUTION_AND_TRAINING.md`.
+
+Perche' il multi-step disabilitato il 10/10 (sotto) torna: i riavvii duri di
+inizio ottobre erano attribuiti alla sequenza di inferenze sulla stessa istanza.
+Il 18-19/10 le cause si sono rivelate hardware (alimentatori, PCIe Gen2, wake da
+PCIe, tetti di potenza; vedi il doc di progetto sull'arresto duro) e dal 19/10 la
+chat esegue sessioni da 8-13 giri con strumenti sulla stessa istanza senza alcun
+riavvio. Se un riavvio dovesse ricomparire durante l'agente locale, il primo
+strumento e' `host-crash-postmortem-v1`.
+
+Le sezioni seguenti descrivono lo stato al 2/10 e restano come storia.
 
 ## Obiettivo attivo
 

@@ -95,6 +95,22 @@ await page.route('**/*', async route => {
     } catch { return route.fulfill({ status: 404, body: '' }); }
   }
   let data = {};
+  if (route.request().method() !== 'GET' && u.pathname === '/api/local-workspace/agent-step') {
+    // Agente locale a passaggi (21/10): il primo passo chiede strumenti al PC,
+    // il secondo (con i risultati) risponde.
+    const posted = route.request().postDataJSON();
+    writes.push({path: u.pathname, data: posted});
+    const sse = (events) => events.map(([type, payload]) => `${type ? `event: ${type}\n` : ''}data: ${JSON.stringify(payload)}\n\n`).join('');
+    const calls = localAgentScenario === 'run'
+      ? [{id:'r1',name:'esegui',arguments:{programma:'python',argomenti:['-m','pytest','-q']}}]
+      : [{id:'p1',name:'leggi',arguments:{percorso:'src/main.py'}},
+         {id:'p2',name:'proponi_modifiche',arguments:{summary:'Aggiorna fixture',operations:[{
+           path:'src/main.py',operation:'write',content:'print("updated")\n',expected_sha256:'ab'.repeat(32)}]}}];
+    const body = posted.session_id
+      ? sse([['sessione',{session_id:'s_fixture'}],['',{token:localAgentScenario === 'run' ? 'Test eseguiti: 1 passed.' : 'Aggiornato src/main.py.'}],['salvato',{assistant_index:1}],['done',{}]])
+      : sse([['sessione',{session_id:'s_fixture'}],['info',{message:'📖 Leggo src/main.py'}],['strumenti',{session_id:'s_fixture',chiamate:calls}]]);
+    return route.fulfill({contentType:'text/event-stream', body});
+  }
   if (route.request().method() !== 'GET') {
     const posted = route.request().postDataJSON();
     writes.push({path: u.pathname, data: posted});
@@ -289,30 +305,26 @@ try {
   ]);
   assert.equal(planPrompt, 'modal', await page.locator('#chat-thread').textContent());
   await page.locator('.app-modal-ok').click();
-  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('1 file applicati atomicamente'));
+  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Aggiornato src/main.py.'));
+  const planSteps = writes.filter(write => write.path === '/api/local-workspace/agent-step');
+  assert.equal(planSteps.length,2);
+  assert.equal(planSteps[0].data.task,'Modifica il file principale');
+  assert.equal(planSteps[1].data.session_id,'s_fixture');
+  assert.ok(planSteps[1].data.results.find(r => r.id === 'p1').content.includes('def workspace_name'));
+  assert.ok(planSteps[1].data.results.find(r => r.id === 'p2').content.startsWith('Modifiche applicate: 1 file'));
   const applyCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'apply_local_workspace_plan'));
   assert.equal(applyCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
   assert.equal(applyCall.args.operations[0].path,'src/main.py');
   assert.equal(Object.hasOwn(applyCall.args,'localPath'),false);
   localAgentScenario = 'run';
-  const oneShotCallsBefore = writes.filter(write => write.path === '/api/local-workspace/agent-once').length;
+  const stepsBefore = writes.filter(write => write.path === '/api/local-workspace/agent-step').length;
   await page.locator('#chat-input').fill('Esegui i test reali del progetto');
   await page.locator('#chat-send').click();
-  await page.locator('.app-modal-overlay').waitFor({state:'visible'});
-  assert.ok((await page.locator('.app-modal-msg').textContent()).includes('Applicare queste modifiche'));
-  await page.locator('.app-modal-ok').click();
-  await page.locator('.app-modal-overlay').waitFor({state:'visible'});
-  assert.ok((await page.locator('.app-modal-msg').textContent()).includes('python -m pytest -q'));
-  await page.locator('.app-modal-ok').click();
-  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Verifica: python -m pytest -q'));
-  assert.equal(writes.filter(write => write.path === '/api/local-workspace/agent-once').length,oneShotCallsBefore + 1);
-  const evidenceCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'local_workspace_evidence_v2'));
-  assert.equal(evidenceCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
-  assert.equal(evidenceCall.args.maxChars,7550);
-  const oneShotPayload = writes.filter(write => write.path === '/api/local-workspace/agent-once').at(-1).data;
-  assert.ok(oneShotPayload.evidence_pack.includes('SCHEMA devin_local_evidence_v2'));
-  assert.ok(oneShotPayload.evidence_pack.includes('CONTEXT RECEIPT LOCALE'));
-  assert.equal(oneShotPayload.evidence_pack.includes('RETRIEVAL AGGIUNTIVO BOUNDED'),false);
+  await page.waitForFunction(() => document.querySelector('#chat-thread').textContent.includes('Test eseguiti: 1 passed.'));
+  const runSteps = writes.filter(write => write.path === '/api/local-workspace/agent-step').slice(stepsBefore);
+  assert.equal(runSteps.length,2);
+  assert.ok(runSteps[1].data.results[0].content.startsWith('exit 0 · 42 ms'));
+  assert.equal(await page.locator('.app-modal-overlay').isVisible(),false,'eseguire i test non chiede conferma');
   const runCall = await page.evaluate(() => window.__bridgeCalls.find(call => call.command === 'run_local_workspace_command'));
   assert.equal(runCall.args.bridgeId,'12345678-1234-4234-9234-123456789abc');
   assert.equal(runCall.args.program,'python');
@@ -320,8 +332,9 @@ try {
   assert.equal(Object.hasOwn(runCall.args,'localPath'),false);
   assert.equal(await page.locator('.local-training-review').last().textContent().then(text => text.includes('Training: in review')),true);
   await page.locator('#chat-send').waitFor({state:'visible'});
-  await page.waitForFunction(() => !document.querySelector('#chat-send').disabled);
-  assert.equal(await page.locator('#chat-stop').isHidden(),true);
+  // dal 19/10 (#86) Invia non si disabilita mai: si aspetta che sparisca Stop,
+  // cioe' che la risposta di questa chat sia davvero finita
+  await page.locator('#chat-stop').waitFor({state:'hidden', timeout:10000});
   await page.locator('[data-project-file="src/main.py"]').click();
   await page.waitForFunction(() => document.querySelector('#editor-content').textContent.includes('workspace_name'));
   await page.locator('#activity-run [data-review-change-run]').click();
