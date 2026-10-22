@@ -85,3 +85,25 @@ def test_commit_letto_da_git(tmp_path):
     commit = riavvio_codice.commit_corrente(tmp_path)
     assert commit and len(commit) == 40
     assert riavvio_codice.commit_corrente(tmp_path / "manca") is None
+
+
+def test_col_codice_nuovo_si_rilancia_nello_stesso_processo():
+    """22/10: uscendo con 75 la sessione DEVIN vedeva il backend fermo e spegneva anche il modello."""
+    import sys
+    uscite, rilanci = [], []
+    riavvio_codice.chiudi_o_rilancia(esci=uscite.append, rilancia=lambda exe, argv: rilanci.append((exe, argv)))
+    assert uscite == [0] and rilanci == [], "senza codice nuovo si esce e basta"
+    riavvio_codice._richiesto.set()
+    uscite.clear()
+    riavvio_codice.chiudi_o_rilancia(esci=uscite.append, rilancia=lambda exe, argv: rilanci.append((exe, argv)))
+    assert rilanci == [(sys.executable, [sys.executable, *sys.argv])]
+
+
+def test_se_il_rilancio_fallisce_ci_pensa_systemd():
+    riavvio_codice._richiesto.set()
+    uscite = []
+
+    def rotto(exe, argv):
+        raise OSError("exec negato")
+    riavvio_codice.chiudi_o_rilancia(esci=uscite.append, rilancia=rotto)
+    assert uscite == [riavvio_codice.CODICE_RIAVVIO]
