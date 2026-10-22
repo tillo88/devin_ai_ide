@@ -3804,6 +3804,37 @@ async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
         + `--- stdout ---\n${localAgentBoundedText(ricevuta.stdout || "", 12000)}\n`
         + `--- stderr ---\n${localAgentBoundedText(ricevuta.stderr || "", 8000)}`;
     }
+    if (chiamata.name === "guarda_programma") {
+      // 22/10: DEVIN avvia l'app, aspetta, fotografa le sue finestre e la chiude
+      const commandId = localUuid();
+      state.localCommandId = commandId;
+      let ricevuta;
+      try {
+        ricevuta = await desktopInvoke("run_local_workspace_command", {
+          bridgeId: workspace.bridge_id,
+          commandId,
+          program: String(a.programma || ""),
+          args: Array.isArray(a.argomenti) ? a.argomenti.map(String) : [],
+          cwd: String(a.cartella || "."),
+          timeoutSeconds: 120,
+          lookAfterSeconds: Math.min(60, Math.max(1, Number(a.aspetta_secondi) || 5)),
+        });
+      } finally {
+        if (state.localCommandId === commandId) state.localCommandId = null;
+      }
+      ctx.esecuzioni.push(localExecutionTrainingEvidence(ricevuta));
+      const foto = Array.isArray(ricevuta.screenshots) ? ricevuta.screenshots : [];
+      const stato = ricevuta.looked
+        ? (foto.length ? `${foto.length} finestra/e fotografate, poi chiuso` : "nessuna finestra visibile al momento della foto, poi chiuso")
+        : `il programma e' finito prima della foto (exit ${ricevuta.exit_code})`;
+      return {
+        testo: `${stato} · ${ricevuta.duration_ms} ms\n`
+          + foto.map((f) => `finestra «${f.title || "senza titolo"}» ${f.width}x${f.height}`).join("\n")
+          + `\n--- stdout ---\n${localAgentBoundedText(ricevuta.stdout || "", 8000)}\n`
+          + `--- stderr ---\n${localAgentBoundedText(ricevuta.stderr || "", 6000)}`,
+        immagini: foto.map((f) => ({ url: `data:image/png;base64,${f.png_base64}`, titolo: f.title || "" })),
+      };
+    }
     if (chiamata.name === "proponi_modifiche") {
       const risultato = await proponiModificheLocali(a, workspace, ctx);
       ctx.piani.push(risultato.esito);
@@ -3867,7 +3898,10 @@ async function runLocalWorkspaceAgent(task, workspace, assistantNode, signal) {
       risultati = [];
       for (const chiamata of chiamate) {
         ctx.storia.push(`${chiamata.name} ${JSON.stringify(chiamata.arguments || {}).slice(0, 200)}`);
-        risultati.push({ id: chiamata.id, content: await eseguiStrumentoLocale(chiamata, workspace, ctx) });
+        const esito = await eseguiStrumentoLocale(chiamata, workspace, ctx);
+        risultati.push(typeof esito === "object" && esito
+          ? { id: chiamata.id, content: esito.testo, immagini: esito.immagini || [] }
+          : { id: chiamata.id, content: esito });
       }
     }
   } finally {

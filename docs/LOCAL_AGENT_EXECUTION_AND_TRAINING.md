@@ -61,6 +61,7 @@ aggiornati.
 | `leggi` | `local_workspace_read` (fino a 256 KiB); l'app restituisce le righe richieste, numerate, max 800 righe / 40.000 caratteri, con SHA-256 | no |
 | `cerca` | `local_workspace_search`: testo senza distinzione di maiuscole nei file di testo, max 80 risultati `path:riga: testo` | no |
 | `esegui` | `run_local_workspace_command`, policy sotto | no |
+| `guarda_programma` | `run_local_workspace_command` con `look_after_seconds`: avvia, aspetta (1-60 s), fotografa le finestre visibili dei processi del job (max 3, PNG, lato max 1280) e chiude | no |
 | `proponi_modifiche` | `apply_local_workspace_plan` | no con **applica da solo** (default), si' con **chiedi prima** |
 
 Lettura ed esecuzione sono libere per decisione dell'operatore (21/10): DEVIN
@@ -69,6 +70,16 @@ modifiche (decisione dell'operatore: "l'importante e' avere un backup sempre"):
 con il chip **applica da solo** DEVIN applica, lancia i test, corregge e
 riprova finche' passa; ogni piano lascia un backup e si annulla con un clic.
 Il chip **chiedi prima** rimette la conferma a ogni piano.
+
+## Guardare le finestre (22/10)
+
+`guarda_programma` serve a provare davvero un'app con interfaccia. Il desktop
+fotografa solo le finestre dei processi avviati da DEVIN (il job Windows, cosi'
+anche `python.exe` lanciato da `py`), mai il resto dello schermo:
+`PrintWindow` con `PW_RENDERFULLCONTENT`, e se fallisce la copia del
+rettangolo dallo schermo. Le foto tornano al rig come PNG e arrivano al modello
+come immagini dopo i risultati, solo se il server ha la visione; altrimenti il
+risultato lo dice. Il backend accetta solo PNG veri, al piu' 3 per chiamata.
 
 ## Esecuzione locale
 
