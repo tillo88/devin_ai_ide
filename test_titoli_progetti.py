@@ -38,3 +38,23 @@ def test_l_elenco_dei_progetti_porta_il_titolo(tmp_path, monkeypatch):
     risposta = asyncio.run(workspace_router.api_workspace_projects())
     (voce,) = [p for p in risposta["projects"] if p["path"] == str(progetto)]
     assert voce["title"] == "spyengine" and voce["name"] == "spyengine-1e0dd3e5"
+
+
+def test_l_overview_conta_i_messaggi_della_chat_default(tmp_path, monkeypatch):
+    """22/10: per chiedere «togli anche il progetto?» conta anche la chat «Project default»."""
+    import asyncio
+
+    from devin.core.chat_persistence import ChatPersistence
+    from devin.ui import fast_app
+    from devin.ui.routers import projects as projects_router
+    progetto = tmp_path / "alpha"
+    progetto.mkdir()
+    monkeypatch.setattr(fast_app, "_project_space_for", lambda p: __import__(
+        "devin.core.project_space", fromlist=["ProjectSpace"]).ProjectSpace(str(progetto)))
+    vuoto = asyncio.run(projects_router.api_project_overview(project_path=str(progetto), lite=True))
+    assert vuoto["default_chat_messages"] == 0
+    ChatPersistence(str(progetto)).append("user", "ciao")
+    pieno = asyncio.run(projects_router.api_project_overview(project_path=str(progetto), lite=True))
+    assert pieno["default_chat_messages"] == 1
+    generale = asyncio.run(projects_router.api_project_overview(project_path="", lite=True))
+    assert "default_chat_messages" not in generale

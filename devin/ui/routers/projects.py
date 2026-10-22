@@ -76,6 +76,11 @@ async def api_project_overview(
     }
     from devin.ui.routers.local_workspace import local_workspace_for_project
     payload["local_workspace"] = local_workspace_for_project(ps.project_path)
+    if project_path:
+        # la chat «Project default» non e' fra le chat: conta anche lei per dire
+        # se il progetto e' vuoto (22/10, «togli anche il progetto?»)
+        from devin.core.chat_persistence import ChatPersistence
+        payload["default_chat_messages"] = len(ChatPersistence(project_path).load())
     if lite:
         return payload
     payload.update({

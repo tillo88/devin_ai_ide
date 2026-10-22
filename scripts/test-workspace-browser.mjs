@@ -24,6 +24,8 @@ let delayAlpha = false;
 let alphaFinished;
 let runsUnavailable = false;
 let localAgentScenario = 'plan';
+let chatAlpha = [];
+let defaultAlpha = 0;
 const memoria = {
   lezioni: [
     {id:'l1',regola:'usa math.radians',causa:'radians non importato',stato:'verificata',strumento:'modella_3d',errore:"NameError: name 'radians'"},
@@ -105,6 +107,16 @@ await page.route('**/*', async route => {
       const body = await fs.readFile(f);
       return route.fulfill({ contentType: f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : 'application/octet-stream', body });
     } catch { return route.fulfill({ status: 404, body: '' }); }
+  }
+  if (u.pathname === '/api/project/chats/delete') {
+    const corpo = JSON.parse(route.request().postData() || '{}');
+    writes.push({path: u.pathname, data: corpo});
+    chatAlpha = chatAlpha.filter(chat => chat.chat_id !== corpo.chat_id);
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({status:'deleted'}) });
+  }
+  if (u.pathname === '/api/workspace/projects/remove') {
+    writes.push({path: u.pathname, data: JSON.parse(route.request().postData() || '{}')});
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({status:'trashed'}) });
   }
   if (u.pathname === '/api/lezioni') {
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(memoria) });
@@ -196,7 +208,7 @@ await page.route('**/*', async route => {
     data = {events:[{seq:1,run_id:'run_fixture',type:'test_failure',level:'error',message:'La suite fixture non passa',timestamp:'2026-09-19T10:00:00Z',data:{status:'failed'}}]};
   } else if (u.pathname === '/api/project/overview') {
     const local = u.searchParams.get('project_path') === '/projects/beta';
-    data = {chats:[],pins:[],knowledge:[],work_dir:'',description:'Progetto di prova',local_workspace:local?{schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0}:null};
+    data = {default_chat_messages: u.searchParams.get('project_path') === '/projects/alpha' ? defaultAlpha : 0, chats: u.searchParams.get('project_path') === '/projects/alpha' ? chatAlpha : [],pins:[],knowledge:[],work_dir:'',description:'Progetto di prova',local_workspace:local?{schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0}:null};
   } else if (u.pathname === '/api/project/tree') {
     const local = u.searchParams.get('project_path') === '/projects/beta';
     data = local
@@ -462,7 +474,37 @@ try {
   assert.equal(failClosedOutcome,'error-message','desktop bridge failure did not fail closed');
   assert.equal(await page.locator('.app-modal-overlay').count(),0,'desktop bridge failure opened a backend-path modal');
   assert.equal(writes.filter(write => write.path === '/api/workspace/pick_folder').length,backendPickerWritesBefore,'desktop bridge failure called the backend picker');
+  // 22/10: cancellata l'ultima chat di un progetto, si offre di togliere il progetto
+  chatAlpha = [{chat_id:'c1',title:'Prima',messages:2},{chat_id:'c2',title:'Seconda',messages:1}];
   await page.setViewportSize({width:1440,height:1000});
+  await page.locator('#show-chat-view').click();
+  await page.locator('[data-project-path="/projects/alpha"]').click();
+  await page.waitForFunction(() => document.querySelector('#active-scope-label').textContent === 'alpha');
+  await page.locator('[data-delete-chat-id="c1"]').waitFor();
+  await page.locator('[data-delete-chat-id="c1"]').click();
+  await page.waitForFunction(() => !document.querySelector('[data-delete-chat-id="c1"]'));
+  assert.equal(await page.locator('.app-modal-overlay').count(), 0, 'restano altre chat: nessuna domanda');
+  await page.locator('[data-delete-chat-id="c2"]').click();
+  await page.locator('.app-modal-overlay').waitFor({state:'visible'});
+  assert.match(await page.locator('.app-modal-msg').textContent(), /ultima chat di «alpha»/);
+  await page.locator('.app-modal-cancel').click();
+  assert.equal(writes.filter(w => w.path === '/api/workspace/projects/remove').length, 0, 'Annulla tiene il progetto');
+  // la chat «Project default» con dei messaggi tiene vivo il progetto
+  chatAlpha = [{chat_id:'c4',title:'Quarta',messages:1}];
+  defaultAlpha = 3;
+  await page.locator('[data-project-path="/projects/alpha"]').click();
+  await page.locator('[data-delete-chat-id="c4"]').waitFor();
+  await page.locator('[data-delete-chat-id="c4"]').click();
+  await page.waitForFunction(() => !document.querySelector('[data-delete-chat-id="c4"]'));
+  assert.equal(await page.locator('.app-modal-overlay').count(), 0, 'la chat default ha messaggi: nessuna domanda');
+  defaultAlpha = 0;
+  chatAlpha = [{chat_id:'c3',title:'Terza',messages:1}];
+  await page.locator('[data-project-path="/projects/alpha"]').click();
+  await page.locator('[data-delete-chat-id="c3"]').waitFor();
+  await page.locator('[data-delete-chat-id="c3"]').click();
+  await page.locator('.app-modal-ok').click();
+  await page.waitForFunction(() => document.querySelector('#active-scope-label').textContent === 'General chat');
+  assert.deepEqual(writes.filter(w => w.path === '/api/workspace/projects/remove').map(w => w.data.path), ['/projects/alpha']);
   await page.goto('http://workspace.test/app/diagnostics#training');
   await page.locator('[data-council-attempt="attempt_council_fixture"]').first().waitFor();
   await page.locator('[data-council-attempt="attempt_council_fixture"]').first().click();
