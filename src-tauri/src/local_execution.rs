@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use tauri::{State, WebviewWindow};
 use uuid::Uuid;
 
+use crate::local_screenshot::WindowShot;
 use crate::local_workspace::{authorize_local_ui, direct_workspace_root};
 
 const MAX_ARGS: usize = 64;
@@ -19,6 +20,7 @@ const MAX_HEAD_BYTES: usize = 72 * 1024;
 const MAX_TAIL_BYTES: usize = 24 * 1024;
 const MIN_TIMEOUT_SECONDS: u64 = 1;
 const MAX_TIMEOUT_SECONDS: u64 = 900;
+const MAX_LOOK_SECONDS: u64 = 60;
 
 #[derive(Clone)]
 struct RunningProcess {
@@ -54,6 +56,9 @@ pub struct LocalCommandReceipt {
     stdout_sha256: String,
     stderr_sha256: String,
     output_truncated: bool,
+    /// `guarda_programma`: le finestre fotografate prima di chiudere il programma
+    looked: bool,
+    screenshots: Vec<WindowShot>,
 }
 
 struct CapturedStream {
@@ -386,6 +391,22 @@ fn terminate_running(running: &RunningProcess) {
     }
 }
 
+/// Le finestre dei processi del comando (il job su Windows), poi lo si chiude.
+fn look_and_stop(running: &RunningProcess) -> Vec<WindowShot> {
+    #[cfg(target_os = "windows")]
+    let shots = {
+        let mut pids = crate::local_screenshot::job_process_ids(running.job.0);
+        if let Ok(child) = running.child.lock() {
+            pids.push(child.id());
+        }
+        crate::local_screenshot::capture_windows_of(&pids)
+    };
+    #[cfg(not(target_os = "windows"))]
+    let shots = Vec::new();
+    terminate_running(running);
+    shots
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_command_blocking(
     state: LocalExecutionState,
@@ -395,6 +416,7 @@ fn run_command_blocking(
     args: Vec<String>,
     cwd: String,
     timeout_seconds: u64,
+    look_after_seconds: Option<u64>,
 ) -> Result<LocalCommandReceipt, String> {
     let (working_directory, display_cwd) = safe_cwd(&root, &cwd)?;
     let venv = project_venv_program(&root, &display_program)?;
@@ -456,6 +478,8 @@ fn run_command_blocking(
     let stderr_thread = std::thread::spawn(move || capture_stream(stderr));
     let started = Instant::now();
     let mut timed_out = false;
+    let mut looked = false;
+    let mut screenshots = Vec::new();
     let status = loop {
         let current = running
             .child
@@ -465,6 +489,19 @@ fn run_command_blocking(
             .map_err(|err| format!("Stato comando locale non leggibile: {err}"))?;
         if let Some(status) = current {
             break status;
+        }
+        if let Some(look) = look_after_seconds {
+            if !looked && started.elapsed() >= Duration::from_secs(look) {
+                looked = true;
+                screenshots = look_and_stop(&running);
+                let status = running
+                    .child
+                    .lock()
+                    .map_err(|_| "Processo locale non disponibile")?
+                    .wait()
+                    .map_err(|err| format!("Chiusura del programma fallita: {err}"))?;
+                break status;
+            }
         }
         if started.elapsed() >= Duration::from_secs(timeout_seconds) {
             timed_out = true;
@@ -514,6 +551,8 @@ fn run_command_blocking(
         stdout_sha256: stdout.sha256,
         stderr_sha256: stderr.sha256,
         output_truncated: stdout.truncated || stderr.truncated,
+        looked,
+        screenshots,
     })
 }
 
@@ -528,13 +567,16 @@ pub async fn run_local_workspace_command(
     args: Vec<String>,
     cwd: Option<String>,
     timeout_seconds: Option<u64>,
+    look_after_seconds: Option<u64>,
 ) -> Result<LocalCommandReceipt, String> {
     authorize_local_ui(&window)?;
     Uuid::parse_str(&command_id).map_err(|_| "command_id locale non valido".to_string())?;
     let root = direct_workspace_root(&bridge_id)?;
+    let look = look_after_seconds.map(|seconds| seconds.clamp(1, MAX_LOOK_SECONDS));
     let timeout = timeout_seconds
         .unwrap_or(180)
-        .clamp(MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS);
+        .clamp(MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
+        .max(look.map(|seconds| seconds + 5).unwrap_or(0));
     let execution_state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         run_command_blocking(
@@ -545,6 +587,7 @@ pub async fn run_local_workspace_command(
             args,
             cwd.unwrap_or_default(),
             timeout,
+            look,
         )
     })
     .await
@@ -640,6 +683,43 @@ mod tests {
         // il codice inline resta vietato anche col Python del progetto
         assert!(validate_args(&kind, &["-c".into(), "print(1)".into()]).is_err());
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn look_mode_stops_the_program_after_the_wait_instead_of_the_timeout() {
+        let root = std::env::temp_dir().join(format!("devin-look-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("app.js"), "console.log('aperta'); setTimeout(() => {}, 60000);\n").unwrap();
+        let started = Instant::now();
+        let receipt = run_command_blocking(
+            LocalExecutionState::default(),
+            root.clone(),
+            Uuid::new_v4().to_string(),
+            "node".to_string(),
+            vec!["app.js".to_string()],
+            String::new(),
+            120,
+            Some(2),
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(20), "chiuso dopo l'attesa, non al timeout");
+        assert!(receipt.looked && !receipt.timed_out);
+        assert!(receipt.stdout.contains("aperta"), "l'output fino a quel momento resta");
+        #[cfg(not(target_os = "windows"))]
+        assert!(receipt.screenshots.is_empty());
+        let normal = run_command_blocking(
+            LocalExecutionState::default(),
+            root.clone(),
+            Uuid::new_v4().to_string(),
+            "node".to_string(),
+            vec!["--version".to_string()],
+            String::new(),
+            60,
+            None,
+        )
+        .unwrap();
+        assert!(!normal.looked && normal.success);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

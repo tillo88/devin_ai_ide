@@ -925,7 +925,16 @@ async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
             return {"error": "sessione dell'agente locale scaduta o sconosciuta: riscrivi la richiesta"}
         if not sessione.in_attesa:
             return {"error": "nessuno strumento in attesa in questa sessione"}
-        agente_locale.accetta_risultati(sessione, list(req.results or []))
+        risultati = list(req.results or [])
+        vede = False
+        if any(isinstance(r, dict) and r.get("immagini") for r in risultati):
+            controllo = getattr(_get_ai_client(), "vede_immagini", None)
+            if controllo is not None:
+                try:
+                    vede, _motivo = await asyncio.to_thread(controllo, "reasoning")
+                except Exception:                     # noqa: BLE001 - nel dubbio niente immagini, lo si dice
+                    vede = False
+        agente_locale.accetta_risultati(sessione, risultati, vede=vede)
         verdetto = sessione.sorvegliante.fine_giro()
     else:
         task = req.task.strip()

@@ -159,6 +159,34 @@ prova("le modifiche applicate restano annullabili anche se il ciclo si interromp
   assert.deepEqual(log.mostrate, [[{ run_id: "r9", descrizione: "fix" }]]);
 });
 
+prova("guarda_programma: avvia, aspetta, fotografa e passa le foto come immagini", async () => {
+  const { f, log } = ambiente({ desktop: {
+    run_local_workspace_command: { exit_code: 1, duration_ms: 5200, looked: true, stdout: "avvio", stderr: "",
+      screenshots: [{ title: "SpyEngine", width: 800, height: 600, png_base64: "iVBORw0KGgo=" }] } } });
+  const ctx = { esecuzioni: [], piani: [] };
+  const r = await f.eseguiStrumentoLocale({ name: "guarda_programma",
+    arguments: { programma: "python", argomenti: ["app.py"], aspetta_secondi: 999 } }, WS, ctx);
+  assert.equal(log.invoke[0][1].lookAfterSeconds, 60, "al massimo 60 secondi");
+  assert.deepEqual(log.invoke[0][1].args, ["app.py"]);
+  assert.match(r.testo, /^1 finestra\/e fotografate, poi chiuso/);
+  assert.match(r.testo, /finestra «SpyEngine» 800x600/);
+  assert.deepEqual(r.immagini, [{ url: "data:image/png;base64,iVBORw0KGgo=", titolo: "SpyEngine" }]);
+});
+
+prova("le foto delle finestre tornano al rig insieme al risultato", async () => {
+  const { f, log } = ambiente({
+    desktop: { run_local_workspace_command: { exit_code: 0, duration_ms: 10, looked: false, stdout: "", stderr: "", screenshots: [] } },
+    passi: [
+      [["sessione", { session_id: "s1" }], ["strumenti", { session_id: "s1", chiamate: [{ id: "g0", name: "guarda_programma", arguments: { programma: "node" } }] }]],
+      [["sessione", { session_id: "s1" }], ["", { token: "ok" }], ["done", {}]],
+    ] });
+  await f.runLocalWorkspaceAgent("prova l'app", WS, { textContent: "" }, null);
+  const [risultato] = log.richieste[1].corpo.results;
+  assert.equal(risultato.id, "g0");
+  assert.match(risultato.content, /finito prima della foto/);
+  assert.deepEqual(risultato.immagini, []);
+});
+
 prova("il ciclo: compito, strumenti al PC, risultati con la sessione, risposta", async () => {
   const { f, log } = ambiente({
     desktop: { local_workspace_search: { query: "run", scanned_files: 3, truncated: false, matches: [] } },

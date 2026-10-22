@@ -22,6 +22,7 @@ use tauri::Manager;
 mod desktop_transport;
 mod desktop_update;
 mod local_execution;
+mod local_screenshot;
 mod local_workspace;
 use desktop_transport::{desktop_http_cancel, desktop_http_stream, DesktopTransportState};
 use desktop_update::{desktop_update_check, desktop_update_open};

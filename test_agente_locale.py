@@ -235,3 +235,34 @@ def test_file_nuovo_con_sha_vuoto_e_etichetta(ambiente):
     assert any("Propongo 1 modifica" in e["message"] for e in _eventi(sse, "info"))
     assert agente_locale.etichetta("proponi_modifiche", {"path": "a.py", "operation": "write", "summary": "x"}) \
         == "📝 Propongo: write a.py — x"
+
+
+PNG_1X1 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/eL9GtQAAAABJRU5ErkJggg==")
+
+
+def test_le_foto_delle_finestre_arrivano_al_modello_se_vede(ambiente):
+    progetto, con = ambiente
+    ai = con(AIFinta([[_chiamata(0, "guarda_programma", programma="python", argomenti=["app.py"])], "si apre"]))
+    ai.vede_immagini = lambda mode="reasoning": (True, "proiettore")
+    s = _eventi(_passo(progetto, task="prova l'app"), "sessione")[0]["session_id"]
+    _passo(progetto, session_id=s, results=[{"id": "c0", "content": "1 finestra/e fotografate", "immagini": [
+        {"url": "data:image/png;base64," + PNG_1X1, "titolo": "SpyEngine"},
+        {"url": "data:image/jpeg;base64,/9j/", "titolo": "non png"},
+        {"url": "data:image/png;base64,bm9uIHBuZw==", "titolo": "finto"}]}])
+    ultimo = ai.visti[1][-1]
+    assert ultimo["role"] == "user" and isinstance(ultimo["content"], list)
+    immagini = [p for p in ultimo["content"] if p.get("type") == "image_url"]
+    assert len(immagini) == 1, "solo PNG veri"
+    assert "SpyEngine" in ultimo["content"][-1]["text"]
+    assert "le vedi nel prossimo messaggio" in ai.visti[1][-2]["content"]
+
+
+def test_senza_visione_le_foto_non_partono_e_lo_si_dice(ambiente):
+    progetto, con = ambiente
+    ai = con(AIFinta([[_chiamata(0, "guarda_programma", programma="python")], "ok"]))
+    ai.vede_immagini = lambda mode="reasoning": (False, "niente proiettore")
+    s = _eventi(_passo(progetto, task="prova"), "sessione")[0]["session_id"]
+    _passo(progetto, session_id=s, results=[{"id": "c0", "content": "1 finestra/e fotografate",
+                                             "immagini": [{"url": "data:image/png;base64," + PNG_1X1}]}])
+    assert ai.visti[1][-1]["role"] == "tool"
+    assert "non vede le immagini" in ai.visti[1][-1]["content"]
