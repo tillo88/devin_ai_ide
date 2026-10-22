@@ -27,8 +27,10 @@ ripristina) e Richieste (approva, rifiuta). Archivio JSONL in
 Il deploy (`git pull` in `/opt`) non riavviava il backend: il 21/10 #95-#97 sono
 rimasti fermi per ore e DEVIN ha ripetuto un errore gia' corretto. Ora il
 backend controlla ogni minuto il commit della cartella e, quando DEVIN e'
-libero, esce con 75 e systemd lo riavvia (`devin/core/riavvio_codice.py`; solo
-sotto systemd, `DEVIN_RIAVVIO_AUTOMATICO=0` lo spegne).
+libero, si rilancia nello stesso processo col codice nuovo
+(`devin/core/riavvio_codice.py`; solo sotto systemd, `DEVIN_RIAVVIO_AUTOMATICO=0`
+lo spegne). Uscire con 75 (prima versione) faceva chiudere la sessione e
+spegnere il modello: visto il 22/10 alle 08:54.
 
 ## Aggiornamento 22/10: DEVIN applica da solo, con backup e Annulla
 

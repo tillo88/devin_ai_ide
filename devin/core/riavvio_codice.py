@@ -8,9 +8,16 @@ ripetuto lo stesso errore gia' corretto finche' il sorvegliante l'ha fermato.
 Ogni ``CONTROLLO_OGNI`` secondi si confronta il commit della cartella con
 quello dell'avvio. Se e' cambiato e DEVIN e' libero (nessuna risposta in
 corso, nessun run, nessuna sessione dell'agente locale usata negli ultimi
-``SESSIONE_INATTIVA`` secondi) il backend esce con ``CODICE_RIAVVIO``:
-l'unita' systemd ha ``Restart=on-failure`` e lo riavvia col codice nuovo. Se
-DEVIN sta lavorando aspetta e lo scrive nel journal.
+``SESSIONE_INATTIVA`` secondi) il backend chiude il server con garbo e si
+rilancia **nello stesso processo** (``os.execv``) col codice nuovo. Se DEVIN
+sta lavorando aspetta e lo scrive nel journal.
+
+Perche' nello stesso processo (22/10). La prima versione usciva con 75 e
+lasciava il riavvio a systemd: funzionava, ma la sessione DEVIN controlla
+ogni 2 secondi che il backend sia attivo, lo vedeva fermo, si chiudeva e
+spegneva anche il modello. Il riavvio diventava un giro completo di sessione
+(modello ricaricato, cache del prefisso persa). Con ``execv`` l'unita' resta
+attiva con lo stesso PID: si ricarica solo il backend.
 
 Attivo solo sotto systemd (``INVOCATION_ID``): altrove (Windows, test)
 nessuno lo riavvierebbe. ``DEVIN_RIAVVIO_AUTOMATICO=0`` lo spegne.
@@ -36,6 +43,26 @@ _richiesto = threading.Event()
 def codice_uscita() -> int:
     """Con cosa deve uscire il processo: 75 se il riavvio l'ha chiesto il codice nuovo."""
     return CODICE_RIAVVIO if _richiesto.is_set() else 0
+
+
+def chiudi_o_rilancia(esci: Callable[[int], None] = os._exit,
+                      rilancia: Optional[Callable[[str, list], None]] = None) -> None:
+    """Fine del server: col codice nuovo si rilancia nello stesso processo, se no esce.
+
+    Se il rilancio fallisce si esce con 75 e ci pensa systemd (Restart=on-failure).
+    """
+    import sys
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if not _richiesto.is_set():
+        esci(0)
+        return
+    try:
+        (rilancia or os.execv)(sys.executable, [sys.executable, *sys.argv])
+    except OSError as exc:
+        print(f"[Riavvio] rilancio non riuscito ({exc}): esco con {CODICE_RIAVVIO}", flush=True)
+    esci(CODICE_RIAVVIO)
 
 
 def commit_corrente(radice: Path = RADICE) -> Optional[str]:
@@ -88,10 +115,10 @@ def sorveglia(iniziale: str, esci: Callable[[], None], dormi: Callable[[float], 
         motivo = perche_occupato() if attuale and attuale != iniziale else ""
         decisione = controlla(iniziale, attuale, motivo)
         if decisione == "aspetto" and motivo != ultimo_avviso:
-            print(f"[Riavvio] codice nuovo {iniziale[:12]} -> {attuale[:12]}: aspetto, {motivo}")
+            print(f"[Riavvio] codice nuovo {iniziale[:12]} -> {attuale[:12]}: aspetto, {motivo}", flush=True)
             ultimo_avviso = motivo
         elif decisione == "riavvio":
-            print(f"[Riavvio] codice nuovo {iniziale[:12]} -> {attuale[:12]}: DEVIN e' libero, mi riavvio")
+            print(f"[Riavvio] codice nuovo {iniziale[:12]} -> {attuale[:12]}: DEVIN e' libero, mi riavvio", flush=True)
             _richiesto.set()
             esci()
             return
@@ -105,8 +132,9 @@ def avvia() -> bool:
     if not iniziale:
         print("[Riavvio] commit iniziale non leggibile: riavvio automatico spento")
         return False
-    print(f"[Riavvio] codice {iniziale[:12]}: mi riavvio da solo quando ne arriva di nuovo e DEVIN e' libero")
-    # SIGTERM a se stessi: uvicorn chiude con garbo, poi run_server esce con codice_uscita()
+    print(f"[Riavvio] codice {iniziale[:12]}: mi riavvio da solo quando ne arriva di nuovo e DEVIN e' libero",
+          flush=True)
+    # SIGTERM a se stessi: uvicorn chiude con garbo, poi run_server chiama chiudi_o_rilancia()
     threading.Thread(target=sorveglia, args=(iniziale, lambda: os.kill(os.getpid(), signal.SIGTERM)),
                      daemon=True, name="riavvio-codice").start()
     return True

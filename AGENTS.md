@@ -52,8 +52,10 @@ on a stale copy is not a defect of the system.
 Deploy is a `git pull --ff-only` in `/opt` run as `tillo` (`devin-frontend-refresh-v1`).
 Since 2026-10-22 the backend restarts itself on new code: every minute it compares
 the checkout's commit with the one it started on and, when DEVIN is idle (no reply
-streaming, no run, no local-agent session used in the last 15 minutes), exits with
-75 so systemd (`Restart=on-failure`) starts it again on the new code. While DEVIN
+streaming, no run, no local-agent session used in the last 15 minutes), shuts the
+server down gracefully and re-executes itself in the same process (`os.execv`) on
+the new code. Exiting instead (the first version, exit 75 + `Restart=on-failure`)
+made the DEVIN session see the backend down and stop the model too. While DEVIN
 works it waits and says so in the journal (`[Riavvio] ... aspetto`). Code:
 `devin/core/riavvio_codice.py`. Before that, new code waited for the next activation
 of the model slot: on 2026-10-21 three fixes sat unused for hours.

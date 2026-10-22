@@ -1027,10 +1027,10 @@ def run_server():
         pass
     finally:
         from devin.core import riavvio_codice
-        codice = riavvio_codice.codice_uscita()
+        nuovo = bool(riavvio_codice.codice_uscita())
         print("\n[SHUTDOWN] Chiusura forzata (i modelli locali/rig restano attivi in background)..."
-              + (f" Esco con {codice}: systemd mi riavvia col codice nuovo." if codice else ""))
-        os._exit(codice)
+              + (" Mi rilancio col codice nuovo nello stesso processo." if nuovo else ""), flush=True)
+        riavvio_codice.chiudi_o_rilancia()
 
 
 if __name__ == "__main__":
