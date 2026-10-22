@@ -150,7 +150,28 @@ async def api_workspace_projects():
             "has_instructions": bool(ps.get_instructions()),
             "linked": True,
         })
+    _titoli(projects)
     return {"projects": projects, "workspace": str(WORKSPACE_DIR)}
+
+
+def _titoli(projects: list) -> None:
+    """Il nome da mostrare (22/10).
+
+    Una cartella del PC collegata diventa un progetto sul rig; se c'era gia' un
+    progetto con lo stesso nome la cartella del rig prende un suffisso
+    ("spyengine-1e0dd3e5") e l'app mostrava quello. Si mostra il nome della
+    cartella del PC; solo se un altro progetto si chiama uguale, con "(PC)".
+    """
+    for progetto in projects:
+        locale = progetto.get("local_workspace") or {}
+        progetto["title"] = locale.get("display_name") or progetto["name"]
+    conteggio: dict = {}
+    for progetto in projects:
+        chiave = progetto["title"].lower()
+        conteggio[chiave] = conteggio.get(chiave, 0) + 1
+    for progetto in projects:
+        if conteggio[progetto["title"].lower()] > 1 and progetto.get("local_workspace"):
+            progetto["title"] = f"{progetto['title']} (PC)"
 
 
 @router.post("/api/workspace/projects/new")
