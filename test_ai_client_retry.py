@@ -295,6 +295,21 @@ class TestStreamRetry:
         with patch("devin.ai.client.requests.post", return_value=_stream_response(lines=lines)), \
              patch("devin.ai.client.time.sleep"):
             out = list(client.stream(MESSAGES))
+        # senza reasoning_content il testo e' pensiero provvisorio finche' non
+        # si sa (22/10): arriva intero alla fine dello stream
+        assert "".join(out) == "Hello world"
+
+    def test_stream_yields_tokens_one_by_one_after_separated_reasoning(self):
+        client = _make_client()
+        lines = [
+            b'data: {"choices": [{"delta": {"reasoning_content": "penso"}}]}',
+            b'data: {"choices": [{"delta": {"content": "Hello"}}]}',
+            b'data: {"choices": [{"delta": {"content": " world"}}]}',
+            b'data: [DONE]',
+        ]
+        with patch("devin.ai.client.requests.post", return_value=_stream_response(lines=lines)), \
+             patch("devin.ai.client.time.sleep"):
+            out = list(client.stream(MESSAGES))
         assert out == ["Hello", " world"]
 
     def test_stream_forwards_json_response_format_without_retry(self):
