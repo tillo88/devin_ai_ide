@@ -93,13 +93,35 @@ di Claude con il computer:
 - **solo le finestre dei processi del job** del programma, mai il resto dello
   schermo; prima di ogni azione la finestra va in primo piano e si controlla che
   lo sia, se no l'azione non parte;
-- **striscia in alto** mentre DEVIN usa l'app, con **Ferma** che chiude i
-  programmi; a fine ciclo (anche interrotto) i programmi aperti si chiudono;
+- **striscia in alto** e **finestrella** mentre DEVIN usa l'app, con **Ferma**
+  che chiude i programmi; a fine ciclo (anche interrotto) i programmi aperti si
+  chiudono;
 - mouse e tastiera sono quelli veri (SendInput); coordinate in pixel della foto,
   tradotte sullo schermo con la posizione della finestra;
 - vietati il tasto Windows, Ctrl+Alt+Canc, Alt+F4; al piu' 20 azioni per volta,
   testo fino a 2000 caratteri, attese fino a 10 s; al piu' 3 programmi aperti,
   chiusi da soli dopo 10 minuti senza azioni.
+
+### La finestrella sempre in primo piano
+
+Al primo uso dal vivo DEVIN e' rimasto fermo due minuti: la domanda di permesso
+era nella finestra di DEVIN, finita sotto il programma appena aperto. Ora, appena
+DEVIN apre un programma, compare in un angolo una finestrella (`devin-float`,
+`static/float.html`) sopra tutte le altre, senza barra e senza prendere il focus:
+
+- dice quale programma sta usando e cosa sta facendo («clic in (40, 60) · scrivo
+  «ram»», poi «fatto: …» o «non riuscito: …») e mostra l'ultima foto;
+- **porta la domanda di permesso** (Consenti / No): vale la prima risposta, fra
+  finestrella e finestra principale, e l'altra si chiude;
+- **Ferma** chiude i programmi e DEVIN non ne riapre altri in quel compito; se
+  DEVIN sta agendo, il programma si chiude appena finisce l'azione in corso;
+- si trascina dalla testata e sparisce quando non ci sono piu' programmi aperti.
+
+La finestrella ha una capability sua con i soli eventi (riceve lo stato,
+rimanda Consenti/No/Ferma): nessun comando dell'app. Prima di ogni clic si
+controlla che nel punto ci sia davvero una finestra del programma
+(`WindowFromPoint`): se c'e' la finestrella la si sposta in un altro angolo, se
+c'e' un'altra finestra il clic non parte e DEVIN lo sa.
 
 ## Esecuzione locale
 

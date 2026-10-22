@@ -245,7 +245,7 @@ function promptModal(message, { placeholder = "", value = "", okLabel = "OK" } =
   });
 }
 
-function confirmModal(message, { okLabel = "Conferma", danger = false } = {}) {
+function confirmModal(message, { okLabel = "Conferma", danger = false, chiudiCon = null } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "app-modal-overlay";
@@ -261,6 +261,8 @@ function confirmModal(message, { okLabel = "Conferma", danger = false } = {}) {
     overlay.querySelector(".app-modal-ok").textContent = okLabel;
     document.body.appendChild(overlay);
     const close = (confirmed) => { overlay.remove(); resolve(confirmed); };
+    // risposta data altrove (la finestrella di DEVIN): il modale si chiude da solo
+    chiudiCon?.then((valore) => { if (overlay.isConnected) close(Boolean(valore)); });
     overlay.querySelector(".app-modal-ok").addEventListener("click", () => close(true));
     overlay.querySelector(".app-modal-cancel").addEventListener("click", () => close(false));
     overlay.addEventListener("mousedown", (event) => { if (event.target === overlay) close(false); });
@@ -3805,7 +3807,7 @@ function bannerProgramma(ctx) {
     ferma.type = "button";
     ferma.className = "tiny-button";
     ferma.textContent = "Ferma";
-    ferma.addEventListener("click", () => { void chiudiProgrammi(ctx); });
+    ferma.addEventListener("click", () => { void fermaProgrammi(ctx); });
     banner.append(testo, ferma);
     document.body.append(banner);
   }
@@ -3820,6 +3822,116 @@ async function chiudiProgrammi(ctx) {
     ctx.programmi.delete(id);
   }
   bannerProgramma(ctx);
+  await aggiornaFloat(ctx);
+}
+
+// Ferma (striscia o finestrella): chiude i programmi e DEVIN non ne riapre
+// altri in questo compito; le domande di permesso in sospeso valgono "no".
+async function fermaProgrammi(ctx) {
+  ctx.fermato = true;
+  for (const risolvi of floatStato.attese.values()) risolvi(false);
+  floatStato.attese.clear();
+  await chiudiProgrammi(ctx);
+}
+
+// La finestrella sempre in primo piano (22/10), come quella di Claude: al primo
+// uso dal vivo la richiesta di permesso era nella finestra di DEVIN, finita
+// sotto il programma aperto, e DEVIN e' rimasto fermo due minuti. La
+// finestrella sta in un angolo sopra tutto senza prendere il focus: cosa sta
+// facendo DEVIN, l'ultima foto, la domanda di permesso e Ferma. Le parla la
+// finestra principale con gli eventi di Tauri; fuori dall'app desktop non c'e'.
+const FLOAT_EVENTO = "devin-float";
+const FLOAT_RISPOSTA = "devin-float-risposta";
+const floatStato = { mostrata: false, ultimo: null, attese: new Map(), ctx: null, ascolto: null };
+
+function floatEventi() {
+  return globalThis.window?.__TAURI__?.event || null;
+}
+
+function gestisciRispostaFloat(dati) {
+  const risposta = dati?.risposta;
+  if (risposta === "pronta") {
+    // la finestrella si e' appena caricata: le si rimanda lo stato attuale
+    if (floatStato.ultimo) void floatEventi()?.emitTo("devin-float", FLOAT_EVENTO, floatStato.ultimo).catch(() => {});
+    return;
+  }
+  if (risposta === "ferma") {
+    if (floatStato.ctx) void fermaProgrammi(floatStato.ctx);
+    return;
+  }
+  if (risposta !== "consenti" && risposta !== "no") return;
+  const risolvi = floatStato.attese.get(String(dati?.id || ""));
+  if (!risolvi) return;
+  floatStato.attese.delete(String(dati.id));
+  risolvi(risposta === "consenti");
+}
+
+async function aggiornaFloat(ctx, extra = {}) {
+  const eventi = floatEventi();
+  if (!eventi) return;
+  floatStato.ctx = ctx;
+  const programmi = [...(ctx.programmi?.values() || [])];
+  if (!programmi.length) {
+    floatStato.ultimo = null;
+    if (floatStato.mostrata) {
+      floatStato.mostrata = false;
+      try { await desktopInvoke("hide_program_float", {}); } catch { /* app in chiusura */ }
+    }
+    return;
+  }
+  const prima = floatStato.ultimo || {};
+  const stato = {
+    programmi: programmi.map((p) => ({ titolo: p.titolo, consentito: Boolean(p.consentito) })),
+    azione: extra.azione ?? prima.azione ?? "",
+    foto: extra.foto ?? prima.foto ?? null,
+    domanda: extra.domanda ?? null,
+  };
+  floatStato.ultimo = stato;
+  floatStato.ascolto ||= eventi.listen(FLOAT_RISPOSTA, (evento) => gestisciRispostaFloat(evento?.payload))
+    .catch(() => { floatStato.ascolto = null; });
+  if (!floatStato.mostrata) {
+    try {
+      await desktopInvoke("show_program_float", {});
+      floatStato.mostrata = true;
+    } catch {
+      return;
+    }
+  }
+  try { await eventi.emitTo("devin-float", FLOAT_EVENTO, stato); } catch { /* si ridisegna a "pronta" */ }
+}
+
+function fotoFloat(ricevuta) {
+  return ricevuta?.screenshot?.png_base64 ? `data:image/png;base64,${ricevuta.screenshot.png_base64}` : null;
+}
+
+function descriviAzioni(azioni) {
+  return (Array.isArray(azioni) ? azioni : []).map((a) => {
+    if (a?.tipo === "clic") return `${a.doppio ? "doppio " : ""}clic${a.pulsante === "destro" ? " destro" : ""} in (${a.x}, ${a.y})`;
+    if (a?.tipo === "scrivi") {
+      const testo = String(a.testo || "");
+      return `scrivo «${testo.length > 40 ? `${testo.slice(0, 40)}…` : testo}»`;
+    }
+    if (a?.tipo === "tasti") return `tasti ${a.tasti}`;
+    if (a?.tipo === "scorri") return `scorro di ${a.quanto}`;
+    if (a?.tipo === "aspetta") return `aspetto ${a.ms} ms`;
+    return String(a?.tipo || "?");
+  }).join(" · ");
+}
+
+// Il permesso per un'app si chiede nella finestra principale E nella
+// finestrella: vale la prima risposta, l'altra si chiude.
+async function chiediConsensoProgramma(ctx, programma) {
+  const id = localUuid();
+  const testo = `DEVIN vuole usare «${programma.titolo}» con il mouse e la tastiera del PC (clic, testo, tasti), `
+    + "solo sulle finestre di quel programma. Mentre lo fa non toccare mouse e tastiera; "
+    + "puoi fermarlo con «Ferma». Consenti?";
+  const daFloat = new Promise((risolvi) => floatStato.attese.set(id, risolvi));
+  void aggiornaFloat(ctx, { azione: "aspetta il tuo permesso", domanda: { id, testo } });
+  try {
+    return await confirmModal(testo, { okLabel: "Consenti", chiudiCon: daFloat });
+  } finally {
+    floatStato.attese.delete(id);
+  }
 }
 
 function esitoProgramma(ricevuta, intestazione) {
@@ -3888,6 +4000,10 @@ async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
         + `--- stderr ---\n${localAgentBoundedText(ricevuta.stderr || "", 8000)}`;
     }
     if (chiamata.name === "apri_programma") {
+      if (ctx.fermato) {
+        return "Alessandro ha premuto Ferma: in questo compito non aprire altri programmi. "
+          + "Spiega cosa hai visto finora e cosa avresti voluto provare.";
+      }
       const programId = localUuid();
       const ricevuta = await desktopInvoke("start_local_program", {
         bridgeId: workspace.bridge_id,
@@ -3898,9 +4014,9 @@ async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
         waitSeconds: Math.min(60, Math.max(1, Number(a.aspetta_secondi) || 5)),
       });
       if (ricevuta.running) {
-        (ctx.programmi ||= new Map()).set(programId, {
-          titolo: ricevuta.screenshot?.title || String(a.programma || "programma"), consentito: false,
-        });
+        const titolo = ricevuta.screenshot?.title || String(a.programma || "programma");
+        (ctx.programmi ||= new Map()).set(programId, { titolo, consentito: false });
+        await aggiornaFloat(ctx, { azione: `ha aperto «${titolo}»`, foto: fotoFloat(ricevuta) });
       }
       return esitoProgramma(ricevuta, ricevuta.running
         ? `programma aperto · id ${programId}`
@@ -3910,37 +4026,41 @@ async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
       const programId = String(a.id || "");
       const programma = ctx.programmi?.get(programId);
       if (!programma) {
+        if (ctx.fermato) return "Alessandro ha premuto Ferma e i programmi sono stati chiusi: non riaprirli.";
         return `ERRORE: nessun programma aperto con id ${programId || "(vuoto)"}; aprilo con apri_programma`;
       }
       if (chiamata.name === "chiudi_programma") {
         const ricevuta = await desktopInvoke("stop_local_program", { programId });
         ctx.programmi.delete(programId);
         bannerProgramma(ctx);
+        await aggiornaFloat(ctx, { azione: `ha chiuso «${programma.titolo}»` });
         return esitoProgramma(ricevuta, "programma chiuso").testo;
       }
       if (!programma.consentito) {
         // come Claude: il permesso di usare mouse e tastiera lo da' Alessandro, per quell'app
-        programma.consentito = await confirmModal(
-          `DEVIN vuole usare «${programma.titolo}» con il mouse e la tastiera del PC (clic, testo, tasti), `
-            + "solo sulle finestre di quel programma. Mentre lo fa non toccare mouse e tastiera; "
-            + "puoi fermarlo con «Ferma» nella striscia in alto. Consenti?",
-          { okLabel: "Consenti" },
-        );
+        programma.consentito = await chiediConsensoProgramma(ctx, programma);
         if (!programma.consentito) {
+          await aggiornaFloat(ctx, { azione: "permesso negato: guarda soltanto" });
           return "Alessandro NON ha dato il permesso di usare questo programma con mouse e tastiera: "
             + "non usarlo, guardalo soltanto o chiudilo.";
         }
         bannerProgramma(ctx);
       }
+      const azioni = Array.isArray(a.azioni) ? a.azioni : [];
+      await aggiornaFloat(ctx, { azione: descriviAzioni(azioni) });
       const ricevuta = await desktopInvoke("act_local_program", {
         programId,
-        actions: Array.isArray(a.azioni) ? a.azioni : [],
+        actions: azioni,
         waitMs: Math.min(10000, Math.max(0, Number(a.aspetta_ms ?? 500) || 0)),
       });
       if (!ricevuta.running) {
         ctx.programmi.delete(programId);
         bannerProgramma(ctx);
       }
+      await aggiornaFloat(ctx, {
+        azione: ricevuta.error ? `non riuscito: ${ricevuta.error}` : `fatto: ${(ricevuta.done || []).join(" · ") || "niente"}`,
+        foto: fotoFloat(ricevuta),
+      });
       return esitoProgramma(ricevuta, ricevuta.running ? "azioni eseguite" : "il programma si e' chiuso");
     }
     if (chiamata.name === "guarda_programma") {

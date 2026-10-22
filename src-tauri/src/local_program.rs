@@ -57,6 +57,40 @@ struct ProgramSession {
 #[derive(Clone, Default)]
 pub struct LocalProgramState {
     programs: Arc<Mutex<HashMap<String, ProgramSession>>>,
+    /// programmi con azioni in corso -> Ferma premuto mentre agivano
+    busy: Arc<Mutex<HashMap<String, bool>>>,
+}
+
+impl LocalProgramState {
+    fn mark_busy(&self, id: &str) {
+        if let Ok(mut busy) = self.busy.lock() {
+            busy.insert(id.to_string(), false);
+        }
+    }
+
+    /// Ferma premuto per un programma che sta agendo? (senza togliere il segno)
+    fn stop_requested(&self, id: &str) -> bool {
+        self.busy.lock().map(|busy| busy.get(id).copied().unwrap_or(false)).unwrap_or(false)
+    }
+
+    /// Fine delle azioni: ritorna true se nel frattempo e' stato premuto Ferma.
+    fn end_busy(&self, id: &str) -> bool {
+        self.busy.lock().ok().and_then(|mut busy| busy.remove(id)).unwrap_or(false)
+    }
+
+    /// Ferma su un programma che sta agendo: si chiudera' appena finisce l'azione.
+    fn request_stop(&self, id: &str) -> bool {
+        match self.busy.lock() {
+            Ok(mut busy) => match busy.get_mut(id) {
+                Some(flag) => {
+                    *flag = true;
+                    true
+                }
+                None => false,
+            },
+            Err(_) => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -279,6 +313,42 @@ fn bring_to_front(hwnd: isize) -> bool {
     }
 }
 
+/// Il punto dello schermo deve essere davvero del programma: se sopra c'e' la
+/// finestrella di DEVIN la si sposta, se c'e' un'altra finestra il clic non parte.
+#[cfg(target_os = "windows")]
+fn uncovered(sx: i32, sy: i32, pids: &[u32]) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT};
+    for attempt in 0..2 {
+        let (root, pid) = unsafe {
+            let at = WindowFromPoint(POINT { x: sx, y: sy });
+            let root = GetAncestor(at, GA_ROOT) as isize;
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(root as _, &mut pid);
+            (root, pid)
+        };
+        if pids.contains(&pid) {
+            return Ok(());
+        }
+        if attempt == 0 && root != 0 && root == crate::local_float::float_hwnd()
+            && crate::local_float::move_away_from(sx, sy)
+        {
+            continue;
+        }
+        let title = unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowTextW;
+            let mut buffer = [0u16; 256];
+            let length = GetWindowTextW(root as _, buffer.as_mut_ptr(), buffer.len() as i32);
+            String::from_utf16_lossy(&buffer[..length.max(0) as usize])
+        };
+        return Err(format!(
+            "il punto e' coperto da un'altra finestra («{}»): azione non eseguita, guarda di nuovo il programma",
+            if title.is_empty() { "senza titolo" } else { &title }
+        ));
+    }
+    Err("il punto e' coperto da un'altra finestra: azione non eseguita".to_string())
+}
+
 #[cfg(target_os = "windows")]
 fn send(inputs: &[windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT]) -> Result<(), String> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT};
@@ -329,6 +399,7 @@ fn perform(session: &ProgramSession, action: &ProgramAction) -> Result<String, S
         let place = crate::local_screenshot::place_of(hwnd).ok_or("posizione della finestra non leggibile")?;
         let shot = session.last_shot_size.ok_or("nessuna foto della finestra")?;
         let (sx, sy) = shot_to_screen(x, y, shot, place)?;
+        uncovered(sx, sy, &pids)?;
         let (ox, oy, w, h) = unsafe {
             (
                 GetSystemMetrics(SM_XVIRTUALSCREEN),
@@ -531,9 +602,10 @@ fn act_blocking(
         .map_err(|_| "registro programmi non disponibile")?
         .remove(&program_id)
         .ok_or("programma non aperto (o chiuso perche' inutilizzato da 10 minuti)")?;
+    state.mark_busy(&program_id);
     let mut receipt = ProgramReceipt { program_id: program_id.clone(), running: true, ..Default::default() };
     for action in &actions {
-        if exit_code(&session).is_some() {
+        if exit_code(&session).is_some() || state.stop_requested(&program_id) {
             break;
         }
         match perform(&session, action) {
@@ -545,7 +617,16 @@ fn act_blocking(
         }
         std::thread::sleep(Duration::from_millis(120));
     }
-    std::thread::sleep(Duration::from_millis(wait_ms.min(MAX_WAIT_MS)));
+    if !state.stop_requested(&program_id) {
+        std::thread::sleep(Duration::from_millis(wait_ms.min(MAX_WAIT_MS)));
+    }
+    if state.end_busy(&program_id) {
+        let done = std::mem::take(&mut receipt.done);
+        let mut finished = finish(session, program_id);
+        finished.done = done;
+        finished.error = Some("fermato da Alessandro (Ferma): programma chiuso".to_string());
+        return Ok(finished);
+    }
     if exit_code(&session).is_some() {
         let done = std::mem::take(&mut receipt.done);
         let error = receipt.error.take();
@@ -570,9 +651,18 @@ fn stop_blocking(state: LocalProgramState, program_id: String) -> Result<Program
         .programs
         .lock()
         .map_err(|_| "registro programmi non disponibile")?
-        .remove(&program_id)
-        .ok_or("programma non aperto")?;
-    Ok(finish(session, program_id))
+        .remove(&program_id);
+    match session {
+        Some(session) => Ok(finish(session, program_id)),
+        // Ferma mentre il programma sta agendo: lo chiude act_blocking appena finisce l'azione
+        None if state.request_stop(&program_id) => Ok(ProgramReceipt {
+            program_id,
+            running: true,
+            error: Some("chiusura chiesta: si chiude appena finisce l'azione in corso".to_string()),
+            ..Default::default()
+        }),
+        None => Err("programma non aperto".to_string()),
+    }
 }
 
 #[tauri::command]
@@ -714,6 +804,34 @@ mod tests {
         // le stesse regole di esegui
         assert!(start_blocking(state.clone(), root.clone(), Uuid::new_v4().to_string(), "powershell".into(), vec![], String::new(), 1).is_err());
         assert!(start_blocking(state, root.clone(), Uuid::new_v4().to_string(), "python".into(), vec!["-m".into(), "pip".into(), "install".into(), "x".into()], String::new(), 1).is_err());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn ferma_while_acting_closes_the_program_after_the_current_action() {
+        let root = std::env::temp_dir().join(format!("devin-program-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("app.js"), "console.log('pronta'); setTimeout(() => {}, 60000);\n").unwrap();
+        let state = LocalProgramState::default();
+        let id = Uuid::new_v4().to_string();
+        start_blocking(state.clone(), root.clone(), id.clone(), "node".into(), vec!["app.js".into()], String::new(), 1).unwrap();
+        let acting = {
+            let (state, id) = (state.clone(), id.clone());
+            std::thread::spawn(move || {
+                act_blocking(state, id, vec![ProgramAction::Aspetta { ms: 400 }, ProgramAction::Aspetta { ms: 5000 }], 5000)
+            })
+        };
+        std::thread::sleep(Duration::from_millis(150));
+        // Ferma premuto mentre agisce: prima diceva "programma non aperto" e il programma restava li'
+        let asked = stop_blocking(state.clone(), id.clone()).unwrap();
+        assert!(asked.running && asked.error.unwrap().contains("si chiude appena finisce"));
+        let started = Instant::now();
+        let receipt = acting.join().unwrap().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3), "non aspetta le azioni successive");
+        assert!(!receipt.running && receipt.error.unwrap().contains("fermato da Alessandro"));
+        assert_eq!(receipt.done, vec!["aspettato 400 ms".to_string()]);
+        assert!(state.programs.lock().unwrap().is_empty() && state.busy.lock().unwrap().is_empty());
+        assert!(stop_blocking(state, id).is_err(), "chiuso davvero");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
