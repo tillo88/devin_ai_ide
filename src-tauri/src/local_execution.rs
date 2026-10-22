@@ -174,6 +174,32 @@ fn validate_args(program: &str, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// 22/10: con `python -m pip install` DEVIN aveva installato PySide6 nel
+/// Python di sistema, che la policy dichiarava escluso e che nessun ↩ Annulla
+/// riporta indietro. Le installazioni vanno nell'ambiente del progetto: si
+/// crea con `python -m venv .venv` (dentro la cartella) e si installa con il
+/// suo Python, che passa da `project_venv_program`.
+fn reject_system_install(program: &str, args: &[String]) -> Result<(), String> {
+    if !matches!(program, "python" | "python3" | "py") {
+        return Ok(());
+    }
+    let lower: Vec<String> = args.iter().map(|arg| arg.to_ascii_lowercase()).collect();
+    let module = lower
+        .iter()
+        .position(|arg| arg == "-m")
+        .and_then(|index| lower.get(index + 1))
+        .map(String::as_str)
+        .unwrap_or("");
+    if matches!(module, "pip" | "pip3" | "ensurepip" | "uv" | "pipx" | "easy_install") {
+        return Err(
+            "Installare pacchetti nel Python di sistema non e' consentito: crea l'ambiente del \
+             progetto (python -m venv .venv) e installa li' con .venv/Scripts/python.exe -m pip install ..."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn safe_cwd(root: &Path, raw: &str) -> Result<(PathBuf, String), String> {
     let value = raw.trim();
     if value.is_empty() || value == "." {
@@ -425,6 +451,9 @@ fn run_command_blocking(
         None => normalized_program(&display_program)?,
     };
     validate_args(&normalized, &args)?;
+    if venv.is_none() {
+        reject_system_install(&normalized, &args)?;
+    }
     let (program, resolved_args) = match &venv {
         Some((_, path)) => (path.to_string_lossy().into_owned(), args.clone()),
         None => resolved_command(&normalized, &args),
@@ -634,6 +663,58 @@ mod tests {
         assert!(validate_args("python", &["C:\\outside.py".into()]).is_err());
         assert!(validate_args("python", &["../outside.py".into()]).is_err());
         assert!(validate_args("git", &["status".into(), "--short".into()]).is_ok());
+    }
+
+    #[test]
+    fn system_python_cannot_install_packages_but_can_create_the_project_venv() {
+        let args = |list: &[&str]| list.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        for program in ["python", "py", "python3"] {
+            assert!(reject_system_install(program, &args(&["-m", "pip", "install", "PySide6"])).is_err());
+            assert!(reject_system_install(program, &args(&["-3", "-m", "PIP", "install", "x"])).is_err());
+            assert!(reject_system_install(program, &args(&["-m", "ensurepip"])).is_err());
+            assert!(reject_system_install(program, &args(&["-m", "venv", ".venv"])).is_ok());
+            assert!(reject_system_install(program, &args(&["-m", "pytest", "-q"])).is_ok());
+            assert!(reject_system_install(program, &args(&["app.py"])).is_ok());
+        }
+        assert!(reject_system_install("node", &args(&["-m", "pip"])).is_ok());
+    }
+
+    #[test]
+    fn the_project_venv_python_may_install_into_its_own_venv() {
+        let root = std::env::temp_dir().join(format!("devin-venv-pip-{}", Uuid::new_v4()));
+        let scripts = root.join(".venv").join(if cfg!(windows) { "Scripts" } else { "bin" });
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::write(root.join(".venv").join("pyvenv.cfg"), "home = x\n").unwrap();
+        let exe = scripts.join(if cfg!(windows) { "python.exe" } else { "python" });
+        std::fs::write(&exe, "").unwrap();
+        let state = LocalExecutionState::default();
+        let program = if cfg!(windows) { ".venv/Scripts/python.exe" } else { ".venv/bin/python" };
+        let result = run_command_blocking(
+            state,
+            root.clone(),
+            Uuid::new_v4().to_string(),
+            program.to_string(),
+            vec!["-m".into(), "pip".into(), "install".into(), "x".into()],
+            String::new(),
+            5,
+            None,
+        );
+        // il file finto non si avvia, ma l'errore e' di avvio, non della policy
+        if let Err(error) = &result {
+            assert!(!error.contains("Python di sistema"), "{error}");
+        }
+        let blocked = run_command_blocking(
+            LocalExecutionState::default(),
+            root.clone(),
+            Uuid::new_v4().to_string(),
+            "python".to_string(),
+            vec!["-m".into(), "pip".into(), "install".into(), "x".into()],
+            String::new(),
+            5,
+            None,
+        );
+        assert!(blocked.unwrap_err().contains("Python di sistema"));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -71,7 +71,9 @@ STRUMENTI: List[Dict[str, Any]] = [
                         "programma per provarlo. Programmi ammessi: python, py, pytest, node, npm (test/run), "
                         "npx --no-install, cargo (test/check/build/clippy/fmt), git in sola lettura, go, "
                         "dotnet, java, mvn, gradle, ruff, mypy, e il Python dell'ambiente virtuale del progetto "
-                        "(es. .venv/Scripts/python.exe -m pytest). Niente shell, niente codice inline "
+                        "(es. .venv/Scripts/python.exe -m pytest). Le dipendenze si installano solo nell'ambiente "
+                        "del progetto: python -m venv .venv, poi .venv/Scripts/python.exe -m pip install ...; "
+                        "pip nel Python di sistema e' rifiutato. Niente shell, niente codice inline "
                         "(python -c, node -e): scrivi un file. Restituisce exit code, stdout e stderr."),
         "parameters": {"type": "object", "properties": {
             "programma": {"type": "string"},
