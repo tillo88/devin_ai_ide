@@ -167,8 +167,9 @@ await page.route('**/*', async route => {
     }
   } else if (u.pathname === '/api/workspace/projects') {
     data = {projects: [
-      {name: 'Alpha', path: '/projects/alpha'},
-      {name: 'Beta', path: '/projects/beta', work_dir:'', local_workspace:{schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0}},
+      {name: 'alpha', title: 'alpha', path: '/projects/alpha'},
+      // 22/10: la cartella sul rig ha il suffisso, l'app mostra il nome della cartella del PC
+      {name: 'beta-12345678', title: 'Local fixture', path: '/projects/beta', work_dir:'', local_workspace:{schema:'devin_local_workspace_snapshot_v1',mode:'direct',bridge_id:'12345678-1234-4234-9234-123456789abc',display_name:'Local fixture',snapshot_digest:'',files:0,bytes:0}},
     ]};
   } else if (u.pathname === '/api/goal') {
     const project = u.searchParams.get('project_path');
@@ -310,7 +311,9 @@ try {
   assert.equal(await page.locator('#run-list button').count(),0);
   // The cockpit can invoke only the narrow Tauri bridge: JS passes an opaque
   // id/project, never an arbitrary Windows path.
+  assert.equal((await page.locator('[data-project-path="/projects/beta"] strong').textContent()).trim(), 'Local fixture');
   await page.locator('[data-project-path="/projects/beta"]').click();
+  await page.waitForFunction(() => document.querySelector('#active-scope-label').textContent === 'Local fixture');
   await page.waitForFunction(() => document.querySelector('#workdir-set-button').textContent === 'Verifica');
   await page.locator('#workdir-set-button').click();
   await page.waitForFunction(() => window.__bridgeCalls.some(call => call.command === 'sync_local_workspace'));

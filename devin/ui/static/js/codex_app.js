@@ -590,10 +590,15 @@ function formatFileLabel(files) {
   return `${files.length} files · ${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
+// Il nome da mostrare: per una cartella del PC e' il suo nome, non quello
+// della cartella sul rig (che puo' avere un suffisso come "-1e0dd3e5").
+function nomeProgetto(projectPath) {
+  const record = selectedProjectRecord(projectPath);
+  return record?.title || record?.name || String(projectPath || "").split(/[\\/]/).filter(Boolean).at(-1) || "";
+}
+
 function activeProjectLabel() {
-  return state.selectedProjectPath
-    ? state.selectedProjectPath.split(/[\/]/).pop()
-    : "General chat";
+  return state.selectedProjectPath ? nomeProgetto(state.selectedProjectPath) : "General chat";
 }
 
 function truncateText(value, max = 140) {
@@ -1274,7 +1279,7 @@ function syncGoalLaunchState() {
   const projectLabel = $("goal-project-label");
   if (projectLabel) {
     projectLabel.textContent = state.selectedProjectPath
-      ? (state.selectedProjectPath.split(/[\\/]/).filter(Boolean).at(-1) || state.selectedProjectPath)
+      ? (nomeProgetto(state.selectedProjectPath) || state.selectedProjectPath)
       : "Seleziona un progetto";
     projectLabel.title = state.selectedProjectPath || "";
   }
@@ -1913,8 +1918,8 @@ function renderProjects(payload) {
     `,
     ...projects.map((project) => `
       <div class="chat-card-row ${project.path === state.selectedProjectPath ? "active" : ""}">
-        <button class="project-card ${project.path === state.selectedProjectPath ? "active" : ""}" data-project-path="${escapeHtml(project.path)}" title="${escapeHtml(project.name)}${project.path ? ` — ${escapeHtml(project.path)}` : ""}">
-          <strong>${escapeHtml(project.name)}</strong>
+        <button class="project-card ${project.path === state.selectedProjectPath ? "active" : ""}" data-project-path="${escapeHtml(project.path)}" title="${escapeHtml(project.title || project.name)}${project.path ? ` — ${escapeHtml(project.path)}` : ""}">
+          <strong>${escapeHtml(project.title || project.name)}</strong>
           <span>${project.linked ? "linked · " : ""}${escapeHtml(project.chats ?? 0)} chat - ${escapeHtml(project.knowledge ?? 0)} knowledge</span>
           ${project.local_workspace
             ? `<span class="project-workdir" title="Cartella Windows autorizzata">PC · ${escapeHtml(project.local_workspace.display_name || project.name)}</span>`
@@ -1961,7 +1966,7 @@ function renderProjects(payload) {
 
 async function removeProject(projectPath, linked) {
   if (!projectPath) return;
-  const name = projectPath.split(/[\\/]/).pop();
+  const name = nomeProgetto(projectPath);
   const message = linked
     ? `Scollegare il progetto "${name}"? I file restano al loro posto, sparisce solo dalla sidebar.`
     : `Spostare il progetto "${name}" nel cestino (workspace/_trash)? Recuperabile a mano, nessuna cancellazione permanente.`;
@@ -4195,7 +4200,7 @@ function commandActions() {
     // link nascosto dalla UI nuova finche' la Fase 2 non assorbe editor+explorer.
     ...state.projects.slice(0, 12).map((project) => ({
       id: `project:${project.path}`,
-      title: `Progetto: ${project.name}`,
+      title: `Progetto: ${project.title || project.name}`,
       description: `${project.chats ?? 0} chat · ${project.knowledge ?? 0} knowledge`,
       icon: "P",
       group: "Projects",

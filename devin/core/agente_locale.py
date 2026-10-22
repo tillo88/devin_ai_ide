@@ -36,7 +36,8 @@ MAX_GIRI = 150                      # tetto di sicurezza: a fermare i giri a vuo
 DURATA_SESSIONE = 2 * 3600          # secondi: una sessione abbandonata si scarta
 MAX_SESSIONI = 16
 MAX_RISULTATO = 40_000              # caratteri di un risultato rimandati al modello
-MAX_STORIA = 10                     # messaggi precedenti della chat nel contesto
+MAX_STORIA = 10                     # messaggi precedenti della chat nel contesto (almeno)
+PASSO_STORIA = 6                    # la finestra della storia si sposta a scatti di tanti messaggi
 MAX_MESSAGGIO_STORIA = 3_000
 
 STRUMENTI: List[Dict[str, Any]] = [
@@ -192,11 +193,26 @@ def _pulisci(adesso: float) -> None:
         _togli(piu_vecchia.id)
 
 
+def inizio_storia(lunghezza: int) -> int:
+    """Da dove parte la storia nel contesto: si sposta a scatti, non a ogni messaggio.
+
+    22/10. Con «gli ultimi 10» a ogni domanda nuova usciva il messaggio piu'
+    vecchio, il testo dopo le istruzioni cambiava dall'inizio e il server
+    rileggeva tutta la storia (migliaia di token) invece di riprenderla dalla
+    cache. Ancorata a multipli di PASSO_STORIA resta uguale per piu' domande
+    di fila: si rilegge solo la parte nuova. Ci sono sempre almeno MAX_STORIA
+    messaggi (o tutti, se sono meno).
+    """
+    if lunghezza <= MAX_STORIA:
+        return 0
+    return ((lunghezza - MAX_STORIA) // PASSO_STORIA) * PASSO_STORIA
+
+
 def nuova_sessione(project_path: str, chat_id: Optional[str], compito: str,
                    storia: List[Dict[str, Any]], nome_progetto: str = "") -> Sessione:
     precedenti = [
         {"role": m["role"], "content": str(m.get("content") or "")[:MAX_MESSAGGIO_STORIA]}
-        for m in storia[-MAX_STORIA:]
+        for m in storia[inizio_storia(len(storia)):]
         if m.get("role") in ("user", "assistant") and str(m.get("content") or "").strip()
     ]
     sistema = SISTEMA + (f"\nProgetto: {nome_progetto}." if nome_progetto else "")

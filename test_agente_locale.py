@@ -266,3 +266,24 @@ def test_senza_visione_le_foto_non_partono_e_lo_si_dice(ambiente):
                                              "immagini": [{"url": "data:image/png;base64," + PNG_1X1}]}])
     assert ai.visti[1][-1]["role"] == "tool"
     assert "non vede le immagini" in ai.visti[1][-1]["content"]
+
+
+def test_la_storia_si_sposta_a_scatti_cosi_il_server_la_riprende_dalla_cache():
+    """22/10: con «gli ultimi 10» ogni domanda nuova cambiava l'inizio della storia
+    e il server la rileggeva tutta; ancorata, resta uguale per piu' domande di fila."""
+    inizi = [agente_locale.inizio_storia(n) for n in range(0, 40)]
+    assert inizi[:agente_locale.MAX_STORIA + 1] == [0] * (agente_locale.MAX_STORIA + 1)
+    for n, inizio in enumerate(inizi):
+        assert n - inizio >= min(n, agente_locale.MAX_STORIA), "sempre almeno MAX_STORIA messaggi"
+        assert n - inizio < agente_locale.MAX_STORIA + agente_locale.PASSO_STORIA
+    cambi = sum(1 for a, b in zip(inizi, inizi[1:]) if a != b)
+    assert cambi <= 40 // agente_locale.PASSO_STORIA, "l'inizio cambia a scatti, non a ogni messaggio"
+
+    def prefisso(n):
+        storia = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(n)]
+        sessione = agente_locale.nuova_sessione("/p", "c", "compito", storia)
+        agente_locale.chiudi(sessione.id)
+        return [m["content"] for m in sessione.messaggi[1:-1]]
+    # due domande di fila: la storia della seconda comincia come quella della prima
+    primo, secondo = prefisso(12), prefisso(14)
+    assert secondo[:len(primo)] == primo
