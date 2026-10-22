@@ -1080,6 +1080,8 @@ def test_tauri_desktop_shell_targets_workspace_app():
         "allow-start-local-program",
         "allow-act-local-program",
         "allow-stop-local-program",
+        "allow-show-program-float",
+        "allow-hide-program-float",
         "allow-desktop-update-check",
         "allow-desktop-update-open",
     ]
