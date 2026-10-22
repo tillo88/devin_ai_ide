@@ -24,7 +24,9 @@ esegue gia' da allora decine di generazioni in sequenza senza riavvii.
 `POST /api/local-workspace/agent-step` (SSE) esegue un giro del modello:
 
 1. primo giro: `task` (gia' salvato nella chat da `/api/chat`), piu' gli ultimi
-   10 messaggi della chat come contesto;
+   10-15 messaggi della chat come contesto. La finestra si sposta a scatti di 6
+   messaggi, non a ogni domanda: cosi' l'inizio resta uguale e il server riprende
+   istruzioni e storia dalla cache invece di rileggerle (22/10);
 2. se il modello chiede strumenti arriva l'evento `strumenti` con
    `session_id` e chiamate; l'app le esegue sul PC e richiama l'endpoint con
    `session_id` e `results` (`[{id, content}]`);
