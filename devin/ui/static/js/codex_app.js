@@ -4354,6 +4354,9 @@ function setupChatComposer() {
     });
   });
 
+  $("lezioni-button")?.addEventListener("click", () => { void apriMemoriaDevin("lezione"); });
+  $("richieste-button")?.addEventListener("click", () => { void apriMemoriaDevin("richiesta"); });
+
   $("workdir-changes-button")?.addEventListener("click", () => {
     const workspace = selectedDirectWorkspace();
     if (!workspace) return;
@@ -4622,6 +4625,136 @@ async function refresh() {
       }
     }
   }
+  void aggiornaMemoriaDevin();
+}
+
+// Memoria di DEVIN (22/10): le lezioni che ha imparato dai suoi errori e le
+// migliorie che chiede. Una lezione verificata (errore e poi successo dello
+// stesso strumento) e' gia' attiva; una senza prova aspetta la tua conferma.
+// Una richiesta di miglioria aspetta che tu la approvi o la rifiuti.
+const STATO_LEZIONE = {
+  verificata: "verificata", da_confermare: "da confermare", confermata: "confermata", scartata: "scartata",
+};
+const STATO_RICHIESTA = { in_attesa: "in attesa", approvata: "approvata", rifiutata: "rifiutata" };
+
+async function aggiornaMemoriaDevin() {
+  let dati;
+  try { dati = await fetchJson("/api/lezioni"); } catch { return null; }
+  state.memoriaDevin = dati;
+  const lezioni = dati.lezioni || [];
+  const richieste = dati.richieste || [];
+  const attive = lezioni.filter((l) => l.stato === "verificata" || l.stato === "confermata").length;
+  const daConfermare = lezioni.filter((l) => l.stato === "da_confermare").length;
+  const inAttesa = richieste.filter((r) => r.stato === "in_attesa").length;
+  const bottoneLezioni = $("lezioni-button");
+  if (bottoneLezioni) bottoneLezioni.textContent = `\u{1F9E0} Lezioni ${attive}${daConfermare ? ` (+${daConfermare} da confermare)` : ""}`;
+  const bottoneRichieste = $("richieste-button");
+  if (bottoneRichieste) {
+    bottoneRichieste.textContent = `\u{1F64B} Richieste${inAttesa ? ` (${inAttesa} da decidere)` : ""}`;
+    bottoneRichieste.classList.toggle("da-decidere", inAttesa > 0);
+  }
+  return dati;
+}
+
+function azioneMemoria(etichetta, tipo, voce, stato, dopo) {
+  const bottone = document.createElement("button");
+  bottone.type = "button";
+  bottone.className = "tiny-button";
+  bottone.textContent = etichetta;
+  bottone.addEventListener("click", async () => {
+    bottone.disabled = true;
+    try {
+      const esito = await fetchJson("/api/lezioni/stato", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tipo, id: voce.id, stato }),
+      });
+      if (esito.error) throw new Error(esito.error);
+      await aggiornaMemoriaDevin();
+      dopo();
+    } catch (error) {
+      bottone.disabled = false;
+      bottone.title = errorMessage(error);
+    }
+  });
+  return bottone;
+}
+
+function rigaMemoria(titolo, righe, stato, azioni) {
+  const riga = document.createElement("div");
+  riga.className = `memoria-voce stato-${stato}`;
+  const testa = document.createElement("div");
+  testa.className = "memoria-testa";
+  const nome = document.createElement("strong");
+  nome.textContent = titolo;
+  const etichetta = document.createElement("span");
+  etichetta.className = "memoria-stato";
+  etichetta.textContent = STATO_LEZIONE[stato] || STATO_RICHIESTA[stato] || stato;
+  testa.append(nome, etichetta);
+  riga.append(testa);
+  for (const [chiave, valore] of righe) {
+    if (!valore) continue;
+    const p = document.createElement("div");
+    p.className = "memoria-dettaglio";
+    p.textContent = `${chiave}: ${valore}`;
+    riga.append(p);
+  }
+  if (azioni.length) {
+    const barra = document.createElement("div");
+    barra.className = "memoria-azioni";
+    barra.append(...azioni);
+    riga.append(barra);
+  }
+  return riga;
+}
+
+async function apriMemoriaDevin(tipo) {
+  const dati = await aggiornaMemoriaDevin() || { lezioni: [], richieste: [] };
+  const overlay = document.createElement("div");
+  overlay.className = "app-modal-overlay";
+  overlay.innerHTML = `
+    <div class="app-modal memoria-modal" role="dialog" aria-modal="true">
+      <p class="app-modal-msg"></p>
+      <div class="memoria-lista"></div>
+      <div class="app-modal-actions"><button type="button" class="tiny-button app-modal-cancel">Chiudi</button></div>
+    </div>`;
+  const lista = overlay.querySelector(".memoria-lista");
+  const close = () => overlay.remove();
+  const ridisegna = () => { close(); void apriMemoriaDevin(tipo); };
+  if (tipo === "lezione") {
+    overlay.querySelector(".app-modal-msg").textContent = dati.lezioni.length
+      ? "Cosa ha imparato DEVIN dai suoi errori. Le verificate e le confermate sono nelle sue istruzioni."
+      : "DEVIN non ha ancora ricordato lezioni.";
+    for (const l of dati.lezioni) {
+      const azioni = [];
+      if (l.stato === "da_confermare") azioni.push(azioneMemoria("Conferma", "lezione", l, "confermata", ridisegna));
+      if (l.stato !== "scartata") azioni.push(azioneMemoria("Scarta", "lezione", l, "scartata", ridisegna));
+      else azioni.push(azioneMemoria("Ripristina", "lezione", l, "confermata", ridisegna));
+      lista.append(rigaMemoria(l.regola, [
+        ["Perche'", l.causa],
+        ["Prova", l.errore ? `${l.strumento}: ${l.errore.split("\n")[0].slice(0, 160)} -> poi riuscito` : ""],
+      ], l.stato, azioni));
+    }
+  } else {
+    overlay.querySelector(".app-modal-msg").textContent = dati.richieste.length
+      ? "Strumenti e funzioni che DEVIN chiede. Le fonti sono pagine che ha aperto davvero."
+      : "DEVIN non ha ancora chiesto migliorie.";
+    for (const r of dati.richieste) {
+      const azioni = r.stato === "in_attesa"
+        ? [azioneMemoria("Approva", "richiesta", r, "approvata", ridisegna),
+          azioneMemoria("Rifiuta", "richiesta", r, "rifiutata", ridisegna)]
+        : [];
+      lista.append(rigaMemoria(r.titolo, [
+        ["Cos'e'", r.cosa], ["Perche' gli serve", r.perche], ["Come", r.come],
+        ["Fonti", (r.fonti || []).join("  ") || "nessuna"],
+      ], r.stato, azioni));
+    }
+  }
+  document.body.appendChild(overlay);
+  overlay.querySelector(".app-modal-cancel").addEventListener("click", close);
+  overlay.addEventListener("mousedown", (event) => { if (event.target === overlay) close(); });
+  overlay.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+  overlay.tabIndex = -1;
+  overlay.focus();
 }
 
 // Il badge globale passa a "error" solo dopo tre poll falliti di fila.

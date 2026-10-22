@@ -10,3 +10,5 @@ def _richieste_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVIN_RISCALDAMENTO", "0")
     # nei test nessuno riavvierebbe il processo: il riavvio col codice nuovo resta spento
     monkeypatch.setenv("DEVIN_RIAVVIO_AUTOMATICO", "0")
+    # lezioni e richieste di miglioria: nei test mai nella home vera
+    monkeypatch.setenv("DEVIN_LEZIONI_DIR", str(tmp_path / "lezioni"))

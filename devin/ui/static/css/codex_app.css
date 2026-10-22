@@ -6343,3 +6343,15 @@ body.codex-shell {
 .modifiche-locali-modal { max-width: 640px; }
 .modifiche-locali-modal .modifiche-locali { max-height: 50vh; overflow-y: auto; }
 #workdir-changes-button[hidden] { display: none; }
+
+/* memoria di DEVIN: lezioni e richieste di miglioria (22/10) */
+.memoria-bottoni { display: flex; gap: 6px; flex-wrap: wrap; }
+#richieste-button.da-decidere { border-color: var(--accent, #22d3ee); }
+.memoria-modal { max-width: 680px; }
+.memoria-lista { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; margin: 8px 0; }
+.memoria-voce { border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+.memoria-voce.stato-scartata, .memoria-voce.stato-rifiutata { opacity: 0.55; }
+.memoria-testa { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.memoria-stato { font-size: 11px; opacity: 0.75; white-space: nowrap; }
+.memoria-dettaglio { margin-top: 3px; overflow-wrap: anywhere; opacity: 0.85; }
+.memoria-azioni { display: flex; gap: 6px; margin-top: 6px; }

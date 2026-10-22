@@ -5,6 +5,23 @@
 **Punto di ingresso:** questo file, poi `AGENTS.md` e
 `docs/CURRENT_ARCHITECTURE.md`.
 
+## Aggiornamento 22/10: lezioni dagli errori e richieste di miglioria
+
+Richiesta dell'operatore del 19/10. In chat e nell'agente locale DEVIN ha due
+strumenti eseguiti sul rig (`devin/core/lezioni.py`):
+
+- `ricorda_lezione(causa, regola)`: la prova la cerca il backend nella
+  conversazione (un errore e poi un successo dello stesso strumento). Con la
+  prova la lezione e' **verificata** ed entra subito nelle istruzioni (ultime
+  15); senza resta **da confermare** finche' Alessandro non la conferma.
+- `richiedi_miglioria(titolo, cosa, perche, come, fonti)`: le fonti devono
+  essere pagine aperte in quella conversazione, un link inventato e' respinto.
+  Alessandro approva o rifiuta; l'esito va nel journal (`[Miglioria] approvata`).
+
+Nell'app, pannello destro **Memoria di DEVIN**: Lezioni (conferma, scarta,
+ripristina) e Richieste (approva, rifiuta). Archivio JSONL in
+`~/.local/share/devin` (`DEVIN_LEZIONI_DIR`).
+
 ## Aggiornamento 22/10: il backend si riavvia da solo col codice nuovo
 
 Il deploy (`git pull` in `/opt`) non riavviava il backend: il 21/10 #95-#97 sono
