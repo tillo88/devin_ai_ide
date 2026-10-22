@@ -1964,13 +1964,13 @@ function renderProjects(payload) {
   });
 }
 
-async function removeProject(projectPath, linked) {
+async function removeProject(projectPath, linked, { chiedi = true } = {}) {
   if (!projectPath) return;
   const name = nomeProgetto(projectPath);
   const message = linked
     ? `Scollegare il progetto "${name}"? I file restano al loro posto, sparisce solo dalla sidebar.`
     : `Spostare il progetto "${name}" nel cestino (workspace/_trash)? Recuperabile a mano, nessuna cancellazione permanente.`;
-  if (!window.confirm(message)) return;
+  if (chiedi && !window.confirm(message)) return;
   try {
     const result = await postJson("/api/workspace/projects/remove", { path: projectPath });
     if (result?.error) throw new Error(result.error);
@@ -2301,6 +2301,7 @@ async function deleteChat(chatId) {
     if (result.status !== "deleted") throw new Error("chat non trovata");
     if (state.selectedChatId === chatId) state.selectedChatId = null;
     await loadProjectOverview(state.selectedProjectPath);
+    await offriRimozioneProgetto(state.selectedProjectPath);
     return;
   }
 
@@ -2311,6 +2312,32 @@ async function deleteChat(chatId) {
   state.selectedChatId = null;
   await loadProjectOverview(state.selectedProjectPath);
   renderChatHistory([]);
+  await offriRimozioneProgetto(state.selectedProjectPath);
+}
+
+// 22/10: cancellata l'ultima chat di un progetto, si chiede se togliere anche
+// il progetto, altrimenti sul rig si accumulano progetti vuoti. Va nel cestino
+// del rig (recuperabile); una cartella del PC e i suoi file non si toccano.
+async function offriRimozioneProgetto(projectPath) {
+  if (!projectPath) return false;                    // la General chat resta sempre
+  let overview;
+  try {
+    overview = await fetchJson(`/api/project/overview?${new URLSearchParams({ project_path: projectPath, lite: "true" }).toString()}`);
+  } catch {
+    return false;
+  }
+  if ((overview.chats || []).length || overview.default_chat_messages) return false;
+  const record = selectedProjectRecord(projectPath);
+  const delPc = record?.local_workspace?.mode === "direct";
+  const togli = await confirmModal(
+    `Era l'ultima chat di «${nomeProgetto(projectPath)}». Vuoi togliere anche il progetto? `
+      + "Va nel cestino del rig, recuperabile a mano"
+      + (delPc ? "; la cartella sul tuo PC e i suoi file non vengono toccati, e puoi ricollegarla quando vuoi." : "."),
+    { okLabel: "Togli il progetto" },
+  );
+  if (!togli) return false;
+  await removeProject(projectPath, Boolean(record?.linked), { chiedi: false });
+  return true;
 }
 
 // Senza progetto la nuova chat e' una General chat in piu' (19/10): il backend
