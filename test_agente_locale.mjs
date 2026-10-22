@@ -39,7 +39,8 @@ function ambiente({ desktop = {}, passi = [], conferma = true, modo = "revisione
       if (r instanceof Error) throw r;
       return typeof r === "function" ? r(args) : r;
     },
-    confirmModal: async () => { log.conferme += 1; return conferma; },
+    // conferma "float": la risposta arriva dalla finestrella (chiudiCon), non dal modale
+    confirmModal: async (_testo, opzioni = {}) => { log.conferme += 1; return conferma === "float" ? opzioni.chiudiCon : conferma; },
     modoApplica: () => modo,
     document: documento,
     mostraModificheApplicate: (nodo, ws, applicati) => { log.mostrate.push([...(applicati || [])]); },
@@ -67,8 +68,10 @@ function ambiente({ desktop = {}, passi = [], conferma = true, modo = "revisione
   };
   const NOMI = ["parseSseBlock", "localAgentBoundedText", "localExecutionTrainingEvidence", "formatoRigheLocali",
     "elencoLocale", "proponiModificheLocali", "applicaModificheLocali", "bannerProgramma", "chiudiProgrammi",
-    "esitoProgramma", "eseguiStrumentoLocale", "chiudiRisposta", "runLocalWorkspaceAgent"];
-  const COSTANTI = ["AGENTE_LOCALE_RIGHE", "AGENTE_LOCALE_MAX_RIGHE", "AGENTE_LOCALE_MAX_CARATTERI", "AGENTE_LOCALE_MAX_ELENCO"];
+    "fermaProgrammi", "floatEventi", "gestisciRispostaFloat", "aggiornaFloat", "fotoFloat", "descriviAzioni",
+    "chiediConsensoProgramma", "esitoProgramma", "eseguiStrumentoLocale", "chiudiRisposta", "runLocalWorkspaceAgent"];
+  const COSTANTI = ["AGENTE_LOCALE_RIGHE", "AGENTE_LOCALE_MAX_RIGHE", "AGENTE_LOCALE_MAX_CARATTERI", "AGENTE_LOCALE_MAX_ELENCO",
+    "FLOAT_EVENTO", "FLOAT_RISPOSTA", "floatStato"];
   const corpo = COSTANTI.map(costante).join("\n") + "\n" + NOMI.map(estrai).join("\n") + `\nreturn { ${NOMI.join(", ")} };`;
   const f = new Function(...Object.keys(stub), corpo)(...Object.values(stub));
   return { f, log, state };
@@ -284,6 +287,99 @@ prova("il ciclo: compito, strumenti al PC, risultati con la sessione, risposta",
 prova("uno stream che finisce senza done ne' strumenti e' un errore, non un silenzio", async () => {
   const { f } = ambiente({ passi: [[["sessione", { session_id: "s1" }]]] });
   await assert.rejects(f.runLocalWorkspaceAgent("x", WS, { textContent: "" }, null), /senza concludere/);
+});
+
+// Bus finto degli eventi di Tauri: cio' che la finestra principale manda alla
+// finestrella, e la funzione per simulare i clic di Alessandro nella finestrella.
+function busFloat() {
+  const bus = { mandati: [], ascoltatori: [] };
+  bus.event = {
+    emitTo: async (dove, nome, dati) => { bus.mandati.push([dove, nome, structuredClone(dati)]); },
+    listen: async (nome, fn) => { bus.ascoltatori.push([nome, fn]); return () => {}; },
+  };
+  bus.clic = (dati) => { for (const [nome, fn] of bus.ascoltatori) if (nome === "devin-float-risposta") fn({ payload: dati }); };
+  bus.ultimo = () => bus.mandati.filter(([, nome]) => nome === "devin-float").at(-1)?.[2];
+  return bus;
+}
+
+prova("finestrella: si apre col programma, porta la domanda e la risposta da li' vale", async () => {
+  const bus = busFloat();
+  globalThis.window = { __TAURI__: { event: bus.event } };
+  try {
+    const foto = { title: "SpyEngine", width: 968, height: 548, png_base64: "iVBORw0KGgo=" };
+    const { f, log } = ambiente({ conferma: "float", desktop: {
+      start_local_program: (a) => ({ program_id: a.programId, running: true, windows: ["SpyEngine"], screenshot: foto, done: [] }),
+      act_local_program: { running: true, windows: ["SpyEngine"], screenshot: foto, done: ["clic in (40, 60)"] },
+      stop_local_program: { running: false, exit_code: 0, stdout: "", stderr: "", duration_ms: 1 },
+      show_program_float: null, hide_program_float: null,
+    } });
+    const ctx = { esecuzioni: [], piani: [] };
+    const aperto = await f.eseguiStrumentoLocale({ name: "apri_programma", arguments: { programma: "python" } }, WS, ctx);
+    const id = aperto.testo.match(/id (\S+)/)[1];
+    assert.ok(log.invoke.some(([c]) => c === "show_program_float"), "la finestrella compare quando si apre il programma");
+    assert.match(bus.ultimo().azione, /ha aperto «SpyEngine»/);
+    assert.equal(bus.ultimo().foto, "data:image/png;base64,iVBORw0KGgo=");
+    // la finestrella appena caricata chiede lo stato e lo riceve di nuovo
+    const prima = bus.mandati.length;
+    bus.clic({ risposta: "pronta" });
+    assert.equal(bus.mandati.length, prima + 1);
+    const usa = f.eseguiStrumentoLocale({ name: "usa_programma", arguments: { id, azioni: [{ tipo: "clic", x: 40, y: 60 }] } }, WS, ctx);
+    await new Promise((fatto) => setTimeout(fatto, 0));
+    const domanda = bus.ultimo().domanda;
+    assert.match(domanda.testo, /DEVIN vuole usare «SpyEngine»/);
+    bus.clic({ id: "inventato", risposta: "no" });        // id sbagliato: ignorato
+    bus.clic({ id: domanda.id, risposta: "boh" });        // risposta sconosciuta: ignorata
+    bus.clic({ id: domanda.id, risposta: "consenti" });
+    const usato = await usa;
+    assert.match(usato.testo, /fatto: clic in \(40, 60\)/);
+    assert.ok(log.invoke.some(([c]) => c === "act_local_program"), "consentito dalla finestrella");
+    assert.equal(bus.ultimo().domanda, null, "dopo la risposta la domanda sparisce");
+    assert.match(bus.ultimo().azione, /^fatto: clic in \(40, 60\)/);
+    // Ferma dalla finestrella: programmi chiusi, finestrella nascosta, niente altri programmi
+    bus.clic({ risposta: "ferma" });
+    await new Promise((fatto) => setTimeout(fatto, 0));
+    assert.ok(log.invoke.some(([c, a]) => c === "stop_local_program" && a.programId === id));
+    assert.ok(log.invoke.some(([c]) => c === "hide_program_float"));
+    assert.equal(ctx.fermato, true);
+    assert.match(await f.eseguiStrumentoLocale({ name: "apri_programma", arguments: { programma: "python" } }, WS, ctx),
+      /ha premuto Ferma/);
+    assert.match(await f.eseguiStrumentoLocale({ name: "usa_programma", arguments: { id, azioni: [] } }, WS, ctx),
+      /ha premuto Ferma/);
+  } finally {
+    delete globalThis.window;
+  }
+});
+
+prova("finestrella: No vale come no, e senza app desktop non si apre niente", async () => {
+  const bus = busFloat();
+  globalThis.window = { __TAURI__: { event: bus.event } };
+  try {
+    const { f, log } = ambiente({ conferma: "float", desktop: {
+      start_local_program: (a) => ({ program_id: a.programId, running: true, windows: [], screenshot: null, done: [] }),
+      show_program_float: null,
+    } });
+    const ctx = { esecuzioni: [], piani: [] };
+    const id = (await f.eseguiStrumentoLocale({ name: "apri_programma", arguments: { programma: "node" } }, WS, ctx)).testo.match(/id (\S+)/)[1];
+    const usa = f.eseguiStrumentoLocale({ name: "usa_programma", arguments: { id, azioni: [{ tipo: "tasti", tasti: "invio" }] } }, WS, ctx);
+    await new Promise((fatto) => setTimeout(fatto, 0));
+    bus.clic({ id: bus.ultimo().domanda.id, risposta: "no" });
+    assert.match(await usa, /NON ha dato il permesso/);
+    assert.ok(!log.invoke.some(([c]) => c === "act_local_program"));
+  } finally {
+    delete globalThis.window;
+  }
+  const { f, log } = ambiente({ desktop: {
+    start_local_program: (a) => ({ program_id: a.programId, running: true, windows: [], screenshot: null, done: [] }) } });
+  await f.eseguiStrumentoLocale({ name: "apri_programma", arguments: { programma: "node" } }, WS, { esecuzioni: [], piani: [] });
+  assert.ok(!log.invoke.some(([c]) => c === "show_program_float"), "nel browser non c'e' la finestrella");
+});
+
+prova("le azioni si descrivono in breve per la finestrella", async () => {
+  const { f } = ambiente();
+  assert.equal(f.descriviAzioni([{ tipo: "clic", x: 1, y: 2, doppio: true }, { tipo: "clic", x: 3, y: 4, pulsante: "destro" },
+    { tipo: "scrivi", testo: "x".repeat(50) }, { tipo: "tasti", tasti: "ctrl+s" }, { tipo: "scorri", quanto: -3 },
+    { tipo: "aspetta", ms: 300 }]),
+  `doppio clic in (1, 2) · clic destro in (3, 4) · scrivo «${"x".repeat(40)}…» · tasti ctrl+s · scorro di -3 · aspetto 300 ms`);
 });
 
 let fallite = 0;

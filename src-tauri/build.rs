@@ -21,6 +21,8 @@ fn main() {
             "start_local_program",
             "act_local_program",
             "stop_local_program",
+            "show_program_float",
+            "hide_program_float",
             "desktop_http_stream",
             "desktop_http_cancel",
             "desktop_update_check",

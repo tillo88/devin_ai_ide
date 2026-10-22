@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-program-float"
+description = "Enables the show_program_float command without any pre-configured scope."
+commands.allow = ["show_program_float"]
+
+[[permission]]
+identifier = "deny-show-program-float"
+description = "Denies the show_program_float command without any pre-configured scope."
+commands.deny = ["show_program_float"]

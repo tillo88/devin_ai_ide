@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DEVIN</title>
+  <style>
+    :root { --bg: #11141c; --bordo: rgba(234, 88, 12, 0.9); --testo: #eef2ff; --tenue: #9aa3b8;
+      --accento: #8b5cf6; --pericolo: #dc2626; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--testo);
+      font: 13px/1.35 Inter, "Segoe UI", system-ui, sans-serif; user-select: none; }
+    body { display: flex; flex-direction: column; border: 2px solid var(--bordo); border-radius: 10px; }
+    header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: move;
+      background: rgba(234, 88, 12, 0.18); }
+    .punto { width: 9px; height: 9px; border-radius: 50%; background: #f97316; flex: none;
+      animation: pulsa 1.4s ease-in-out infinite; }
+    @keyframes pulsa { 50% { opacity: 0.3; } }
+    #programmi { color: var(--tenue); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    main { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; }
+    #azione { margin: 0; max-height: 3.9em; overflow: hidden; word-break: break-word; }
+    #foto { flex: 1; min-height: 0; width: 100%; object-fit: contain; border-radius: 6px;
+      background: #000; }
+    #domanda { padding: 8px; border-radius: 8px; background: rgba(139, 92, 246, 0.16);
+      border: 1px solid var(--accento); }
+    #domanda p { margin: 0 0 8px; }
+    .fila { display: flex; gap: 8px; justify-content: flex-end; }
+    button { font: inherit; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer;
+      background: #2a3042; color: var(--testo); }
+    button.primario { background: var(--accento); }
+    button.pericolo { background: var(--pericolo); }
+    footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 10px 8px; }
+    footer span { color: var(--tenue); font-size: 12px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header data-tauri-drag-region>
+    <span class="punto"></span><b data-tauri-drag-region>DEVIN</b><span id="programmi" data-tauri-drag-region></span>
+  </header>
+  <main>
+    <p id="azione">in attesa…</p>
+    <img id="foto" alt="ultima foto del programma" hidden>
+    <div id="domanda" hidden>
+      <p id="domanda-testo"></p>
+      <div class="fila">
+        <button type="button" id="no">No</button>
+        <button type="button" id="consenti" class="primario">Consenti</button>
+      </div>
+    </div>
+  </main>
+  <footer>
+    <span>lascia stare mouse e tastiera</span>
+    <button type="button" id="ferma" class="pericolo">Ferma</button>
+  </footer>
+  <script src="js/float.js"></script>
+</body>
+</html>

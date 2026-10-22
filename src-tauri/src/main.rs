@@ -22,11 +22,13 @@ use tauri::Manager;
 mod desktop_transport;
 mod desktop_update;
 mod local_execution;
+mod local_float;
 mod local_program;
 mod local_screenshot;
 mod local_workspace;
 use desktop_transport::{desktop_http_cancel, desktop_http_stream, DesktopTransportState};
 use desktop_update::{desktop_update_check, desktop_update_open};
+use local_float::{hide_program_float, show_program_float};
 use local_program::{act_local_program, start_local_program, stop_local_program, LocalProgramState};
 use local_execution::{
     cancel_local_workspace_command, run_local_workspace_command, LocalExecutionState,
@@ -429,6 +431,8 @@ fn main() {
             start_local_program,
             act_local_program,
             stop_local_program,
+            show_program_float,
+            hide_program_float,
             desktop_update_check,
             desktop_update_open
         ])
