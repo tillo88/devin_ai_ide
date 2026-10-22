@@ -855,15 +855,16 @@ def _piano_da_argomenti(argomenti: dict) -> dict:
     return {"summary": argomenti.get("summary") or "", "operations": [operazione]}
 
 
-def _prepara_chiamate_locali(chiamate: list, troncato: bool = False) -> list:
+def _prepara_chiamate_locali(chiamate: list, troncato: bool = False, messaggi: Optional[list] = None) -> list:
     """Le chiamate del modello pronte per il PC, o con l'errore gia' scritto.
 
     Nome sconosciuto, argomenti non JSON, piano di modifiche non valido: non si
     mandano al desktop, il modello riceve subito l'errore spiegato. Se il
     server ha tagliato la risposta per il limite di token, le chiamate sono
     incomplete anche quando sembrano valide: non si eseguono e lo si dice.
+    Lezioni e richieste di miglioria si eseguono qui sul rig (``risultato``).
     """
-    from devin.core import agente_locale
+    from devin.core import agente_locale, lezioni
 
     pronte = []
     for indice, chiamata in enumerate(chiamate):
@@ -888,6 +889,8 @@ def _prepara_chiamate_locali(chiamate: list, troncato: bool = False) -> list:
         if nome not in agente_locale.NOMI:
             voce["errore"] = (f"ERRORE: lo strumento {nome!r} non esiste. Strumenti: "
                               + ", ".join(sorted(agente_locale.NOMI)))
+        elif nome in lezioni.NOMI:
+            voce["risultato"] = lezioni.esegui(nome, argomenti, messaggi or [], "agente locale")
         elif nome == "proponi_modifiche":
             try:
                 piano = _parse_local_agent_action(json.dumps({"status": "plan", **_piano_da_argomenti(argomenti)}))
@@ -1016,18 +1019,17 @@ async def api_local_workspace_agent_step(req: LocalAgentStepRequest):
                 return
             sessione.giri += 1
             sessione.messaggi.append({"role": "assistant", "content": testo_giro, "tool_calls": chiamate})
-            sessione.in_attesa = _prepara_chiamate_locali(chiamate, troncato=troncato)
+            sessione.in_attesa = _prepara_chiamate_locali(chiamate, troncato=troncato, messaggi=sessione.messaggi)
             for voce in sessione.in_attesa:
                 yield _sse("info", {"message": agente_locale.etichetta(voce["name"], voce["arguments"])})
             sul_pc = [{k: voce[k] for k in ("id", "name", "arguments")}
-                      for voce in sessione.in_attesa if not voce["errore"]]
+                      for voce in sessione.in_attesa if not voce["errore"] and voce.get("risultato") is None]
             if sul_pc:
                 yield _sse("strumenti", {"session_id": sessione.id, "chiamate": sul_pc})
                 return
             # tutte respinte qui (nome o argomenti sbagliati): il modello riceve
             # subito gli errori, senza andare e tornare dal PC
-            agente_locale.accetta_risultati(
-                sessione, [{"id": v["id"], "content": v["errore"]} for v in sessione.in_attesa])
+            agente_locale.accetta_risultati(sessione, [])
             verdetto = sessione.sorvegliante.fine_giro()
         agente_locale.chiudi(sessione.id)
         yield _sse("error", {"error": "agente locale: troppi giri senza risposta"})
@@ -1619,6 +1621,13 @@ async def api_chat(req: ChatRequest):
                 if messaggi and messaggi[0].get("role") == "system":
                     messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + "\n\n"
                                  + vista.NOTA_PROMPT}] + list(messaggi[1:])
+            # Lezioni dai suoi errori e richieste di miglioria (22/10): sempre a disposizione;
+            # le lezioni verificate o confermate entrano nelle istruzioni.
+            from devin.core import lezioni
+            strumenti_mcp = strumenti_mcp + lezioni.STRUMENTI
+            gia_imparato = lezioni.blocco_prompt()
+            if gia_imparato and messaggi and messaggi[0].get("role") == "system":
+                messaggi = [{**messaggi[0], "content": messaggi[0]["content"] + "\n\n" + gia_imparato}] + list(messaggi[1:])
             immagini_strumenti: list = []
             strumenti_web = [] if req.use_web_search else [STRUMENTO_CERCA_WEB]
             strumenti = (strumenti_web + strumenti_mcp) or None
@@ -1752,6 +1761,19 @@ async def api_chat(req: ChatRequest):
                                 int(argomenti.get("secondi") or 120), ai.config)
                         except (ValueError, TypeError) as exc:
                             risultato = f"ERRORE: argomenti non validi ({exc})"
+                        conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
+                                              "content": risultato})
+                        continue
+                    if funzione.get("name") in lezioni.NOMI:
+                        try:
+                            argomenti = json.loads(funzione.get("arguments") or "{}")
+                        except ValueError:
+                            argomenti = None
+                        etichetta = ("🧠 Ricordo una lezione" if funzione["name"] == "ricorda_lezione"
+                                     else "🙋 Chiedo una miglioria ad Alessandro")
+                        yield f"event: info\ndata: {json.dumps({'message': etichetta})}\n\n"
+                        risultato = await run_in_threadpool(lezioni.esegui, funzione["name"], argomenti,
+                                                            conversazione, "chat")
                         conversazione.append({"role": "tool", "tool_call_id": chiamata.get("id", ""),
                                               "content": risultato})
                         continue
@@ -2272,6 +2294,26 @@ class NotaRequest(BaseModel):
     testo: str
     project_path: Optional[str] = None
     chat_id: Optional[str] = None
+
+
+class LezioneStatoRequest(BaseModel):
+    tipo: str
+    id: str
+    stato: str
+
+
+@router.get("/api/lezioni")
+async def api_lezioni():
+    """Lezioni di DEVIN e richieste di miglioria, dalle piu' recenti."""
+    from devin.core import lezioni
+    return await run_in_threadpool(lezioni.elenco)
+
+
+@router.post("/api/lezioni/stato")
+async def api_lezioni_stato(req: LezioneStatoRequest):
+    """Alessandro conferma o scarta una lezione, approva o rifiuta una richiesta."""
+    from devin.core import lezioni
+    return await run_in_threadpool(lezioni.cambia_stato, req.tipo, req.id, req.stato)
 
 
 @router.post("/api/chat/nota")

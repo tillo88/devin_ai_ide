@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from devin.core import note_utente
+from devin.core import lezioni, note_utente
 from devin.core.sorvegliante import Sorvegliante
 
 MAX_GIRI = 150                      # tetto di sicurezza: a fermare i giri a vuoto e' il sorvegliante
@@ -93,7 +93,7 @@ STRUMENTI: List[Dict[str, Any]] = [
             "before": {"type": "string", "description": "solo per replace: il testo esatto da sostituire"},
             "content": {"type": "string", "description": "il testo nuovo (write: il file intero)"}},
             "required": ["summary", "path", "operation"], "additionalProperties": False}}},
-]
+] + lezioni.STRUMENTI
 NOMI = {s["function"]["name"] for s in STRUMENTI}
 
 SISTEMA = (
@@ -124,6 +124,10 @@ def etichetta(nome: str, argomenti: Dict[str, Any]) -> str:
     if nome == "esegui":
         comando = " ".join([str(a.get("programma", "?"))] + [str(x) for x in (a.get("argomenti") or [])])
         return f"▶ Eseguo {comando[:160]}"
+    if nome == "ricorda_lezione":
+        return f"🧠 Ricordo una lezione: {str(a.get('regola', ''))[:140]}"
+    if nome == "richiedi_miglioria":
+        return f"🙋 Chiedo ad Alessandro: {str(a.get('titolo', ''))[:140]}"
     if nome == "proponi_modifiche":
         if a.get("path") and not a.get("operations"):
             return f"📝 Propongo: {a.get('operation', '?')} {a['path']} — {str(a.get('summary', ''))[:120]}"
@@ -177,6 +181,9 @@ def nuova_sessione(project_path: str, chat_id: Optional[str], compito: str,
         if m.get("role") in ("user", "assistant") and str(m.get("content") or "").strip()
     ]
     sistema = SISTEMA + (f"\nProgetto: {nome_progetto}." if nome_progetto else "")
+    gia_imparato = lezioni.blocco_prompt()
+    if gia_imparato:
+        sistema += "\n\n" + gia_imparato
     sessione = Sessione(
         id=uuid.uuid4().hex, project_path=project_path, chat_id=chat_id,
         messaggi=[{"role": "system", "content": sistema}, *precedenti, {"role": "user", "content": compito}],
@@ -224,6 +231,8 @@ def accetta_risultati(sessione: Sessione, risultati: List[Dict[str, Any]]) -> Li
         ricevuto = per_id.get(chiamata["id"])
         if chiamata.get("errore"):
             contenuto = chiamata["errore"]
+        elif chiamata.get("risultato") is not None:      # eseguita sul rig (lezioni, richieste)
+            contenuto = chiamata["risultato"]
         elif ricevuto is None:
             mancanti.append(chiamata["id"])
             contenuto = "ERRORE: il desktop non ha restituito il risultato di questo strumento"

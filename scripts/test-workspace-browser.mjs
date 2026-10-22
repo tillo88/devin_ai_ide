@@ -24,6 +24,13 @@ let delayAlpha = false;
 let alphaFinished;
 let runsUnavailable = false;
 let localAgentScenario = 'plan';
+const memoria = {
+  lezioni: [
+    {id:'l1',regola:'usa math.radians',causa:'radians non importato',stato:'verificata',strumento:'modella_3d',errore:"NameError: name 'radians'"},
+    {id:'l2',regola:'fai sempre X',causa:'supposizione',stato:'da_confermare'},
+  ],
+  richieste: [{id:'r1',titolo:'OpenSCAD',cosa:'CAD a script',perche:'pezzi parametrici',come:'apt install openscad',fonti:['https://openscad.org/downloads.html'],stato:'in_attesa'}],
+};
 page.on('pageerror', error => errors.push(error.message));
 page.on('dialog', dialog => dialog.accept());
 async function assertActiveView(expected) {
@@ -98,6 +105,17 @@ await page.route('**/*', async route => {
       const body = await fs.readFile(f);
       return route.fulfill({ contentType: f.endsWith('.js') ? 'text/javascript' : f.endsWith('.css') ? 'text/css' : 'application/octet-stream', body });
     } catch { return route.fulfill({ status: 404, body: '' }); }
+  }
+  if (u.pathname === '/api/lezioni') {
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(memoria) });
+  }
+  if (u.pathname === '/api/lezioni/stato') {
+    const corpo = JSON.parse(route.request().postData() || '{}');
+    writes.push({path: u.pathname, data: corpo});
+    const lista = corpo.tipo === 'lezione' ? memoria.lezioni : memoria.richieste;
+    const voce = lista.find(v => v.id === corpo.id);
+    voce.stato = corpo.stato;
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({status:'ok', voce}) });
   }
   let data = {};
   if (route.request().method() !== 'GET' && u.pathname === '/api/local-workspace/agent-step') {
@@ -302,6 +320,24 @@ try {
   assert.equal(Object.hasOwn(bridgeCall.args,'path'),false);
   assert.equal(await page.locator('#workdir-box').textContent().then(text => text.includes('/backend/')),false);
   await page.locator('#show-chat-view').click();
+  // Memoria di DEVIN: lezioni attive e da confermare, richieste da decidere
+  await page.waitForFunction(() => document.querySelector('#lezioni-button').textContent.includes('Lezioni 1 (+1 da confermare)'));
+  assert.match(await page.locator('#richieste-button').textContent(), /1 da decidere/);
+  await page.locator('#lezioni-button').click();
+  const modaleLezioni = page.locator('.memoria-modal');
+  await modaleLezioni.waitFor({state:'visible'});
+  assert.equal(await modaleLezioni.locator('.memoria-voce').count(), 2);
+  await modaleLezioni.locator('.memoria-voce.stato-da_confermare button', {hasText:'Conferma'}).click();
+  await page.waitForFunction(() => document.querySelector('#lezioni-button').textContent.trim().endsWith('Lezioni 2'));
+  assert.deepEqual(writes.filter(w => w.path === '/api/lezioni/stato').at(-1).data, {tipo:'lezione', id:'l2', stato:'confermata'});
+  await page.locator('.memoria-modal .app-modal-cancel').click();
+  await page.locator('#richieste-button').click();
+  await page.locator('.memoria-modal .memoria-voce').first().waitFor();
+  assert.match(await page.locator('.memoria-modal').textContent(), /openscad\.org\/downloads\.html/);
+  await page.locator('.memoria-modal button', {hasText:'Approva'}).click();
+  await page.waitForFunction(() => !document.querySelector('#richieste-button').classList.contains('da-decidere'));
+  await page.locator('.memoria-modal .app-modal-cancel').click();
+  assert.equal(await page.locator('.app-modal-overlay').count(), 0);
   // 22/10: «applica da solo» (default) applica senza chiedere, con backup e Annulla
   await page.locator('#chat-input').fill('Modifica il file principale');
   await page.locator('#chat-send').click();
