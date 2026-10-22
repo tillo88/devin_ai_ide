@@ -93,6 +93,10 @@ mutante sono rifiutati. Rust:
 - ricalcola l'origine Tauri e la registrazione del workspace;
 - limita `cwd` e path degli argomenti alla radice autorizzata;
 - azzera l'ambiente ereditato e ricostruisce una allowlist minima;
+- rifiuta `-m pip` (e `ensurepip`, `uv`, `pipx`) col Python di sistema: il 22/10
+  DEVIN aveva installato PySide6 nel Python di sistema, che nessun Annulla
+  riporta indietro. Le dipendenze vanno nell'ambiente del progetto
+  (`python -m venv .venv`, poi il suo Python con `-m pip install`);
 - ammette come programma anche il Python (o pytest) di un ambiente virtuale
   del progetto: `Scripts`/`bin` accanto a un `pyvenv.cfg`, dentro la cartella
   autorizzata, con le stesse regole sugli argomenti (21/10);
