@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-local-program"
+description = "Enables the stop_local_program command without any pre-configured scope."
+commands.allow = ["stop_local_program"]
+
+[[permission]]
+identifier = "deny-stop-local-program"
+description = "Denies the stop_local_program command without any pre-configured scope."
+commands.deny = ["stop_local_program"]

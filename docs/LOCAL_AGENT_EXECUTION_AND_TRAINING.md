@@ -81,6 +81,26 @@ rettangolo dallo schermo. Le foto tornano al rig come PNG e arrivano al modello
 come immagini dopo i risultati, solo se il server ha la visione; altrimenti il
 risultato lo dice. Il backend accetta solo PNG veri, al piu' 3 per chiamata.
 
+## Usare le app (22/10)
+
+`apri_programma`, `usa_programma`, `chiudi_programma`: DEVIN apre un programma
+e lo lascia aperto, poi fa clic, scrive, preme tasti e scorre come una persona,
+e dopo ogni gruppo di azioni riceve una foto nuova della finestra. Stesso metodo
+di Claude con il computer:
+
+- **permesso per app**: al primo `usa_programma` su un programma l'app chiede ad
+  Alessandro «Consenti?»; senza si' non si tocca niente (lo si dice a DEVIN);
+- **solo le finestre dei processi del job** del programma, mai il resto dello
+  schermo; prima di ogni azione la finestra va in primo piano e si controlla che
+  lo sia, se no l'azione non parte;
+- **striscia in alto** mentre DEVIN usa l'app, con **Ferma** che chiude i
+  programmi; a fine ciclo (anche interrotto) i programmi aperti si chiudono;
+- mouse e tastiera sono quelli veri (SendInput); coordinate in pixel della foto,
+  tradotte sullo schermo con la posizione della finestra;
+- vietati il tasto Windows, Ctrl+Alt+Canc, Alt+F4; al piu' 20 azioni per volta,
+  testo fino a 2000 caratteri, attese fino a 10 s; al piu' 3 programmi aperti,
+  chiusi da soli dopo 10 minuti senza azioni.
+
 ## Esecuzione locale
 
 `run_local_workspace_command` non espone una shell. Accetta un programma da una

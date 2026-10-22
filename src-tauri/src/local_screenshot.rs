@@ -12,6 +12,7 @@
 use base64::Engine;
 use serde::Serialize;
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub const MAX_SHOTS: usize = 3;
 pub const MAX_SIDE: u32 = 1280;
 
@@ -119,8 +120,19 @@ pub fn job_process_ids(job: isize) -> Vec<u32> {
     buffer[1..1 + listed.min(256)].iter().map(|pid| *pid as u32).collect()
 }
 
+/// Dove sta una finestra sullo schermo e quanto e' stata ridotta la foto:
+/// serve a tradurre le coordinate della foto in quelle dello schermo.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowPlace {
+    pub left: i32,
+    pub top: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Le finestre visibili (non ridotte a icona) dei processi indicati.
 #[cfg(target_os = "windows")]
-pub fn capture_windows_of(pids: &[u32]) -> Vec<WindowShot> {
+pub fn windows_of(pids: &[u32]) -> Vec<isize> {
     use windows_sys::core::BOOL;
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -129,14 +141,14 @@ pub fn capture_windows_of(pids: &[u32]) -> Vec<WindowShot> {
 
     struct Search {
         pids: Vec<u32>,
-        found: Vec<HWND>,
+        found: Vec<isize>,
     }
     unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let search = &mut *(lparam as *mut Search);
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, &mut pid);
         if search.pids.contains(&pid) && IsWindowVisible(hwnd) != 0 && IsIconic(hwnd) == 0 {
-            search.found.push(hwnd);
+            search.found.push(hwnd as isize);
         }
         1
     }
@@ -144,35 +156,50 @@ pub fn capture_windows_of(pids: &[u32]) -> Vec<WindowShot> {
     unsafe {
         EnumWindows(Some(each), &mut search as *mut Search as LPARAM);
     }
-    search
-        .found
+    search.found
+}
+
+#[cfg(target_os = "windows")]
+pub fn capture_windows_of(pids: &[u32]) -> Vec<WindowShot> {
+    windows_of(pids)
         .into_iter()
-        .filter_map(|hwnd| unsafe { capture_window(hwnd) })
+        .filter_map(|hwnd| unsafe { capture_hwnd(hwnd) }.map(|(shot, _)| shot))
         .take(MAX_SHOTS)
         .collect()
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn capture_window(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<WindowShot> {
+pub fn place_of(hwnd: isize) -> Option<WindowPlace> {
     use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if unsafe { GetWindowRect(hwnd as _, &mut rect) } == 0 {
+        return None;
+    }
+    Some(WindowPlace {
+        left: rect.left,
+        top: rect.top,
+        width: rect.right - rect.left,
+        height: rect.bottom - rect.top,
+    })
+}
+
+#[cfg(target_os = "windows")]
+pub unsafe fn capture_hwnd(hwnd: isize) -> Option<(WindowShot, WindowPlace)> {
     use windows_sys::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
         ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, SRCCOPY,
     };
     use windows_sys::Win32::Storage::Xps::PrintWindow;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowTextW, PW_RENDERFULLCONTENT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowTextW, PW_RENDERFULLCONTENT};
 
-    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-    if GetWindowRect(hwnd, &mut rect) == 0 {
-        return None;
-    }
-    let width = rect.right - rect.left;
-    let height = rect.bottom - rect.top;
+    let place = place_of(hwnd)?;
+    let (width, height) = (place.width, place.height);
     if width < 40 || height < 30 || width > 10_000 || height > 10_000 {
         return None; // finestre di servizio o dimensioni assurde
     }
     let mut title_buffer = [0u16; 256];
-    let length = GetWindowTextW(hwnd, title_buffer.as_mut_ptr(), title_buffer.len() as i32);
+    let length = GetWindowTextW(hwnd as _, title_buffer.as_mut_ptr(), title_buffer.len() as i32);
     let title = String::from_utf16_lossy(&title_buffer[..length.max(0) as usize]);
 
     let screen = GetDC(std::ptr::null_mut());
@@ -182,8 +209,8 @@ unsafe fn capture_window(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<W
     let memory = CreateCompatibleDC(screen);
     let bitmap = CreateCompatibleBitmap(screen, width, height);
     let previous = SelectObject(memory, bitmap);
-    if PrintWindow(hwnd, memory, PW_RENDERFULLCONTENT) == 0 {
-        BitBlt(memory, 0, 0, width, height, screen, rect.left, rect.top, SRCCOPY);
+    if PrintWindow(hwnd as _, memory, PW_RENDERFULLCONTENT) == 0 {
+        BitBlt(memory, 0, 0, width, height, screen, place.left, place.top, SRCCOPY);
     }
     let mut info: BITMAPINFO = std::mem::zeroed();
     info.bmiHeader = BITMAPINFOHEADER {
@@ -212,7 +239,7 @@ unsafe fn capture_window(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<W
     if lines == 0 {
         return None;
     }
-    shot_from_bgra(title, width as u32, height as u32, pixels).ok()
+    shot_from_bgra(title, width as u32, height as u32, pixels).ok().map(|shot| (shot, place))
 }
 
 #[cfg(test)]

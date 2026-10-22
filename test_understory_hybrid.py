@@ -1077,6 +1077,9 @@ def test_tauri_desktop_shell_targets_workspace_app():
         "allow-apply-local-workspace-changes",
         "allow-local-workspace-changes",
         "allow-undo-local-workspace-plan",
+        "allow-start-local-program",
+        "allow-act-local-program",
+        "allow-stop-local-program",
         "allow-desktop-update-check",
         "allow-desktop-update-open",
     ]

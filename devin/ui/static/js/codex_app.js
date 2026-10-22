@@ -3786,6 +3786,62 @@ async function apriModificheLocali(workspace) {
   overlay.focus();
 }
 
+// DEVIN usa un'app (22/10), con lo stesso metodo di Claude: prima di toccare
+// mouse e tastiera chiede ad Alessandro il permesso per QUELL'app; mentre la usa
+// una striscia in alto lo dice e permette di fermarlo.
+function bannerProgramma(ctx) {
+  let banner = document.getElementById("devin-usa-programma");
+  const aperti = [...(ctx.programmi?.values() || [])].filter((p) => p.consentito).map((p) => p.titolo);
+  if (!aperti.length) {
+    banner?.remove();
+    return;
+  }
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "devin-usa-programma";
+    banner.className = "devin-usa-programma";
+    const testo = document.createElement("span");
+    const ferma = document.createElement("button");
+    ferma.type = "button";
+    ferma.className = "tiny-button";
+    ferma.textContent = "Ferma";
+    ferma.addEventListener("click", () => { void chiudiProgrammi(ctx); });
+    banner.append(testo, ferma);
+    document.body.append(banner);
+  }
+  banner.querySelector("span").textContent = `\u{1F446} DEVIN sta usando «${aperti.join("», «")}»: `
+    + "lascia stare mouse e tastiera finche' non ha finito.";
+}
+
+async function chiudiProgrammi(ctx) {
+  const ids = [...(ctx.programmi?.keys() || [])];
+  for (const id of ids) {
+    try { await desktopInvoke("stop_local_program", { programId: id }); } catch { /* gia' chiuso */ }
+    ctx.programmi.delete(id);
+  }
+  bannerProgramma(ctx);
+}
+
+function esitoProgramma(ricevuta, intestazione) {
+  const foto = ricevuta.screenshot;
+  const righe = [intestazione];
+  if (ricevuta.done?.length) righe.push(`fatto: ${ricevuta.done.join("; ")}`);
+  if (ricevuta.error) righe.push(`ERRORE: ${ricevuta.error}`);
+  if (ricevuta.windows?.length) righe.push(`finestre: ${ricevuta.windows.map((t) => `«${t || "senza titolo"}»`).join(", ")}`);
+  if (foto) righe.push(`foto della finestra «${foto.title || "senza titolo"}» ${foto.width}x${foto.height}: `
+    + "le coordinate x, y di usa_programma sono pixel di questa foto");
+  else if (ricevuta.running) righe.push("nessuna finestra visibile per ora: aspetta e guarda di nuovo (azione aspetta)");
+  if (!ricevuta.running) {
+    righe.push(`programma chiuso · exit ${ricevuta.exit_code ?? "?"} · ${ricevuta.duration_ms} ms`);
+    righe.push(`--- stdout ---\n${localAgentBoundedText(ricevuta.stdout || "", 8000)}`);
+    righe.push(`--- stderr ---\n${localAgentBoundedText(ricevuta.stderr || "", 6000)}`);
+  }
+  return {
+    testo: righe.join("\n"),
+    immagini: foto ? [{ url: `data:image/png;base64,${foto.png_base64}`, titolo: foto.title || "" }] : [],
+  };
+}
+
 async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
   const a = chiamata.arguments || {};
   try {
@@ -3830,6 +3886,62 @@ async function eseguiStrumentoLocale(chiamata, workspace, ctx) {
         + `${ricevuta.timed_out ? " · TEMPO SCADUTO" : ""}${ricevuta.cancelled ? " · ANNULLATO" : ""}\n`
         + `--- stdout ---\n${localAgentBoundedText(ricevuta.stdout || "", 12000)}\n`
         + `--- stderr ---\n${localAgentBoundedText(ricevuta.stderr || "", 8000)}`;
+    }
+    if (chiamata.name === "apri_programma") {
+      const programId = localUuid();
+      const ricevuta = await desktopInvoke("start_local_program", {
+        bridgeId: workspace.bridge_id,
+        programId,
+        program: String(a.programma || ""),
+        args: Array.isArray(a.argomenti) ? a.argomenti.map(String) : [],
+        cwd: String(a.cartella || "."),
+        waitSeconds: Math.min(60, Math.max(1, Number(a.aspetta_secondi) || 5)),
+      });
+      if (ricevuta.running) {
+        (ctx.programmi ||= new Map()).set(programId, {
+          titolo: ricevuta.screenshot?.title || String(a.programma || "programma"), consentito: false,
+        });
+      }
+      return esitoProgramma(ricevuta, ricevuta.running
+        ? `programma aperto · id ${programId}`
+        : "il programma si e' chiuso prima di aprire una finestra");
+    }
+    if (chiamata.name === "usa_programma" || chiamata.name === "chiudi_programma") {
+      const programId = String(a.id || "");
+      const programma = ctx.programmi?.get(programId);
+      if (!programma) {
+        return `ERRORE: nessun programma aperto con id ${programId || "(vuoto)"}; aprilo con apri_programma`;
+      }
+      if (chiamata.name === "chiudi_programma") {
+        const ricevuta = await desktopInvoke("stop_local_program", { programId });
+        ctx.programmi.delete(programId);
+        bannerProgramma(ctx);
+        return esitoProgramma(ricevuta, "programma chiuso").testo;
+      }
+      if (!programma.consentito) {
+        // come Claude: il permesso di usare mouse e tastiera lo da' Alessandro, per quell'app
+        programma.consentito = await confirmModal(
+          `DEVIN vuole usare «${programma.titolo}» con il mouse e la tastiera del PC (clic, testo, tasti), `
+            + "solo sulle finestre di quel programma. Mentre lo fa non toccare mouse e tastiera; "
+            + "puoi fermarlo con «Ferma» nella striscia in alto. Consenti?",
+          { okLabel: "Consenti" },
+        );
+        if (!programma.consentito) {
+          return "Alessandro NON ha dato il permesso di usare questo programma con mouse e tastiera: "
+            + "non usarlo, guardalo soltanto o chiudilo.";
+        }
+        bannerProgramma(ctx);
+      }
+      const ricevuta = await desktopInvoke("act_local_program", {
+        programId,
+        actions: Array.isArray(a.azioni) ? a.azioni : [],
+        waitMs: Math.min(10000, Math.max(0, Number(a.aspetta_ms ?? 500) || 0)),
+      });
+      if (!ricevuta.running) {
+        ctx.programmi.delete(programId);
+        bannerProgramma(ctx);
+      }
+      return esitoProgramma(ricevuta, ricevuta.running ? "azioni eseguite" : "il programma si e' chiuso");
     }
     if (chiamata.name === "guarda_programma") {
       // 22/10: DEVIN avvia l'app, aspetta, fotografa le sue finestre e la chiude
@@ -3933,8 +4045,9 @@ async function runLocalWorkspaceAgent(task, workspace, assistantNode, signal) {
     }
   } finally {
     // anche se il ciclo si ferma (Stop, errore) le modifiche gia' applicate
-    // restano visibili e annullabili
+    // restano visibili e annullabili, e i programmi aperti si chiudono
     mostraModificheApplicate(assistantNode, workspace, ctx.applicati);
+    await chiudiProgrammi(ctx);
   }
   chiudiRisposta(assistantNode);
   const finale = dividiLavoro(splitReasoning(assistantNode._raw || "").answer).finale;

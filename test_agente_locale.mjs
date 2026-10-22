@@ -20,7 +20,14 @@ function costante(nome) {
 }
 
 function ambiente({ desktop = {}, passi = [], conferma = true, modo = "revisione" } = {}) {
-  const log = { invoke: [], richieste: [], eventi: [], training: [], conferme: 0, mostrate: [] };
+  const log = { invoke: [], richieste: [], eventi: [], training: [], conferme: 0, mostrate: [], banner: [] };
+  const nodoFinto = () => ({ children: [], textContent: "", append(...figli) { this.children.push(...figli); },
+    addEventListener() {}, remove() { log.banner.push("tolto"); documento.corrente = null; },
+    querySelector() { return this.children[0]; } });
+  const documento = { corrente: null,
+    getElementById: () => documento.corrente,
+    createElement: () => nodoFinto(),
+    body: { append(nodo) { documento.corrente = nodo; log.banner.push("messo"); } } };
   const state = { selectedProjectPath: "/w/spyengine", selectedChatId: "c1", reasoningEffort: "", localCommandId: null };
   const sse = (eventi) => eventi.map(([tipo, dati]) => (tipo ? `event: ${tipo}\n` : "") + `data: ${JSON.stringify(dati)}\n\n`).join("");
   const stub = {
@@ -34,6 +41,7 @@ function ambiente({ desktop = {}, passi = [], conferma = true, modo = "revisione
     },
     confirmModal: async () => { log.conferme += 1; return conferma; },
     modoApplica: () => modo,
+    document: documento,
     mostraModificheApplicate: (nodo, ws, applicati) => { log.mostrate.push([...(applicati || [])]); },
     errorMessage: (e) => String(e?.message || e),
     apiFetch: async (url, opzioni) => {
@@ -58,7 +66,8 @@ function ambiente({ desktop = {}, passi = [], conferma = true, modo = "revisione
     loadProjectTree: async () => {}, renderActivityRail: async () => {},
   };
   const NOMI = ["parseSseBlock", "localAgentBoundedText", "localExecutionTrainingEvidence", "formatoRigheLocali",
-    "elencoLocale", "proponiModificheLocali", "applicaModificheLocali", "eseguiStrumentoLocale", "chiudiRisposta", "runLocalWorkspaceAgent"];
+    "elencoLocale", "proponiModificheLocali", "applicaModificheLocali", "bannerProgramma", "chiudiProgrammi",
+    "esitoProgramma", "eseguiStrumentoLocale", "chiudiRisposta", "runLocalWorkspaceAgent"];
   const COSTANTI = ["AGENTE_LOCALE_RIGHE", "AGENTE_LOCALE_MAX_RIGHE", "AGENTE_LOCALE_MAX_CARATTERI", "AGENTE_LOCALE_MAX_ELENCO"];
   const corpo = COSTANTI.map(costante).join("\n") + "\n" + NOMI.map(estrai).join("\n") + `\nreturn { ${NOMI.join(", ")} };`;
   const f = new Function(...Object.keys(stub), corpo)(...Object.values(stub));
@@ -185,6 +194,70 @@ prova("le foto delle finestre tornano al rig insieme al risultato", async () => 
   assert.equal(risultato.id, "g0");
   assert.match(risultato.content, /finito prima della foto/);
   assert.deepEqual(risultato.immagini, []);
+});
+
+prova("apri e usa un programma: chiede il permesso per quell'app, poi clic e foto", async () => {
+  const foto = { title: "SpyEngine", width: 968, height: 548, png_base64: "iVBORw0KGgo=" };
+  const { f, log } = ambiente({ conferma: false, desktop: {
+    start_local_program: (a) => ({ program_id: a.programId, running: true, windows: ["SpyEngine"], screenshot: foto, done: [] }),
+    act_local_program: { running: true, windows: ["SpyEngine"], screenshot: foto, done: ["clic in (40, 60)"] },
+    stop_local_program: { running: false, exit_code: 0, stdout: "chiusa", stderr: "", duration_ms: 9000 },
+  } });
+  const ctx = { esecuzioni: [], piani: [] };
+  const aperto = await f.eseguiStrumentoLocale({ name: "apri_programma", arguments: { programma: "python", argomenti: ["app.py"] } }, WS, ctx);
+  const id = aperto.testo.match(/id (\S+)/)[1];
+  assert.equal(log.invoke[0][0], "start_local_program");
+  assert.match(aperto.testo, /foto della finestra «SpyEngine» 968x548/);
+  assert.equal(aperto.immagini.length, 1);
+  assert.equal(log.banner.length, 0, "aperto ma non ancora usato: nessuna striscia");
+  // senza permesso non si tocca niente
+  const stub = f;
+  const negato = await stub.eseguiStrumentoLocale({ name: "usa_programma", arguments: { id, azioni: [{ tipo: "clic", x: 40, y: 60 }] } }, WS, ctx);
+  assert.match(negato, /NON ha dato il permesso/);
+  assert.ok(!log.invoke.some(([c]) => c === "act_local_program"));
+  assert.equal(await stub.eseguiStrumentoLocale({ name: "usa_programma", arguments: { id: "inventato", azioni: [] } }, WS, ctx)
+    .then((r) => /nessun programma aperto/.test(r)), true);
+  await stub.chiudiProgrammi(ctx);
+  assert.ok(log.invoke.some(([c, a]) => c === "stop_local_program" && a.programId === id), "Ferma chiude i programmi");
+});
+
+prova("con il permesso usa il programma, la striscia avvisa e alla fine si chiude tutto", async () => {
+  const foto = { title: "SpyEngine", width: 968, height: 548, png_base64: "iVBORw0KGgo=" };
+  const { f, log } = ambiente({ conferma: true, desktop: {
+    start_local_program: (a) => ({ program_id: a.programId, running: true, windows: ["SpyEngine"], screenshot: foto, done: [] }),
+    act_local_program: { running: true, windows: ["SpyEngine"], screenshot: foto, done: ["clic in (40, 60)", "scritto 4 caratteri"] },
+    stop_local_program: { running: false, exit_code: 0, stdout: "", stderr: "", duration_ms: 1 },
+  } });
+  const ctx = { esecuzioni: [], piani: [] };
+  const aperto = await f.eseguiStrumentoLocale({ name: "apri_programma", arguments: { programma: "python" } }, WS, ctx);
+  const id = aperto.testo.match(/id (\S+)/)[1];
+  const usato = await f.eseguiStrumentoLocale({ name: "usa_programma", arguments: {
+    id, azioni: [{ tipo: "clic", x: 40, y: 60 }, { tipo: "scrivi", testo: "ram" }], aspetta_ms: 99999 } }, WS, ctx);
+  assert.equal(log.conferme, 1);
+  const azione = log.invoke.find(([c]) => c === "act_local_program")[1];
+  assert.deepEqual(azione.actions, [{ tipo: "clic", x: 40, y: 60 }, { tipo: "scrivi", testo: "ram" }]);
+  assert.equal(azione.waitMs, 10000, "attesa al massimo 10 s");
+  assert.match(usato.testo, /fatto: clic in \(40, 60\); scritto 4 caratteri/);
+  assert.deepEqual(log.banner, ["messo"], "la striscia avvisa che mouse e tastiera sono di DEVIN");
+  await f.eseguiStrumentoLocale({ name: "usa_programma", arguments: { id, azioni: [{ tipo: "tasti", tasti: "invio" }] } }, WS, ctx);
+  assert.equal(log.conferme, 1, "il permesso vale per quell'app finche' resta aperta");
+  const chiuso = await f.eseguiStrumentoLocale({ name: "chiudi_programma", arguments: { id } }, WS, ctx);
+  assert.match(chiuso, /programma chiuso/);
+  assert.deepEqual(log.banner, ["messo", "tolto"]);
+});
+
+prova("i programmi rimasti aperti si chiudono a fine ciclo", async () => {
+  const { f, log } = ambiente({
+    desktop: {
+      start_local_program: (a) => ({ program_id: a.programId, running: true, windows: [], screenshot: null, done: [] }),
+      stop_local_program: { running: false, exit_code: 0, stdout: "", stderr: "", duration_ms: 1 },
+    },
+    passi: [
+      [["sessione", { session_id: "s1" }], ["strumenti", { session_id: "s1", chiamate: [{ id: "a0", name: "apri_programma", arguments: { programma: "node" } }] }]],
+      [["sessione", { session_id: "s1" }], ["", { token: "fatto" }], ["done", {}]],
+    ] });
+  await f.runLocalWorkspaceAgent("prova", WS, { textContent: "" }, null);
+  assert.ok(log.invoke.some(([c]) => c === "stop_local_program"));
 });
 
 prova("il ciclo: compito, strumenti al PC, risultati con la sessione, risposta", async () => {

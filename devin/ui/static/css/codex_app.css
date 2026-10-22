@@ -6355,3 +6355,8 @@ body.codex-shell {
 .memoria-stato { font-size: 11px; opacity: 0.75; white-space: nowrap; }
 .memoria-dettaglio { margin-top: 3px; overflow-wrap: anywhere; opacity: 0.85; }
 .memoria-azioni { display: flex; gap: 6px; margin-top: 6px; }
+
+/* DEVIN usa un'app sul PC: mouse e tastiera sono suoi (22/10) */
+.devin-usa-programma { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10001;
+  display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+  background: rgba(234, 88, 12, 0.95); color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); max-width: 90vw; }

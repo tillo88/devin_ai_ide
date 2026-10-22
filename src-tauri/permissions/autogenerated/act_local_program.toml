@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-act-local-program"
+description = "Enables the act_local_program command without any pre-configured scope."
+commands.allow = ["act_local_program"]
+
+[[permission]]
+identifier = "deny-act-local-program"
+description = "Denies the act_local_program command without any pre-configured scope."
+commands.deny = ["act_local_program"]
