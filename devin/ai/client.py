@@ -725,6 +725,10 @@ class AIClient:
         consegnare il ragionamento spacciandolo per risposta.
         """
         if _APRE_PENSIERO not in testo:
+            if _CHIUDE_PENSIERO in testo:
+                # pensiero aperto dal template: il modello scrive solo la chiusura
+                pensiero, _, dopo = testo.partition(_CHIUDE_PENSIERO)
+                return pensiero, dopo
             return "", testo
         prima, _, resto = testo.partition(_APRE_PENSIERO)
         if _CHIUDE_PENSIERO not in resto:
@@ -1215,6 +1219,16 @@ class AIClient:
             # un retry riparte da capo, e un pensiero rimasto aperto nel
             # tentativo fallito non deve sporcare quello nuovo.
             dentro_il_pensiero = False
+            # 22/10: dopo il risultato di uno strumento il template apre lui il
+            # pensiero e il server, in quei turni, non lo separa: arrivava in
+            # `content` il ragionamento seguito da un "</think>" solo, e finiva
+            # nella risposta (in inglese, "Hmm, wait..."). Finche' non si sa,
+            # il testo che arriva senza `reasoning_content` si tratta come
+            # pensiero provvisorio: se arriva "</think>" lo era davvero; se lo
+            # stream finisce senza, era la risposta e si consegna come tale.
+            provvisorio = False
+            pensiero_provvisorio = ""
+            visto_pensiero = False
             coda = ""
             finish_reason = None
             chiamate = {}
@@ -1314,11 +1328,19 @@ class AIClient:
                         # 1) La via pulita: il server ha separato lui il pensiero.
                         pensiero = delta.get('reasoning_content')
                         if pensiero:
+                            visto_pensiero = True
                             yield {"tipo": "ragionamento", "testo": pensiero}
 
                         testo = delta.get('content')
                         if not testo:
                             continue
+                        if not visto_pensiero and not dentro_il_pensiero:
+                            inizio = (coda + testo).lstrip()
+                            if inizio:                      # si decide una volta, al primo testo vero
+                                visto_pensiero = True
+                                if not (inizio.startswith(_APRE_PENSIERO)
+                                        or _APRE_PENSIERO.startswith(inizio)):
+                                    dentro_il_pensiero = provvisorio = True
 
                         # 2) La via sporca: il pensiero arriva dentro `content`
                         # fra <think> e </think>, e i marcatori possono essere
@@ -1330,14 +1352,17 @@ class AIClient:
                                 if fine == -1:
                                     tieni = self._quanto_trattenere(coda, _CHIUDE_PENSIERO)
                                     if len(coda) > tieni:
+                                        if provvisorio:
+                                            pensiero_provvisorio += coda[:len(coda) - tieni]
                                         yield {"tipo": "ragionamento",
                                                "testo": coda[:len(coda) - tieni]}
                                         coda = coda[len(coda) - tieni:]
                                     break
                                 if fine:
                                     yield {"tipo": "ragionamento", "testo": coda[:fine]}
-                                coda = coda[fine + len(_CHIUDE_PENSIERO):]
-                                dentro_il_pensiero = False
+                                coda = coda[fine + len(_CHIUDE_PENSIERO):].lstrip("\n")
+                                dentro_il_pensiero = provvisorio = False
+                                pensiero_provvisorio = ""
                                 continue
 
                             inizio = coda.find(_APRE_PENSIERO)
@@ -1355,7 +1380,11 @@ class AIClient:
 
                     # Che sia arrivato [DONE] o che lo stream sia finito da solo,
                     # quello che e' rimasto trattenuto va consegnato.
-                    if coda:
+                    if provvisorio and dentro_il_pensiero:
+                        # nessun "</think>": non era pensiero, era la risposta
+                        if pensiero_provvisorio + coda:
+                            yield {"tipo": "risposta", "testo": pensiero_provvisorio + coda}
+                    elif coda:
                         yield {"tipo": "ragionamento" if dentro_il_pensiero else "risposta",
                                "testo": coda}
                     if chiamate:

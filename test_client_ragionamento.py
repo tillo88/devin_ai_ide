@@ -708,3 +708,40 @@ def test_un_turno_con_strumenti_vuoti_non_manda_tools(client):
     client._stato["risposta"] = _FintaRisposta(righe)
     client.chiama_con_strumenti([{"role": "user", "content": "x"}], [CERCA])
     assert client._stato["corpi"][-1]["tools"] == [CERCA] and client._stato["corpi"][-1]["tool_choice"] == "auto"
+
+
+# --- pensiero aperto dal template (22/10) -------------------------------------
+
+def test_il_pensiero_senza_apertura_non_finisce_nella_risposta(client):
+    """22/10, spyengine: dopo uno strumento il server non separava il pensiero e
+    nella risposta finiva "Hmm, wait... Let me write the scratch file. </think>"."""
+    eventi = _stream(client, [{"content": "Hmm, wait. Let me"}, {"content": " check.\n</th"},
+                              {"content": "ink>\n\nHo controllato i file."}])
+    assert _unisci(eventi, "risposta") == "Ho controllato i file."
+    assert _unisci(eventi, "ragionamento") == "Hmm, wait. Let me check.\n"
+
+
+def test_senza_chiusura_il_testo_provvisorio_era_la_risposta(client):
+    eventi = _stream(client, [{"content": "Ecco "}, {"content": "la risposta."}])
+    assert _unisci(eventi, "risposta") == "Ecco la risposta."
+    assert [e["tipo"] for e in eventi if e["tipo"] == "risposta"] == ["risposta"], "una volta sola, alla fine"
+
+
+def test_col_pensiero_separato_dal_server_la_risposta_scorre_subito(client):
+    eventi = _stream(client, [{"reasoning_content": "penso"}, {"content": "uno "}, {"content": "due"}])
+    assert [e["testo"] for e in eventi if e["tipo"] == "risposta"] == ["uno ", "due"]
+
+
+def test_spazi_iniziali_non_decidono(client):
+    eventi = _stream(client, [{"content": "\n"}, {"content": "<think>x</think>y"}])
+    assert _unisci(eventi, "risposta").strip() == "y" and _unisci(eventi, "ragionamento") == "x"
+
+
+def test_spezza_pensiero_con_sola_chiusura():
+    from devin.ai.client import AIClient
+    assert AIClient._spezza_pensiero("penso ancora</think>ecco") == ("penso ancora", "ecco")
+
+
+def test_uno_spazio_iniziale_non_spegne_il_pensiero_provvisorio(client):
+    eventi = _stream(client, [{"content": "\n"}, {"content": "Hmm, ragiono</think>risposta"}])
+    assert _unisci(eventi, "risposta").strip() == "risposta"
