@@ -257,6 +257,12 @@ async def riscalda_cache_del_modello() -> str:
 
 
 @app.on_event("startup")
+async def _riavvio_col_codice_nuovo():
+    from devin.core import riavvio_codice
+    riavvio_codice.avvia()
+
+
+@app.on_event("startup")
 async def _riscaldamento_all_avvio():
     if os.environ.get("DEVIN_RISCALDAMENTO", "1") == "0":
         return
@@ -1020,8 +1026,11 @@ def run_server():
     except KeyboardInterrupt:
         pass
     finally:
-        print("\n[SHUTDOWN] Chiusura forzata (i modelli locali/rig restano attivi in background)...")
-        os._exit(0)
+        from devin.core import riavvio_codice
+        codice = riavvio_codice.codice_uscita()
+        print("\n[SHUTDOWN] Chiusura forzata (i modelli locali/rig restano attivi in background)..."
+              + (f" Esco con {codice}: systemd mi riavvia col codice nuovo." if codice else ""))
+        os._exit(codice)
 
 
 if __name__ == "__main__":

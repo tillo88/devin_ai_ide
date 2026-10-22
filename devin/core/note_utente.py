@@ -51,6 +51,12 @@ def attiva(chiave: str) -> bool:
         return chiave in _ATTIVE
 
 
+def aperte() -> Dict[str, int]:
+    """Copia delle conversazioni aperte (chiave -> quante): chi lavora adesso."""
+    with _LOCK:
+        return dict(_ATTIVE)
+
+
 def aggiungi(chiave: str, testo: str) -> int:
     testo = str(testo or "").strip()
     if not testo:

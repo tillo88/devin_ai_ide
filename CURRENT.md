@@ -5,6 +5,14 @@
 **Punto di ingresso:** questo file, poi `AGENTS.md` e
 `docs/CURRENT_ARCHITECTURE.md`.
 
+## Aggiornamento 22/10: il backend si riavvia da solo col codice nuovo
+
+Il deploy (`git pull` in `/opt`) non riavviava il backend: il 21/10 #95-#97 sono
+rimasti fermi per ore e DEVIN ha ripetuto un errore gia' corretto. Ora il
+backend controlla ogni minuto il commit della cartella e, quando DEVIN e'
+libero, esce con 75 e systemd lo riavvia (`devin/core/riavvio_codice.py`; solo
+sotto systemd, `DEVIN_RIAVVIO_AUTOMATICO=0` lo spegne).
+
 ## Aggiornamento 22/10: DEVIN applica da solo, con backup e Annulla
 
 Decisione dell'operatore: le modifiche DEVIN puo' farle da sola, "l'importante e'
