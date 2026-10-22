@@ -23,10 +23,10 @@ const MAX_TIMEOUT_SECONDS: u64 = 900;
 const MAX_LOOK_SECONDS: u64 = 60;
 
 #[derive(Clone)]
-struct RunningProcess {
-    child: Arc<Mutex<Child>>,
+pub(crate) struct RunningProcess {
+    pub(crate) child: Arc<Mutex<Child>>,
     #[cfg(target_os = "windows")]
-    job: Arc<WindowsJob>,
+    pub(crate) job: Arc<WindowsJob>,
 }
 
 #[derive(Clone, Default)]
@@ -61,15 +61,15 @@ pub struct LocalCommandReceipt {
     screenshots: Vec<WindowShot>,
 }
 
-struct CapturedStream {
-    text: String,
-    bytes: usize,
-    sha256: String,
-    truncated: bool,
+pub(crate) struct CapturedStream {
+    pub(crate) text: String,
+    pub(crate) bytes: usize,
+    pub(crate) sha256: String,
+    pub(crate) truncated: bool,
 }
 
 #[cfg(target_os = "windows")]
-struct WindowsJob(isize);
+pub(crate) struct WindowsJob(pub(crate) isize);
 
 #[cfg(target_os = "windows")]
 unsafe impl Send for WindowsJob {}
@@ -87,7 +87,7 @@ impl Drop for WindowsJob {
     }
 }
 
-fn normalized_program(raw: &str) -> Result<String, String> {
+pub(crate) fn normalized_program(raw: &str) -> Result<String, String> {
     let program = raw.trim().to_ascii_lowercase();
     if program.is_empty()
         || program.contains('/')
@@ -110,7 +110,7 @@ fn normalized_program(raw: &str) -> Result<String, String> {
     Ok(program)
 }
 
-fn validate_args(program: &str, args: &[String]) -> Result<(), String> {
+pub(crate) fn validate_args(program: &str, args: &[String]) -> Result<(), String> {
     if args.len() > MAX_ARGS {
         return Err(format!("Comando oltre il limite di {MAX_ARGS} argomenti"));
     }
@@ -179,7 +179,7 @@ fn validate_args(program: &str, args: &[String]) -> Result<(), String> {
 /// riporta indietro. Le installazioni vanno nell'ambiente del progetto: si
 /// crea con `python -m venv .venv` (dentro la cartella) e si installa con il
 /// suo Python, che passa da `project_venv_program`.
-fn reject_system_install(program: &str, args: &[String]) -> Result<(), String> {
+pub(crate) fn reject_system_install(program: &str, args: &[String]) -> Result<(), String> {
     if !matches!(program, "python" | "python3" | "py") {
         return Ok(());
     }
@@ -200,7 +200,7 @@ fn reject_system_install(program: &str, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn safe_cwd(root: &Path, raw: &str) -> Result<(PathBuf, String), String> {
+pub(crate) fn safe_cwd(root: &Path, raw: &str) -> Result<(PathBuf, String), String> {
     let value = raw.trim();
     if value.is_empty() || value == "." {
         return Ok((root.to_path_buf(), ".".to_string()));
@@ -236,7 +236,7 @@ fn safe_cwd(root: &Path, raw: &str) -> Result<(PathBuf, String), String> {
 /// `pyvenv.cfg`, cioe' un ambiente virtuale vero, sempre dentro la cartella
 /// autorizzata. Restituisce il tipo ("python" o "pytest", per le stesse regole
 /// sugli argomenti) e il percorso da eseguire; None se `raw` non e' un percorso.
-fn project_venv_program(root: &Path, raw: &str) -> Result<Option<(String, PathBuf)>, String> {
+pub(crate) fn project_venv_program(root: &Path, raw: &str) -> Result<Option<(String, PathBuf)>, String> {
     let value = raw.trim().replace('\\', "/");
     if !value.contains('/') {
         return Ok(None);
@@ -275,7 +275,7 @@ fn project_venv_program(root: &Path, raw: &str) -> Result<Option<(String, PathBu
     Ok(Some((kind.to_string(), target)))
 }
 
-fn resolved_command(program: &str, args: &[String]) -> (String, Vec<String>) {
+pub(crate) fn resolved_command(program: &str, args: &[String]) -> (String, Vec<String>) {
     match program {
         "python" | "python3" => {
             let mut resolved = vec!["-3".to_string()];
@@ -295,7 +295,7 @@ fn resolved_command(program: &str, args: &[String]) -> (String, Vec<String>) {
     }
 }
 
-fn configure_environment(command: &mut Command) {
+pub(crate) fn configure_environment(command: &mut Command) {
     const ALLOWED_ENV: &[&str] = &[
         "PATH", "PATHEXT", "SystemRoot", "WINDIR", "TEMP", "TMP", "USERPROFILE",
         "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA", "APPDATA", "CARGO_HOME", "RUSTUP_HOME",
@@ -315,16 +315,16 @@ fn configure_environment(command: &mut Command) {
 }
 
 #[cfg(target_os = "windows")]
-fn hide_command_window(command: &mut Command) {
+pub(crate) fn hide_command_window(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     command.creation_flags(0x0800_0000);
 }
 
 #[cfg(not(target_os = "windows"))]
-fn hide_command_window(_command: &mut Command) {}
+pub(crate) fn hide_command_window(_command: &mut Command) {}
 
 #[cfg(target_os = "windows")]
-fn assign_kill_on_close_job(child: &Child) -> Result<Arc<WindowsJob>, String> {
+pub(crate) fn assign_kill_on_close_job(child: &Child) -> Result<Arc<WindowsJob>, String> {
     use std::mem::size_of;
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::System::JobObjects::{
@@ -357,14 +357,14 @@ fn assign_kill_on_close_job(child: &Child) -> Result<Arc<WindowsJob>, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn terminate_job(job: &WindowsJob) {
+pub(crate) fn terminate_job(job: &WindowsJob) {
     use windows_sys::Win32::System::JobObjects::TerminateJobObject;
     unsafe {
         TerminateJobObject(job.0 as _, 1);
     }
 }
 
-fn capture_stream<R: Read>(mut reader: R) -> CapturedStream {
+pub(crate) fn capture_stream<R: Read>(mut reader: R) -> CapturedStream {
     let mut digest = Sha256::new();
     let mut total = 0usize;
     let mut head = Vec::new();
@@ -409,7 +409,7 @@ fn capture_stream<R: Read>(mut reader: R) -> CapturedStream {
     }
 }
 
-fn terminate_running(running: &RunningProcess) {
+pub(crate) fn terminate_running(running: &RunningProcess) {
     #[cfg(target_os = "windows")]
     terminate_job(&running.job);
     if let Ok(mut child) = running.child.lock() {

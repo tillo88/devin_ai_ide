@@ -287,3 +287,15 @@ def test_la_storia_si_sposta_a_scatti_cosi_il_server_la_riprende_dalla_cache():
     # due domande di fila: la storia della seconda comincia come quella della prima
     primo, secondo = prefisso(12), prefisso(14)
     assert secondo[:len(primo)] == primo
+
+
+def test_gli_strumenti_per_usare_le_app():
+    """22/10: apri, usa (clic, testo, tasti, scorri), chiudi; le azioni le valida il desktop."""
+    nomi = {s["function"]["name"]: s["function"] for s in agente_locale.STRUMENTI}
+    assert {"apri_programma", "usa_programma", "chiudi_programma"} <= set(nomi)
+    usa = nomi["usa_programma"]["parameters"]
+    assert usa["required"] == ["id", "azioni"]
+    assert usa["properties"]["azioni"]["items"]["properties"]["tipo"]["enum"] == ["clic", "scrivi", "tasti", "scorri", "aspetta"]
+    assert agente_locale.etichetta("apri_programma", {"programma": "python", "argomenti": ["app.py"]}) == "🪟 Apro python app.py"
+    assert agente_locale.etichetta("usa_programma", {"azioni": [{"tipo": "clic"}, {"tipo": "scrivi"}]}) == "👆 Uso il programma: clic, scrivi"
+    assert "usa_programma" in agente_locale.SISTEMA

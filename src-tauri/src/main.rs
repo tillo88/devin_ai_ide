@@ -22,10 +22,12 @@ use tauri::Manager;
 mod desktop_transport;
 mod desktop_update;
 mod local_execution;
+mod local_program;
 mod local_screenshot;
 mod local_workspace;
 use desktop_transport::{desktop_http_cancel, desktop_http_stream, DesktopTransportState};
 use desktop_update::{desktop_update_check, desktop_update_open};
+use local_program::{act_local_program, start_local_program, stop_local_program, LocalProgramState};
 use local_execution::{
     cancel_local_workspace_command, run_local_workspace_command, LocalExecutionState,
 };
@@ -403,6 +405,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(DesktopTransportState::new().expect("desktop HTTP transport unavailable"))
         .manage(LocalExecutionState::default())
+        .manage(LocalProgramState::default())
         .invoke_handler(tauri::generate_handler![
             connect_frontdoor,
             desktop_config_status,
@@ -423,6 +426,9 @@ fn main() {
             apply_local_workspace_changes,
             local_workspace_changes,
             undo_local_workspace_plan,
+            start_local_program,
+            act_local_program,
+            stop_local_program,
             desktop_update_check,
             desktop_update_open
         ])

@@ -94,6 +94,44 @@ STRUMENTI: List[Dict[str, Any]] = [
             "aspetta_secondi": {"type": "integer", "description": "quanto aspettare prima di guardare (default 5, max 60)"}},
             "required": ["programma"], "additionalProperties": False}}},
     {"type": "function", "function": {
+        "name": "apri_programma",
+        "description": ("Apre un programma con interfaccia (stesse regole di esegui) e lo lascia aperto per "
+                        "usarlo con usa_programma: ricevi un id, i titoli delle finestre e una foto della "
+                        "finestra principale. Chiudilo con chiudi_programma quando hai finito."),
+        "parameters": {"type": "object", "properties": {
+            "programma": {"type": "string"},
+            "argomenti": {"type": "array", "items": {"type": "string"}},
+            "cartella": {"type": "string", "description": "cartella di lavoro relativa; vuoto = radice"},
+            "aspetta_secondi": {"type": "integer", "description": "quanto aspettare che si apra (default 5, max 60)"}},
+            "required": ["programma"], "additionalProperties": False}}},
+    {"type": "function", "function": {
+        "name": "usa_programma",
+        "description": ("Usa un programma aperto con apri_programma, come una persona: clic, scrittura, tasti, "
+                        "scorrimento, solo sulle sue finestre. x e y sono pixel della foto piu' recente della "
+                        "finestra (ti viene detta la dimensione). Dopo le azioni ricevi una foto nuova: controlla "
+                        "che sia successo quello che volevi. Mouse e tastiera sono quelli veri del PC di "
+                        "Alessandro: poche azioni per volta. tipo: clic (x, y, pulsante sinistro/destro, doppio), "
+                        "scrivi (testo), tasti (es. invio, tab, esc, ctrl+s, f5), scorri (x, y, quanto: + su, "
+                        "- giu'), aspetta (ms)."),
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "l'id dato da apri_programma"},
+            "azioni": {"type": "array", "minItems": 1, "maxItems": 20, "items": {
+                "type": "object", "properties": {
+                    "tipo": {"type": "string", "enum": ["clic", "scrivi", "tasti", "scorri", "aspetta"]},
+                    "x": {"type": "integer"}, "y": {"type": "integer"},
+                    "pulsante": {"type": "string", "enum": ["sinistro", "destro"]},
+                    "doppio": {"type": "boolean"},
+                    "testo": {"type": "string"}, "tasti": {"type": "string"},
+                    "quanto": {"type": "integer"}, "ms": {"type": "integer"}},
+                "required": ["tipo"], "additionalProperties": False}},
+            "aspetta_ms": {"type": "integer", "description": "attesa dopo le azioni prima della foto (default 500)"}},
+            "required": ["id", "azioni"], "additionalProperties": False}}},
+    {"type": "function", "function": {
+        "name": "chiudi_programma",
+        "description": "Chiude un programma aperto con apri_programma e restituisce il suo output.",
+        "parameters": {"type": "object", "properties": {"id": {"type": "string"}},
+                       "required": ["id"], "additionalProperties": False}}},
+    {"type": "function", "function": {
         "name": "proponi_modifiche",
         "description": ("Applica UNA modifica a un file della cartella sul PC, con un backup automatico che "
                         "l'utente puo' annullare (se l'utente ha scelto di approvare prima, aspetta il suo si'). "
@@ -118,7 +156,8 @@ SISTEMA = (
     "Il tuo cervello gira sul rig; l'app desktop sul PC esegue per te gli strumenti e ti rimanda i "
     "risultati. Lavora come un ingegnere: orientati con elenca, cerca quello che serve, leggi i file "
     "che contano (a pezzi se sono lunghi), esegui test o il programma per verificare invece di "
-    "supporre; per un'app con interfaccia usa guarda_programma e controlla le finestre. "
+    "supporre; per un'app con interfaccia aprila con apri_programma, usala con usa_programma "
+    "(clic, testo, tasti) e controlla le foto, poi chiudila. "
     "Vai avanti da solo finche' il compito e' fatto e verificato: non chiedere il permesso di "
     "leggere, di eseguire test o di modificare. Le modifiche passano da proponi_modifiche e hanno "
     "sempre un backup. Dopo ogni modifica lancia i test: se qualcosa fallisce capisci perche', "
@@ -143,6 +182,15 @@ def etichetta(nome: str, argomenti: Dict[str, Any]) -> str:
     if nome == "esegui":
         comando = " ".join([str(a.get("programma", "?"))] + [str(x) for x in (a.get("argomenti") or [])])
         return f"▶ Eseguo {comando[:160]}"
+    if nome == "apri_programma":
+        comando = " ".join([str(a.get("programma", "?"))] + [str(x) for x in (a.get("argomenti") or [])])
+        return f"🪟 Apro {comando[:150]}"
+    if nome == "usa_programma":
+        azioni = a.get("azioni") or []
+        tipi = ", ".join(str((x or {}).get("tipo", "?")) for x in azioni[:6] if isinstance(x, dict))
+        return f"👆 Uso il programma: {tipi}{'…' if len(azioni) > 6 else ''}"
+    if nome == "chiudi_programma":
+        return "✖ Chiudo il programma"
     if nome == "guarda_programma":
         comando = " ".join([str(a.get("programma", "?"))] + [str(x) for x in (a.get("argomenti") or [])])
         return f"👁 Avvio e guardo {comando[:150]}"
@@ -305,8 +353,8 @@ def accetta_risultati(sessione: Sessione, risultati: List[Dict[str, Any]], vede:
                              + f"\n... (tagliato: {len(contenuto)} caratteri; chiedi un pezzo piu' piccolo)")
             immagini = immagini_valide(ricevuto.get("immagini"))
             if immagini and vede:
-                programma = str(chiamata["arguments"].get("programma") or "programma")
-                foto.extend((i["url"], f"finestra «{i['titolo'] or 'senza titolo'}» di {programma} (guarda_programma)")
+                programma = str(chiamata["arguments"].get("programma") or "il programma")
+                foto.extend((i["url"], f"finestra «{i['titolo'] or 'senza titolo'}» di {programma} ({chiamata['name']})")
                             for i in immagini)
                 contenuto += f"\n({len(immagini)} finestra/e: le vedi nel prossimo messaggio)"
             elif immagini:
