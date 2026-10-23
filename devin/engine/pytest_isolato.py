@@ -11,6 +11,12 @@ ne applicava le opzioni dentro la sandbox del modello.
 Qui: ``--rootdir`` e ``--confcutdir`` sul progetto, e ``-c`` sul file di
 configurazione del progetto se ne ha uno, altrimenti su un ini vuoto temporaneo
 fuori dal progetto (niente file scritti nella sandbox).
+
+E sempre ``--ignore`` sulle cartelle di DEVIN dentro il progetto (#1858): la sandbox
+dello scaffold sta in ``<progetto>/workspace/sandboxes/<run>`` e contiene COPIE dei
+test; prima le escludeva per caso il ``norecursedirs = workspace`` del repo, senza
+quello due ``test_gold_x.py`` con lo stesso nome interrompono la raccolta ("import
+file mismatch") e nessun test gira. Stesse cartelle che salta il goal mode.
 """
 from __future__ import annotations
 
@@ -23,6 +29,10 @@ from typing import Iterator, List
 # (file, sezione che lo rende un file di configurazione pytest; None = basta che esista)
 _CONFIG = (("pytest.ini", None), (".pytest.ini", None), ("pyproject.toml", "[tool.pytest.ini_options]"),
            ("tox.ini", "[pytest]"), ("setup.cfg", "[tool:pytest]"))
+
+
+# cartelle di DEVIN dentro un progetto: sandbox (copie dei file), stato, chat, cache
+CARTELLE_DI_DEVIN = ("workspace", ".devin", ".devin_cache", ".devin_chat", ".devin_state")
 
 
 def config_del_progetto(root: Path | str) -> Path | None:
@@ -54,7 +64,9 @@ def argomenti_isolati(root: Path | str) -> Iterator[List[str]]:
             handle.write("[pytest]\n")
         vuoto = Path(nome)
     try:
-        yield ["-c", str(proprio or vuoto), "--rootdir", str(root), "--confcutdir", str(root)]
+        ignora = [arg for nome in CARTELLE_DI_DEVIN if (root / nome).is_dir()
+                  for arg in ("--ignore", str(root / nome))]
+        yield ["-c", str(proprio or vuoto), "--rootdir", str(root), "--confcutdir", str(root), *ignora]
     finally:
         if vuoto is not None:
             try:

@@ -22,8 +22,14 @@ def progetto_dentro_un_repo(tmp_path: Path, codice: str = GIUSTO) -> Path:
         "    raise RuntimeError('conftest del repo caricato nella sandbox')\n")
     proj = tmp_path / "workspace" / "_training_runs" / "mbpp" / "mbpp_3_train_x"
     proj.mkdir(parents=True)
-    (proj / "primes.py").write_text(codice)
-    (proj / "test_gold_mbpp_3.py").write_text(GOLD)
+    # come sul rig (#1858): la sandbox dello scaffold dentro il progetto, con COPIE dei file
+    sandbox = proj / "workspace" / "sandboxes" / "train_x"
+    for cartella in (proj, sandbox):
+        cartella.mkdir(parents=True, exist_ok=True)
+        (cartella / "primes.py").write_text(codice)
+        (cartella / "test_gold_mbpp_3.py").write_text(GOLD)
+    (proj / ".devin_state" / "backup").mkdir(parents=True)
+    (proj / ".devin_state" / "backup" / "test_gold_mbpp_3.py").write_text(GOLD)
     return proj
 
 
@@ -53,8 +59,9 @@ def test_la_configurazione_del_progetto_resta_sua(tmp_path) -> None:
     assert config_del_progetto(proj) == proj / "pyproject.toml"
     (proj / "pytest.ini").write_text("[pytest]\n")
     with argomenti_isolati(proj) as args:
-        assert args == ["-c", str(proj / "pytest.ini"), "--rootdir", str(proj.resolve()),
-                        "--confcutdir", str(proj.resolve())]
+        r = proj.resolve()
+        assert args == ["-c", str(proj / "pytest.ini"), "--rootdir", str(r), "--confcutdir", str(r),
+                        "--ignore", str(r / "workspace"), "--ignore", str(r / ".devin_state")]
     with argomenti_isolati(tmp_path / "workspace") as args:
         vuoto = Path(args[1])
         assert vuoto.is_file() and not vuoto.is_relative_to(tmp_path), "ini vuoto fuori dal progetto"
