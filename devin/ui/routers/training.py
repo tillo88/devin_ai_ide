@@ -591,6 +591,13 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                     etichetta = str((_training_jobs.get(job_id) or {}).get("memory_label") or "")
                 if etichetta and hasattr(orch, "etichetta_memoria"):
                     orch.etichetta_memoria = etichetta
+                # 23/10 (#1842, 0/10 con "training scaffold failed"): in modalita' review
+                # uno scaffold VERIFICATO torna success=False, status=awaiting_approval, e
+                # resta nella sandbox in attesa di un'approvazione che qui non arriva mai.
+                # Il progetto del training e' usa e getta: si applica il verificato, poi
+                # i gold test girano sul progetto come previsto.
+                if hasattr(orch, "auto_apply_verified"):
+                    orch.auto_apply_verified = True
                 with runs_lock:
                     active_runs[run_id] = orch
                 try:
@@ -600,7 +607,15 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                         active_runs.pop(run_id, None)
                     lezioni_caso = int(getattr(orch, "correzioni_salvate", 0) or 0)
             status = "auto_success" if result.get("success") else "auto_failure"
-            error_reason = "" if result.get("success") else str(result.get("error") or "training scaffold failed")
+            if result.get("success"):
+                error_reason = ""
+            else:
+                # il perche' vero (stato dello scaffold e primi errori del gate), non un generico
+                gate_errori = "; ".join(str(e) for e in ((result.get("quality_gate") or {}).get("errors") or [])[:3])
+                error_reason = str(result.get("error") or "") or (
+                    f"scaffold {result.get('status') or 'failed'}"
+                    + (f": {gate_errori}" if gate_errori else "")
+                    + (f" (file falliti: {len(result.get('files_failed') or [])})" if result.get("files_failed") else ""))
 
             # QUALITY GATE STRETTO (2026-07-15, fix del falso "ok 3"): lo
             # scaffold "riuscito" non basta. Il verdetto automatico puo' solo
