@@ -183,8 +183,11 @@ def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeo
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     try:
         try:
-            proc = subprocess.run(argv, cwd=str(project_path), capture_output=True,
-                                  text=True, timeout=timeout, env=env)
+            # rootdir/config/conftest del progetto, mai del repo DEVIN che lo contiene (#1856)
+            from devin.engine.pytest_isolato import argomenti_isolati
+            with argomenti_isolati(project_path) as isolati:
+                proc = subprocess.run(argv + isolati, cwd=str(project_path), capture_output=True,
+                                      text=True, timeout=timeout, env=env)
         except subprocess.TimeoutExpired:
             evidence["detail"] = f"timeout dopo {timeout}s"
             return evidence

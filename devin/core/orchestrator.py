@@ -567,12 +567,17 @@ class Orchestrator:
         # rossi a codice ormai giusto. Niente bytecode = niente staleness.
         gate_env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         last: Dict[str, Any] = {"success": False, "command": "", "output": "no test runner available"}
+        from devin.engine.pytest_isolato import argomenti_isolati
         for argv in commands:
             try:
-                proc = subprocess.run(
-                    argv, cwd=str(root), capture_output=True, text=True, timeout=timeout,
-                    env=gate_env,
-                )
+                # pytest confinato al progetto: senza, un pytest.ini/conftest.py di una
+                # cartella antenata (il repo DEVIN per i progetti in workspace/) cambia
+                # rootdir, opzioni e fixture del gate (#1856).
+                with argomenti_isolati(root) as isolati:
+                    proc = subprocess.run(
+                        argv + (isolati if argv[2] == "pytest" else []), cwd=str(root),
+                        capture_output=True, text=True, timeout=timeout, env=gate_env,
+                    )
             except subprocess.TimeoutExpired:
                 return {"success": False, "command": " ".join(argv[2:3]) or argv[-1],
                         "output": f"timeout dopo {timeout}s"}

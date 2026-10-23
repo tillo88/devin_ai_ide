@@ -315,7 +315,12 @@ def _check_tests_pass(criterion: Criterion, root: Path, execute: bool) -> Criter
         [sys.executable, "-m", "unittest", "discover", "-v"],
     )):
         is_pytest = (i == 0)
-        proc = _run(argv, root, timeout)
+        if is_pytest:
+            from devin.engine.pytest_isolato import argomenti_isolati
+            with argomenti_isolati(root) as isolati:   # mai config/conftest degli antenati (#1856)
+                proc = _run(argv + isolati, root, timeout)
+        else:
+            proc = _run(argv, root, timeout)
         # "No module named pytest" viene interpretato come "pytest non installato"
         # SOLO per il comando pytest. Se compare nell'output di UNITTEST vuol dire
         # che un file di test importa pytest e pytest manca: e' un FALLIMENTO del
