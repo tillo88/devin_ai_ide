@@ -28,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
@@ -326,6 +327,20 @@ async def api_training_seed(request: Request):
     return {"created": created, "count": len(created), "benchmark_id": benchmark_id}
 
 
+@router.post("/api/training/stop")
+async def api_training_stop(request: Request):
+    """Ferma un giro: il caso in corso finisce, i successivi non partono."""
+    data = await request.json()
+    job_id = str(data.get("job_id") or "")
+    with _training_jobs_lock:
+        job = _training_jobs.get(job_id)
+        if not job:
+            return {"error": "job sconosciuto"}
+        if job.get("status") in {"queued", "running"}:
+            job["stop_requested"] = True
+        return {"job_id": job_id, "status": job.get("status"), "stop_requested": bool(job.get("stop_requested"))}
+
+
 @router.get("/api/training/jobs")
 async def api_training_jobs(job_id: str = ""):
     return {"jobs": _training_job_snapshot() if not job_id else [], "job": _training_job_snapshot(job_id) if job_id else None}
@@ -517,8 +532,18 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
             job["started_at"] = datetime.now().isoformat(timespec="seconds")
 
     for index, case in enumerate(cases, start=1):
+        with _training_jobs_lock:
+            job = _training_jobs.get(job_id) or {}
+            motivo = ("stop" if job.get("stop_requested") else
+                      "tempo" if job.get("deadline") and time.time() >= float(job["deadline"]) else "")
+            if motivo:
+                job["stopped"] = motivo
+        if motivo:
+            break
         case_id = case.get("case_id") or f"case_{index}"
         run_id = datetime.now().strftime("train_%Y%m%d_%H%M%S_%f")
+        inizio_caso = time.time()
+        lezioni_caso = 0
         project_path = _training_run_project_path(benchmark_id, case, run_id)
         project_path.mkdir(parents=True, exist_ok=True)
 
@@ -561,6 +586,10 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
         gold_tampered: List[str] = []
         try:
             with Orchestrator(config_path=CONFIG_PATH, project_path=str(project_path), sse_callback=_make_run_callback(run_id, log_path)) as orch:
+                with _training_jobs_lock:
+                    etichetta = str((_training_jobs.get(job_id) or {}).get("memory_label") or "")
+                if etichetta and hasattr(orch, "etichetta_memoria"):
+                    orch.etichetta_memoria = etichetta
                 with runs_lock:
                     active_runs[run_id] = orch
                 try:
@@ -568,6 +597,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 finally:
                     with runs_lock:
                         active_runs.pop(run_id, None)
+                    lezioni_caso = int(getattr(orch, "correzioni_salvate", 0) or 0)
             status = "auto_success" if result.get("success") else "auto_failure"
             error_reason = "" if result.get("success") else str(result.get("error") or "training scaffold failed")
 
@@ -663,6 +693,12 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 job["auto_success"] = int(job.get("auto_success", 0)) + (1 if status == "auto_success" else 0)
                 job["auto_failure"] = int(job.get("auto_failure", 0)) + (1 if status == "auto_failure" else 0)
                 job["runner_error"] = int(job.get("runner_error", 0)) + (1 if status == "runner_error" else 0)
+                job["lessons_saved"] = int(job.get("lessons_saved", 0)) + lezioni_caso
+                risultati = job.setdefault("results", [])
+                if len(risultati) < 500:
+                    risultati.append({"case_id": case_id, "title": str(case.get("title") or "")[:80],
+                                      "status": status, "seconds": round(time.time() - inizio_caso),
+                                      "lessons": lezioni_caso, "reason": str(error_reason or "")[:160]})
 
     with _training_jobs_lock:
         job = _training_jobs.get(job_id)
@@ -711,6 +747,21 @@ async def api_training_run(request: Request):
         if not selected:
             return {"error": "tutti i casi di questa source hanno gia' un attempt (skip_attempted attivo): niente da riprendere"}
 
+    # 23/10 palestra: tetti del giro (il rig lavora di notte e la mattina serve
+    # libero) e etichetta delle lezioni salvate in memoria
+    try:
+        max_cases = int(data.get("max_cases") or 0)
+        max_minutes = float(data.get("max_minutes") or 0)
+    except (TypeError, ValueError):
+        return {"error": "max_cases/max_minutes devono essere numeri"}
+    if max_cases < 0 or not 0 <= max_minutes <= 720:
+        return {"error": "max_cases >= 0 e max_minutes fra 0 e 720"}
+    if max_cases:
+        selected = selected[:max_cases]
+    etichetta = str(data.get("memory_label") or "")
+    if etichetta and not etichetta.replace("-", "").replace("_", "").isalnum():
+        return {"error": "memory_label: solo lettere, cifre, - e _"}
+
     job_id = datetime.now().strftime("training_%Y%m%d_%H%M%S_%f")
     job = {
         "job_id": job_id,
@@ -725,6 +776,12 @@ async def api_training_run(request: Request):
         "run_ids": [],
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "requires_teacher_validation": True,
+        "memory_label": etichetta[:40],
+        "deadline": (time.time() + max_minutes * 60) if max_minutes else None,
+        "stop_requested": False,
+        "stopped": "",
+        "lessons_saved": 0,
+        "results": [],
     }
     with _training_jobs_lock:
         _training_jobs[job_id] = job
