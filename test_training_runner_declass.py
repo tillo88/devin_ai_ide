@@ -527,3 +527,35 @@ def test_skip_attempted_retries_runner_error_cases(monkeypatch, tmp_path):
     assert started.get("started") is True
     selected_arg = started["args"][2]  # (job_id, store, selected, benchmark_id)
     assert [c["case_id"] for c in selected_arg] == [case_a["case_id"]]
+
+
+# ---------------------------------------------------------------------------
+# 12. layout del rig (#1856, #1858): repo DEVIN con pytest.ini/conftest sopra il
+#     progetto, sandbox dello scaffold DENTRO il progetto con copie dei gold
+# ---------------------------------------------------------------------------
+
+def test_runner_gold_real_verification_with_the_rig_layout(monkeypatch, tmp_path):
+    """Sul rig i progetti del training stanno in <repo>/workspace/_training_runs/: il
+    pytest.ini del repo spostava la rootdir (classname irriconoscibili, #1856) e, tolto
+    quello, le copie dei gold nella sandbox interrompevano la raccolta (#1858). Qui il
+    runner vero, con la verifica vera, su quel layout."""
+    (tmp_path / "pytest.ini").write_text("[pytest]\nnorecursedirs = workspace\n")
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n\n@pytest.fixture(autouse=True)\ndef _repo():\n"
+        "    raise RuntimeError('conftest del repo caricato')\n")
+    case = _runner_case(metadata={"gold_tests": {GOLD_NAME: GOLD_CONTENT}})
+    result = {"success": True, "quality_gate": dict(GREEN_GATE), "files_written": ["sol.py"]}
+
+    def scaffold(project):
+        sandbox = project / "workspace" / "sandboxes" / "train_x"
+        sandbox.mkdir(parents=True)
+        for cartella in (sandbox, project):   # sandbox verificata, poi applicata al progetto
+            _write(cartella / "sol.py", "def add(a, b):\n    return a + b\n")
+            _write(cartella / "test_sol.py", "from sol import add\n\ndef test_add():\n    assert add(2, 2) == 4\n")
+        _write(sandbox / GOLD_NAME, GOLD_CONTENT)
+
+    job, attempts = _run_sync(monkeypatch, tmp_path, case, result=result, gold_check="real",
+                              during_run=scaffold)
+    attempt = attempts[0]
+    assert attempt["status"] == "auto_success", attempt["error_reason"]
+    assert attempt["tests"]["gold_executed"]["executed"] is True
