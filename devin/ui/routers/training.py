@@ -43,6 +43,7 @@ from devin.training.store import (
     AUTO_FAILURE_STATUSES,
     AUTO_SUCCESS_STATUSES,
     FAILURE_STATUSES,
+    INFRA_STATUSES,
     SAFE_SUCCESS_STATUSES,
     TrainingStore,
 )
@@ -738,7 +739,27 @@ async def api_training_run(request: Request):
     # caso deve essere ritentato, non escluso per sempre dalla resume
     # coverage. Contano solo gli esiti reali: auto_* e gli status
     # verified/human (canonical sets dello store).
-    if bool(data.get("skip_attempted", False)):
+    # 23/10 palestra, ripasso: i casi il cui ULTIMO tentativo e' fallito (auto_failure),
+    # con meno di max_attempts tentativi. Dopo un primo passaggio misura se le lezioni
+    # salvate in memoria aiutano: quanti dei falliti ora passano.
+    if bool(data.get("retry_failed", False)):
+        try:
+            tetto = max(2, min(int(data.get("max_attempts") or 2), 5))
+        except (TypeError, ValueError):
+            return {"error": "max_attempts deve essere un numero"}
+        ultimi: Dict[str, str] = {}
+        quanti: Dict[str, int] = {}
+        for tentativo in store.list_attempts(limit=100000):
+            cid = tentativo.get("case_id")
+            if (tentativo.get("status") or "") in INFRA_STATUSES:
+                continue    # un guasto del rig non e' un tentativo del modello
+            ultimi[cid] = tentativo.get("status") or ""
+            quanti[cid] = quanti.get(cid, 0) + 1
+        selected = [c for c in selected if ultimi.get(c.get("case_id")) in AUTO_FAILURE_STATUSES
+                    and quanti.get(c.get("case_id"), 0) < tetto]
+        if not selected:
+            return {"error": "nessun caso fallito da ripassare (o tutti oltre max_attempts): niente da riprendere"}
+    elif bool(data.get("skip_attempted", False)):
         attempted_statuses = (AUTO_SUCCESS_STATUSES | AUTO_FAILURE_STATUSES
                               | SAFE_SUCCESS_STATUSES | FAILURE_STATUSES)
         attempted = {a.get("case_id") for a in store.list_attempts(limit=10000)

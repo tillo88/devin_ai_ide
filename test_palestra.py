@@ -143,3 +143,24 @@ def test_l_orchestratore_etichetta_e_conta_le_correzioni(tmp_path):
                                      "--- a\n+++ b\n+altro\n", "agent_round")
     righe = [json.loads(r) for r in (tmp_path / "mem.jsonl").read_text().splitlines()]
     assert any("origin:agent_round" in r.get("tags", []) for r in righe)
+
+
+def test_ripasso_dei_falliti_con_tetto_ai_tentativi(monkeypatch, tmp_path):
+    """retry_failed: solo i casi con l'ultimo tentativo auto_failure e meno di max_attempts tentativi;
+    un runner_error non conta come tentativo."""
+    store = TrainingStore(tmp_path / "t")
+    store.seed_cases([{"title": f"Caso {i}", "prompt": f"compito {i}"} for i in range(4)], source="mbpp")
+    casi = {c["title"]: c["case_id"] for c in store.list_cases()}
+    for titolo, esiti in {"Caso 0": ["auto_failure"], "Caso 1": ["auto_success"],
+                          "Caso 2": ["auto_failure", "auto_failure"], "Caso 3": ["runner_error", "auto_failure"]}.items():
+        for esito in esiti:
+            store.add_attempt(case_id=casi[titolo], prompt="p", response="r", status=esito)
+    monkeypatch.setattr(training_router, "_training_store_for", lambda project_path="": store)
+    partiti = []
+    monkeypatch.setattr(training_router.threading, "Thread",
+                        lambda target, args, daemon: type("T", (), {"start": lambda self: partiti.append(args)})())
+    out = asyncio.run(training_router.api_training_run(_Req({"benchmark_id": "mbpp", "retry_failed": True})))
+    assert sorted(c["title"] for c in partiti[0][2]) == ["Caso 0", "Caso 3"], out
+    out = asyncio.run(training_router.api_training_run(_Req({"benchmark_id": "mbpp", "retry_failed": True,
+                                                             "max_attempts": 3})))
+    assert sorted(c["title"] for c in partiti[1][2]) == ["Caso 0", "Caso 2", "Caso 3"]
