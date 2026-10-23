@@ -102,6 +102,10 @@ class Orchestrator:
         self.project_path = project_path or os.getcwd()
         self.sse_callback = sse_callback
         self._should_stop = False
+        # 23/10 palestra: chi lancia il run puo' etichettare le correzioni salvate in
+        # memoria (es. "palestra") e contarle; vuoto = run normale
+        self.etichetta_memoria = ""
+        self.correzioni_salvate = 0
         self._state_persistence = None
         self._degraded_mode = False  # True se il rig (primario) è down e giriamo su locale
 
@@ -286,12 +290,16 @@ class Orchestrator:
     def _ricorda_correzione(self, errore: str, correzione: str, origine: str) -> None:
         """Salva una correzione verificata; mai un blocco per il run."""
         from devin.core.fix_memory import ricorda_correzione
+        etichetta = str(getattr(self, "etichetta_memoria", "") or "")
+        if etichetta:
+            origine = f"{etichetta}:{origine}"
         try:
             esito = ricorda_correzione(
                 getattr(self, "memory_client", None), progetto=Path(self.project_path).name,
                 errore=errore, correzione=correzione, origine=origine,
                 lingua=self._project_language())
             if esito not in {"not_recorded", "duplicate"}:
+                self.correzioni_salvate = int(getattr(self, "correzioni_salvate", 0) or 0) + 1
                 self._log("🧠 Memoria: salvata la correzione (problema -> soluzione verificata)", "info")
         except Exception as exc:
             self._log(f"Memoria della correzione non salvata: {type(exc).__name__}: {exc}", "warning")
