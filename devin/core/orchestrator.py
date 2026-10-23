@@ -808,8 +808,9 @@ class Orchestrator:
         if not pronto:
             self._log(f"Modellazione 3D non disponibile: {motivo}", "info")
             return None
-        return lambda codice, nome, cartella, materiale="", qualita="": modella3d.modella(
-            codice, nome, cartella, config=self.config or {}, materiale=materiale, qualita=qualita)
+        return lambda codice, nome, cartella, materiale="", qualita="", linguaggio="build123d": modella3d.modella(
+            codice, nome, cartella, config=self.config or {}, materiale=materiale, qualita=qualita,
+            linguaggio=linguaggio)
 
     def _vede_immagini(self) -> bool:
         """Il server del rig ha il proiettore della visione? (dice /props; nel dubbio no)."""

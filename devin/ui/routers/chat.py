@@ -1710,7 +1710,8 @@ async def api_chat(req: ChatRequest):
                                 lambda: modella3d.modella(
                                     str(argomenti.get("codice") or ""), str(argomenti.get("nome") or "pezzo"),
                                     cartella_modelli, ai.config, materiale=str(argomenti.get("materiale") or ""),
-                                    qualita=str(argomenti.get("qualita") or "")))
+                                    qualita=str(argomenti.get("qualita") or ""),
+                                    linguaggio=str(argomenti.get("linguaggio") or "build123d")))
                             anteprima = vista.anteprima_di(risultato) if vede_strumenti else None
                             if anteprima:
                                 url_img, _ = vista.carica(anteprima, [cartella_modelli or vista.MODELLI])

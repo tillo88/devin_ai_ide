@@ -9,6 +9,11 @@ spessori) invece di immaginare la forma.
 
 Gira con l'interprete dell'ambiente strumenti (venv-strumenti), senza rete
 (bwrap), con tempo e memoria limitati, come il risolutore.
+
+23/10: in alternativa il pezzo si scrive in OpenSCAD (``linguaggio='openscad'``),
+la miglioria che DEVIN aveva chiesto e Alessandro approvato: OpenSCAD lo esporta
+in STL nella stessa sandbox e le misure sono le stesse (niente STEP: OpenSCAD
+lavora a mesh).
 """
 from __future__ import annotations
 
@@ -37,7 +42,22 @@ DESCRIZIONE = (
     "Usalo per oggetti da stampare in 3D o da modellare, poi controlla che le misure "
     "corrispondano alla richiesta e correggi. Forme base: Box(x, y, z, align=(Align.MIN,)*3); spostare e "
     "ruotare: Pos(x, y, z) * Rot(X=gradi) * pezzo; pezzi inclinati: Plane.YZ * Polygon(*punti, align=None) "
-    "poi extrude(profilo, amount=larghezza); somma a + b, sottrazione a - b.")
+    "poi extrude(profilo, amount=larghezza); somma a + b, sottrazione a - b. "
+    "In alternativa linguaggio='openscad': il codice e' OpenSCAD (cube, cylinder, sphere, translate, rotate, "
+    "difference, union, hull, linear_extrude, moduli e variabili), esportato in STL con le stesse misure; "
+    "senza STEP.")
+
+OPENSCAD = "/usr/bin/openscad"
+LINGUAGGI = ("build123d", "openscad")
+
+PROMEMORIA_SCAD = """PROMEMORIA OpenSCAD (unita' in mm):
+- parallelepipedo con l'angolo in (0,0,0): cube([70, 80, 4]);   centrato: cube([70, 80, 4], center=true);
+- cilindro: cylinder(h=10, r=5, $fn=64);   cono: cylinder(h=10, r1=5, r2=2, $fn=64);
+- spostare/ruotare (si applica a quello che segue): translate([0, 10, 4]) rotate([-30, 0, 0]) cube([70, 4, 100]);
+- foro: difference() { cube([70, 80, 4]); translate([35, 40, -1]) cylinder(h=6, r=5, $fn=64); }
+- profilo estruso: linear_extrude(height=70) polygon([[0,0],[80,0],[80,4],[0,4]]);
+- parametri e moduli: spessore = 4; module staffa(l) { cube([l, 20, spessore]); } staffa(60);
+- ogni istruzione finisce con ';'; il pezzo e' quello che resta disegnato al livello piu' alto"""
 
 # 18/10: senza esempi il modello ha provato sei volte la sintassi di rotate/Rotation/Box(centered=...)
 # prima di arrivare al pezzo. Esempi provati su build123d 0.13.0 (la versione del lock): arrivano
@@ -82,6 +102,8 @@ STRUMENTO = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {
         "codice": {"type": "string", "description": "codice build123d che assegna il pezzo a 'risultato'"},
         "nome": {"type": "string", "description": "nome del file, es. supporto_telefono"},
+        "linguaggio": {"type": "string", "enum": list(LINGUAGGI),
+                       "description": "build123d (predefinito, Python) oppure openscad"},
         **_parametri_stampa()},
         "required": ["codice"], "additionalProperties": False}}}
 
@@ -107,6 +129,7 @@ try:
     export_step(_pezzo, _step)
 except Exception as _e:
     _step = None
+#DEVIN_MISURE_DA_QUI
 _m = _trimesh.load(_stl, force="mesh")
 _b = _m.bounds
 import numpy as _np
@@ -215,6 +238,25 @@ ORIENTAMENTI = {"Z-": "com'e' (base in basso)", "Z+": "capovolto", "X-": "sul fi
                 "Y-": "sul fianco Y-", "Y+": "sul fianco Y+"}
 
 
+ESPORTA_B123D, _MISURE = POSTLUDIO.split("#DEVIN_MISURE_DA_QUI\n")
+
+# OpenSCAD: si esporta in STL dalla stessa sandbox, poi le stesse misure del build123d
+ESPORTA_SCAD = r'''
+import json as _json, os as _os, subprocess as _subprocess
+import trimesh as _trimesh
+_out = _os.environ["DEVIN_OUT"]
+_nome = _os.environ["DEVIN_NOME"]
+_stl = _os.path.join(_out, _nome + ".stl")
+_step = None
+_pezzo = None
+_scad = _subprocess.run([_os.environ["DEVIN_OPENSCAD"], "-o", _stl, "pezzo.scad"], capture_output=True, text=True,
+                        env={"PATH": "/usr/bin:/bin", "HOME": _os.environ["HOME"], "LANG": "C.UTF-8",
+                             "QT_QPA_PLATFORM": "offscreen"})
+if _scad.returncode != 0 or not _os.path.isfile(_stl) or _os.path.getsize(_stl) == 0:
+    raise SystemExit("ERRORE OpenSCAD (exit %s):\n%s" % (_scad.returncode, (_scad.stderr or _scad.stdout)[-4000:]))
+'''
+
+
 def stampabilita(misure: Dict[str, Any]) -> List[str]:
     """Righe sulla stampa FDM: sbalzi e appoggio per orientamento, peso se pieno."""
     orient = misure.get("orientamenti") or {}
@@ -259,6 +301,10 @@ def _affettato(misure: Dict[str, Any], salvati: List[str], config: Optional[Dict
                                          materiale=materiale, qualita=qualita))]
 
 
+def openscad(config: Optional[Dict[str, Any]] = None) -> Path:
+    return Path(str((((config or {}).get("tools") or {}).get("openscad") or {}).get("bin") or OPENSCAD))
+
+
 def disponibile(config: Optional[Dict[str, Any]] = None) -> tuple[bool, str]:
     python = interprete(config)
     if not python.exists():
@@ -277,13 +323,19 @@ def _nome_sicuro(nome: str) -> str:
 
 def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = None,
             config: Optional[Dict[str, Any]] = None, secondi: int = 180,
-            materiale: str = "", qualita: str = "") -> str:
+            materiale: str = "", qualita: str = "", linguaggio: str = "build123d") -> str:
     """Testo per il modello (mai un'eccezione). I file finiscono in ``destinazione``."""
     pronto, motivo = disponibile(config)
     if not pronto:
         return f"ERRORE: modellazione 3D non disponibile: {motivo}"
     if not str(codice or "").strip():
         return "ERRORE: 'codice' vuoto"
+    linguaggio = str(linguaggio or "build123d").strip().lower()
+    if linguaggio not in LINGUAGGI:
+        return f"ERRORE: linguaggio {linguaggio!r} sconosciuto (build123d o openscad)"
+    scad = linguaggio == "openscad"
+    if scad and not (openscad(config).is_file() and os.access(openscad(config), os.X_OK)):
+        return f"ERRORE: OpenSCAD non installato sul rig ({openscad(config)}): usa build123d"
     nome = _nome_sicuro(nome)
     limite = max(10, min(MAX_SECONDI, int(secondi or 180)))
     destinazione = Path(destinazione or Path(os.path.expanduser("~/.local/share/devin/modelli"))
@@ -293,11 +345,15 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
         uscita_dir = cartella / "out"
         uscita_dir.mkdir()
         script = cartella / "pezzo.py"
-        script.write_text(PRELUDIO + str(codice) + POSTLUDIO, encoding="utf-8")
+        if scad:
+            (cartella / "pezzo.scad").write_text(str(codice), encoding="utf-8")
+            script.write_text(ESPORTA_SCAD + _MISURE, encoding="utf-8")
+        else:
+            script.write_text(PRELUDIO + str(codice) + POSTLUDIO, encoding="utf-8")
         argv, avviso = _comando(interprete(config), script, cartella)
         env = {"PATH": "/usr/bin:/bin", "HOME": str(cartella), "LANG": "C.UTF-8", "TMPDIR": str(cartella),
                "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1",
-               "DEVIN_OUT": str(uscita_dir), "DEVIN_NOME": nome}
+               "DEVIN_OUT": str(uscita_dir), "DEVIN_NOME": nome, "DEVIN_OPENSCAD": str(openscad(config))}
         try:
             proc = subprocess.run(argv, cwd=str(cartella), env=env, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=limite,
@@ -307,7 +363,8 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
         righe = [r for r in (proc.stdout or "").splitlines() if r.startswith("DEVIN_MISURE ")]
         if proc.returncode != 0 or not righe:
             errore = (proc.stderr or proc.stdout or "").strip()[-MAX_USCITA:]
-            return f"ERRORE nel codice del pezzo (exit {proc.returncode}):\n{errore}\n\n{PROMEMORIA}"
+            return (f"ERRORE nel codice del pezzo (exit {proc.returncode}):\n{errore}\n\n"
+                    f"{PROMEMORIA_SCAD if scad else PROMEMORIA}")
         misure = json.loads(righe[-1][len("DEVIN_MISURE "):])
         destinazione.mkdir(parents=True, exist_ok=True)
         salvati: List[str] = []
@@ -319,7 +376,8 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
     x, y, z = misure["ingombro_mm"]
     righe_testo = [
         f"pezzo '{nome}': ingombro {x} x {y} x {z} mm (X x Y x Z), volume {misure['volume_mm3']} mm³"
-        f" (CAD {misure['volume_cad_mm3']}), superficie {misure['area_mm2']} mm²",
+        + ("" if scad else f" (CAD {misure['volume_cad_mm3']})") + f", superficie {misure['area_mm2']} mm²"
+        + (" (OpenSCAD)" if scad else ""),
         f"mesh: {'chiusa (stampabile)' if misure['chiusa'] else 'NON chiusa: buchi o facce aperte'}, "
         f"{'solido valido' if misure['solido_valido'] else 'solido NON valido'}, {misure['triangoli']} triangoli, "
         f"{misure['corpi']} {'corpo' if misure['corpi'] == 1 else 'corpi separati'}",
