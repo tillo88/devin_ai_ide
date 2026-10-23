@@ -164,3 +164,37 @@ def test_ripasso_dei_falliti_con_tetto_ai_tentativi(monkeypatch, tmp_path):
     out = asyncio.run(training_router.api_training_run(_Req({"benchmark_id": "mbpp", "retry_failed": True,
                                                              "max_attempts": 3})))
     assert sorted(c["title"] for c in partiti[1][2]) == ["Caso 0", "Caso 2", "Caso 3"]
+
+
+def test_il_training_applica_il_verificato_e_dice_il_perche_dei_fallimenti(monkeypatch, tmp_path):
+    """#1842: 0/10 con "training scaffold failed": in review lo scaffold verificato restava in attesa
+    di approvazione (success=False). Il runner ora chiede l'applicazione automatica del verificato e,
+    quando fallisce, riporta stato e primi errori del gate."""
+    fast_app = _patch_runner_surface(monkeypatch, tmp_path)
+    visti = []
+
+    class Orch:
+        def __init__(self, **kwargs):
+            self.etichetta_memoria, self.correzioni_salvate, self.auto_apply_verified = "", 0, False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def run_scaffold(self, task, project_path, run_id):
+            visti.append(self.auto_apply_verified)
+            return {"success": False, "status": "failed", "files_failed": ["a.py"],
+                    "quality_gate": {"status": "verified_failure", "errors": ["test_gold_mbpp_1 FAILED: 3 != 4"]}}
+
+    monkeypatch.setattr(fast_app, "Orchestrator", Orch)
+    monkeypatch.setattr(training_router, "_verify_gold_tests_executed", _fake_gold_check)
+    casi = _casi(1)
+    job = _register_job("giro", casi)
+    job.update({"deadline": None, "stop_requested": False, "stopped": "", "lessons_saved": 0, "results": []})
+    training_router._run_training_cases_background("giro", TrainingStore(tmp_path / "t"), casi, "bench-test")
+    with training_router._training_jobs_lock:
+        finale = dict(training_router._training_jobs["giro"])
+    assert visti == [True]
+    assert finale["results"][0]["reason"] == "scaffold failed: test_gold_mbpp_1 FAILED: 3 != 4 (file falliti: 1)"
