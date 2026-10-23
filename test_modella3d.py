@@ -144,3 +144,53 @@ def test_math_e_gia_importato_e_extrude_e_una_funzione(config, tmp_path):
     assert "mesh: chiusa (stampabile), solido valido" in testo
     assert "radians, degrees, sin, cos" in modella3d.DESCRIZIONE
     assert "extrude e' una FUNZIONE" in modella3d.PROMEMORIA
+
+
+# --- 23/10: OpenSCAD come secondo linguaggio --------------------------------
+
+def _scad(config):
+    import shutil
+    vero = shutil.which("openscad")
+    if not vero:
+        pytest.skip("OpenSCAD non installato qui")
+    config["tools"]["openscad"] = {"bin": vero}
+    return config
+
+
+def test_openscad_scatola_con_foro_misure_vere(config, tmp_path):
+    _scad(config)
+    codice = ("difference() {\n  cube([20, 30, 10]);\n"
+              "  translate([10, 15, -1]) cylinder(h=12, r=3, $fn=96);\n}\n")
+    testo = modella3d.modella(codice, "scatola scad", tmp_path / "out", config=config, linguaggio="openscad")
+    assert testo.startswith("pezzo 'scatola_scad': ingombro 20.0 x 30.0 x 10.0 mm"), testo
+    assert "(CAD" not in testo and "(OpenSCAD)" in testo
+    assert "mesh: chiusa (stampabile), solido valido" in testo and "1 corpo" in testo
+    volume = float(testo.split("volume ")[1].split(" ")[0])
+    assert abs(volume - (6000 - 3.14159 * 9 * 10)) < 15
+    assert (tmp_path / "out" / "scatola_scad.stl").stat().st_size > 1000
+    assert not (tmp_path / "out" / "scatola_scad.step").exists(), "OpenSCAD lavora a mesh: niente STEP"
+    assert "stampa (FDM" in testo
+
+
+def test_openscad_errore_arriva_col_promemoria(config, tmp_path):
+    _scad(config)
+    testo = modella3d.modella("cube([10, 10, 10]) translate", "p", tmp_path / "o", config=config,
+                              linguaggio="openscad")
+    assert testo.startswith("ERRORE nel codice del pezzo") and "ERRORE OpenSCAD" in testo, testo
+    assert "PROMEMORIA OpenSCAD" in testo and "PROMEMORIA build123d" not in testo
+
+
+def test_openscad_assente_o_linguaggio_sconosciuto(config, tmp_path):
+    config["tools"]["openscad"] = {"bin": str(tmp_path / "nessuno")}
+    testo = modella3d.modella("cube(1);", "p", tmp_path / "o", config=config, linguaggio="openscad")
+    assert testo.startswith("ERRORE: OpenSCAD non installato sul rig") and "build123d" in testo
+    assert modella3d.modella("x", "p", tmp_path / "o", config=config, linguaggio="fortran").startswith(
+        "ERRORE: linguaggio 'fortran' sconosciuto")
+
+
+def test_lo_schema_offre_i_due_linguaggi_e_build123d_resta_com_era():
+    proprieta = modella3d.STRUMENTO["function"]["parameters"]["properties"]
+    assert proprieta["linguaggio"]["enum"] == ["build123d", "openscad"]
+    assert "linguaggio='openscad'" in modella3d.DESCRIZIONE
+    assert modella3d.ESPORTA_B123D + modella3d._MISURE == modella3d.POSTLUDIO.replace("#DEVIN_MISURE_DA_QUI\n", "")
+    assert "export_stl(_pezzo, _stl)" in modella3d.ESPORTA_B123D and "export_stl" not in modella3d.ESPORTA_SCAD

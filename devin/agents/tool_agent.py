@@ -314,7 +314,8 @@ class AgenteStrumenti:
         if nome == "modella_3d" and self._modella is not None:
             risultato = self._modella(str(args["codice"]), str(args.get("nome") or "pezzo"), self.radice / "modelli",
                                       materiale=str(args.get("materiale") or ""),
-                                      qualita=str(args.get("qualita") or ""))
+                                      qualita=str(args.get("qualita") or ""),
+                                      linguaggio=str(args.get("linguaggio") or "build123d"))
             if self.vede:
                 from devin.core import vista
                 anteprima = vista.anteprima_di(risultato)
