@@ -219,7 +219,8 @@ def calibra_task(task: Dict[str, Any], python: str, bwrap: Optional[str] = None,
         env = {"PATH": str(Path(python).parent) + ":/usr/bin:/bin", "HOME": str(cartella), "LANG": "C.UTF-8",
                "MPLBACKEND": "Agg", "PYTHONDONTWRITEBYTECODE": "1", "TF_CPP_MIN_LOG_LEVEL": "3",
                # i compiti in parallelo non si pestano i file temporanei (senza bubblewrap /tmp e' comune)
-               "TMPDIR": str(cartella)}
+               "TMPDIR": str(cartella),
+               "CUDA_VISIBLE_DEVICES": ""}   # la GPU e' del modello: tensorflow resta su CPU
         try:
             proc = subprocess.run(argv, cwd=str(cartella), capture_output=True, text=True, timeout=secondi,
                                   env=env, start_new_session=True)

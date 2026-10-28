@@ -217,7 +217,7 @@ def test_calibrazione(tmp_path):
     assert out["esiti"]["BigCodeBench/3"]["motivo"] == "pericoloso"
 
 
-def test_calibrazione_ogni_compito_ha_i_suoi_temporanei():
+def test_calibrazione_temporanei_propri_e_niente_gpu():
     test = """import unittest
 import os
 import tempfile
@@ -226,6 +226,7 @@ import tempfile
 class TestCases(unittest.TestCase):
     def test_tmp(self):
         self.assertEqual(os.path.realpath(tempfile.gettempdir()), os.path.realpath(os.getcwd()))
+        self.assertEqual(os.environ.get("CUDA_VISIBLE_DEVICES"), "")
 """
     assert b.calibra_task(compito(test=test), sys.executable)["ok"] is True
 
