@@ -237,6 +237,38 @@ def test_calibrazione_timeout(tmp_path):
     assert out["ok"] is False and out["motivo"] == "timeout 3s"
 
 
+def test_calibrazione_timeout_ferma_anche_i_processi_figli(tmp_path):
+    pidfile = tmp_path / "figlio.pid"
+    soluzione = ("    import multiprocessing, time\n"
+                 "    p = multiprocessing.Process(target=time.sleep, args=(120,))\n    p.start()\n"
+                 f"    open({str(pidfile)!r}, 'w').write(str(p.pid))\n"
+                 "    time.sleep(120)\n")
+    out = b.calibra_task(compito(soluzione=soluzione), sys.executable, secondi=4)
+    assert out["motivo"] == "timeout 4s", out
+    import os
+    import time
+    pid = int(pidfile.read_text())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError("il figlio del test e' sopravvissuto al timeout")
+
+
+def test_ferma_non_usa_sigkill_e_dice_se_il_gruppo_resta_vivo():
+    import subprocess
+    proc = subprocess.Popen([sys.executable, "-c", "import signal, time; signal.signal(signal.SIGTERM, "
+                             "signal.SIG_IGN); print('pronto', flush=True); time.sleep(4)"],
+                            stdout=subprocess.PIPE, text=True, start_new_session=True)
+    assert proc.stdout.readline().strip() == "pronto"
+    motivo = b._ferma(proc, 9, attesa=1)
+    assert motivo.startswith("timeout 9s, processo ancora vivo dopo SIGTERM"), motivo
+    assert proc.wait(timeout=10) == 0, "nessun SIGKILL: il processo finisce da solo"
+
+
 def test_argv_isolato():
     argv = ["python", "-m", "pytest"]
     assert b.argv_isolato(None, Path("/x"), argv) == argv
