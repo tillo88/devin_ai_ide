@@ -38,6 +38,7 @@ from fastapi import APIRouter, Request
 
 from devin.ai.structured_contracts import TrainingReviewDecision
 from devin.training.adapters import import_mbpp_cases
+from devin.training.bigcodebench import import_bigcodebench_cases
 from devin.training.benchmarks import get_builtin_cases, list_builtin_benchmarks
 from devin.training.store import (
     AUTO_FAILURE_STATUSES,
@@ -350,6 +351,25 @@ async def api_training_adapter_mbpp(request: Request):
         )
     except Exception as exc:
         return {"error": f"import MBPP fallito: {exc}"}
+    return result
+
+
+@router.post("/api/training/adapters/bigcodebench/import")
+async def api_training_adapter_bigcodebench(request: Request):
+    """Import ESPLICITO di casi BigCodeBench (28/10). Niente download qui: il dataset verificato
+    (sha256) e la calibrazione li prepara sul rig un'azione tipizzata; entrano solo i compiti la
+    cui soluzione ufficiale passa i suoi test nell'ambiente vero e non pericolosi."""
+    data = await request.json()
+    store = _training_store_for(data.get("project_path", ""))
+    try:
+        result = await asyncio.to_thread(
+            import_bigcodebench_cases,
+            store,
+            limit=max(1, min(int(data.get("limit", 10) or 10), 1200)),
+            offset=max(0, int(data.get("offset", 0) or 0)),
+        )
+    except Exception as exc:
+        return {"error": f"import BigCodeBench fallito: {type(exc).__name__}: {exc}"}
     return result
 
 
