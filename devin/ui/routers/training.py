@@ -146,7 +146,8 @@ def _training_run_project_path(benchmark_id: str, case: Dict[str, Any], run_id: 
     return WORKSPACE_DIR / "_training_runs" / bench_slug / f"{case_slug}_{run_id}"
 
 
-def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeout: int = 180) -> Dict[str, Any]:
+def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeout: int = 180,
+                                solo_gold: bool = False) -> Dict[str, Any]:
     """Verifica che i gold test siano stati DAVVERO raccolti, eseguiti e passati.
 
     Guardia anti-bypass conftest (2026-07-18, fix B): la guardia
@@ -222,11 +223,12 @@ def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeo
         evidence["detail"] = "pytest exit 5: nessun test raccolto (conftest esclude i gold?)"
     elif missing:
         evidence["detail"] = "non raccolti/passati: " + ", ".join(missing)
-    elif proc.returncode != 0:
+    elif proc.returncode != 0 and not solo_gold:
         evidence["detail"] = f"pytest exit {proc.returncode} a gold verdi (suite instabile)"
     else:
         evidence["executed"] = True
-        evidence["detail"] = f"{len(passed_gold)} gold file eseguiti e passati"
+        evidence["detail"] = f"{len(passed_gold)} gold file eseguiti e passati" + (
+            f" (altri test rossi, pytest exit {proc.returncode})" if proc.returncode != 0 else "")
     return evidence
 
 
@@ -267,6 +269,24 @@ def _tentativo_precedente(store: TrainingStore, case: Dict[str, Any]) -> str:
         testo += "\nUscita dei test ufficiali (estratto):\n" + uscita[-900:]
     return testo + ("\nCapisci PERCHE' era sbagliato prima di riscrivere: correggi il ragionamento, non "
                     "ripetere la stessa soluzione. Non aggiungere requisiti che il compito non chiede.")
+
+
+def _gold_verdi_nella_sandbox(sandbox: Path, project_path: Path, gold_expected: Dict[str, str]) -> Dict[str, Any]:
+    """I gold ufficiali, intatti, raccolti e verdi nella sandbox dello scaffold (gli altri test non contano)."""
+    try:
+        sandbox = sandbox.resolve()
+        sandbox.relative_to(Path(project_path).resolve())
+    except (OSError, ValueError):
+        return {"executed": False, "detail": "sandbox fuori dal progetto"}
+    if not sandbox.is_dir():
+        return {"executed": False, "detail": "sandbox assente"}
+    for nome, atteso in gold_expected.items():
+        try:
+            if (sandbox / nome).read_text(encoding="utf-8") != atteso:
+                return {"executed": False, "detail": f"gold modificato nella sandbox: {nome}"}
+        except OSError:
+            return {"executed": False, "detail": f"gold assente nella sandbox: {nome}"}
+    return _verify_gold_tests_executed(sandbox, sorted(gold_expected.keys()), solo_gold=True)
 
 
 def _training_job_snapshot(job_id: str = "") -> List[Dict[str, Any]] | Dict[str, Any]:
@@ -628,6 +648,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
         validator_crash = ""
         gold_check: Dict[str, Any] = {}
         gold_tampered: List[str] = []
+        test_propri_rossi = ""
         # 28/10: l'ambiente di prova del caso (es. BigCodeBench). Tutto il caso, scaffold e verifica
         # dei gold, gira li'; se l'ambiente manca e' un guasto del rig (runner_error), mai di DEVIN.
         from devin.engine import ambienti
@@ -718,6 +739,16 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                         error_reason = ("gold test non eseguiti: "
                                         + str(gold_check.get("detail") or "verifica fallita"))[:800]
 
+            # 28/10 (Alessandro): gold ufficiali verdi ma test scritti da DEVIN rossi = esercizio
+            # RISOLTO, con un segnale a parte. La soluzione resta nella sandbox (in review lo
+            # scaffold fallito non applica nulla): i gold si verificano li', byte intatti e
+            # raccolti davvero, e solo per i casi il cui unico segnale atteso e' tests_pass.
+            if (status == "auto_failure" and gold_expected and not validator_crash and not gold_tampered
+                    and set(case.get("expected_signals") or []) <= {"tests_pass"} and result.get("sandbox_path")):
+                salvato = _gold_verdi_nella_sandbox(Path(str(result["sandbox_path"])), project_path, gold_expected)
+                if salvato.get("executed"):
+                    test_propri_rossi = error_reason or "test propri rossi"
+                    status, error_reason, gold_check = "auto_success", "", salvato
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\ntraining_status: {status}\n")
                 f.write(f"validators: {validation.get('overall', 'n/a')}\n")
@@ -748,6 +779,8 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 "gold_tests": sorted(gold_expected.keys()),
                 "gold_tampered": gold_tampered,
                 "gold_executed": gold_check,
+                "test_propri_rossi": bool(test_propri_rossi),
+                "motivo_test_propri": str(test_propri_rossi)[:800],
             },
             error_reason=error_reason,
             run_id=run_id,
@@ -764,11 +797,13 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 job["auto_failure"] = int(job.get("auto_failure", 0)) + (1 if status == "auto_failure" else 0)
                 job["runner_error"] = int(job.get("runner_error", 0)) + (1 if status == "runner_error" else 0)
                 job["lessons_saved"] = int(job.get("lessons_saved", 0)) + lezioni_caso
+                job["test_propri_rossi"] = int(job.get("test_propri_rossi", 0)) + (1 if test_propri_rossi else 0)
                 risultati = job.setdefault("results", [])
                 if len(risultati) < 500:
                     risultati.append({"case_id": case_id, "title": str(case.get("title") or "")[:80],
                                       "status": status, "seconds": round(time.time() - inizio_caso),
-                                      "lessons": lezioni_caso, "reason": str(error_reason or "")[:160]})
+                                      "lessons": lezioni_caso, "reason": str(error_reason or "")[:160],
+                                      "test_propri_rossi": bool(test_propri_rossi)})
 
     with _training_jobs_lock:
         job = _training_jobs.get(job_id)
