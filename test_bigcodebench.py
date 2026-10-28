@@ -231,6 +231,18 @@ class TestCases(unittest.TestCase):
     assert b.calibra_task(compito(test=test), sys.executable)["ok"] is True
 
 
+def test_calibrazione_non_risale_oltre_la_cartella_del_compito(tmp_path, monkeypatch):
+    # 28/10, prova come utente normale: con -c /dev/null pytest risaliva a /tmp e cadeva sulle cartelle
+    # di altri utenti. Qui lo stesso effetto, deterministico anche da root: un conftest piu' in alto.
+    import tempfile
+    base = tmp_path / "base"
+    base.mkdir()
+    (base / "conftest.py").write_text("raise RuntimeError('conftest fuori dalla cartella del compito')\n")
+    monkeypatch.setattr(tempfile, "tempdir", str(base))
+    out = b.calibra_task(compito(), sys.executable)
+    assert out["ok"] is True, out["motivo"]
+
+
 def test_calibrazione_timeout(tmp_path):
     lento = compito(1, soluzione="    import time\n    time.sleep(30)\n    return sum(numeri)\n")
     out = b.calibra_task(lento, sys.executable, secondi=3)

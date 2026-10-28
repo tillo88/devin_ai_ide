@@ -230,7 +230,10 @@ def calibra_task(task: Dict[str, Any], python: str, bwrap: Optional[str] = None,
                                               encoding="utf-8")
         (cartella / gold_nome(task)).write_text(gold_test(task), encoding="utf-8")
         argv = argv_isolato(bwrap, cartella, [python, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                                              "--rootdir", str(cartella), "-c", os.devnull, gold_nome(task)])
+                                              "--rootdir", str(cartella), "-c", os.devnull,
+                                              # 28/10: senza, con -c /dev/null pytest risale e scandisce /tmp
+                                              # (cartelle di altri utenti: PermissionError). Come pytest_isolato.
+                                              "--confcutdir", str(cartella), gold_nome(task)])
         env = {"PATH": str(Path(python).parent) + ":/usr/bin:/bin", "HOME": str(cartella), "LANG": "C.UTF-8",
                "MPLBACKEND": "Agg", "PYTHONDONTWRITEBYTECODE": "1", "TF_CPP_MIN_LOG_LEVEL": "3",
                # i compiti in parallelo non si pestano i file temporanei (senza bubblewrap /tmp e' comune)
