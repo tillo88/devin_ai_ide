@@ -25,8 +25,11 @@ def test_formato_e_versioni_chiave():
     assert len(p) >= 150
     # le scelte documentate in testa al lock (scelta B, Python 3.12)
     assert p["numpy"] == "1.26.0" and p["pandas"] == "2.1.1" and p["tensorflow"] == "2.16.1"
-    assert p["scikit-learn"] == "1.3.1" and p["matplotlib"] == "3.7.3" and p["pyarrow"] == "14.0.0"
+    assert p["scikit-learn"] == "1.3.1" and p["matplotlib"] == "3.7.3"
     assert "wikipedia" not in p and "wordninja" not in p, "solo sorgenti: fuori (--only-binary)"
+    assert "pyarrow" not in p, "il dataset arriva in jsonl.gz: pyarrow non serve"
+    # i test ufficiali ne hanno bisogno (faker, pytz, pyfakefs) e il gate gira con pytest del venv
+    assert {"pytest", "faker", "pytz", "pyfakefs"} <= set(p)
 
 
 def test_l_ambiente_del_lock_e_quello_che_devin_usa():

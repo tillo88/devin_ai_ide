@@ -10,7 +10,6 @@
 # --only-binary :all:, linux x86_64): 59 su 70 identiche. Diverse: numpy 1.26.0, pandas 2.1.1,
 # scipy 1.11.2, matplotlib 3.7.3, networkx 2.8, numba 0.59.0, gensim 4.3.3, scikit-image 0.22.0,
 # flask-mail 0.10.0, tensorflow 2.16.1 + keras 3.0.0. Tolte (solo sorgenti): wikipedia, wordninja.
-# Aggiunta: pyarrow 14.0.0 (per leggere il dataset in parquet).
 # Un hash per pacchetto: quello della wheel che pip sceglie su cp312 manylinux x86_64 (glibc >= 2.28),
 # verificato contro pip download su campioni con tag diversi. I compiti che non funzionano con queste
 # versioni li esclude la calibrazione (soluzione ufficiale contro i suoi test nell'ambiente vero).
@@ -107,7 +106,6 @@ pooch==1.9.0 --hash=sha256:f265597baa9f760d25ceb29d0beb8186c243d6607b0f60b83ecf1
 prettytable==3.10.0 --hash=sha256:6536efaf0757fdaa7d22e78b3aac3b69ea1b7200538c2c6995d649365bddab92
 protobuf==4.25.9 --hash=sha256:438c636de8fb706a0de94a12a268ef1ae8f5ba5ae655a7671fcda5968ba3c9be
 psutil==5.9.5 --hash=sha256:89518112647f1276b03ca97b65cc7f64ca587b1eb0278383017c2a0dcc26cbe4
-pyarrow==14.0.0 --hash=sha256:771079fddc0b4440c41af541dbdebc711a7062c93d3c4764476a9442606977db
 pyasn1==0.6.5 --hash=sha256:4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587
 pycparser==3.12 --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e
 pycryptodome==3.14.1 --hash=sha256:8b5c28058102e2974b9868d72ae5144128485d466ba8739abd674b77971454cc
