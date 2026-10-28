@@ -177,10 +177,11 @@ def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeo
     xml_fd, xml_name = tempfile.mkstemp(prefix="gold_verify_", suffix=".xml")
     os.close(xml_fd)
     xml_path = Path(xml_name)
-    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+    from devin.engine.ambienti import env_corrente, python_corrente
+    argv = [python_corrente(), "-m", "pytest", "-q", "-p", "no:cacheprovider",
             "--maxfail=20", f"--junitxml={xml_path}"]
     # PYTHONDONTWRITEBYTECODE: come nel gate, niente .pyc stale tra i rerun.
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    env = env_corrente(dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
     try:
         try:
             # rootdir/config/conftest del progetto, mai del repo DEVIN che lo contiene (#1856)
@@ -627,7 +628,12 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
         validator_crash = ""
         gold_check: Dict[str, Any] = {}
         gold_tampered: List[str] = []
+        # 28/10: l'ambiente di prova del caso (es. BigCodeBench). Tutto il caso, scaffold e verifica
+        # dei gold, gira li'; se l'ambiente manca e' un guasto del rig (runner_error), mai di DEVIN.
+        from devin.engine import ambienti
+        token_ambiente = None
         try:
+            token_ambiente = ambienti.entra(str((case.get("metadata") or {}).get("ambiente") or "") or None)
             with Orchestrator(config_path=CONFIG_PATH, project_path=str(project_path), sse_callback=_make_run_callback(run_id, log_path)) as orch:
                 with _training_jobs_lock:
                     etichetta = str((_training_jobs.get(job_id) or {}).get("memory_label") or "")
@@ -724,6 +730,8 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[FATAL] {error_reason}\ntraining_status: runner_error\nstatus: failed\n")
             _finish_run_events(run_id, "failed", mode="training")
+        finally:
+            ambienti.esci(token_ambiente)
 
         attempt = store.add_attempt(
             case_id=case_id,
