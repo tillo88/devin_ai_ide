@@ -640,6 +640,10 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 # i gold test girano sul progetto come previsto.
                 if hasattr(orch, "auto_apply_verified"):
                     orch.auto_apply_verified = True
+                # 28/10, Alessandro: sul web durante il training solo documentazione (Python,
+                # GitHub, librerie), niente soluzioni degli esercizi da copiare.
+                if hasattr(orch, "limita_web_alla_documentazione"):
+                    orch.limita_web_alla_documentazione()
                 with runs_lock:
                     active_runs[run_id] = orch
                 try:

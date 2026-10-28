@@ -852,6 +852,13 @@ class Orchestrator:
         run_id = getattr(self, "_run_id_corrente", "")
         return note_utente.prendi(note_utente.chiave_run(run_id)) if run_id else []
 
+    def limita_web_alla_documentazione(self) -> None:
+        """Training (28/10): da qui in poi ogni ricerca web di questo orchestratore (agente,
+        planner, errori, doc delle librerie) tiene solo i siti di documentazione ufficiale."""
+        for config in (self.config, getattr(self.ai_client, "config", None)):
+            if isinstance(config, dict):
+                config.setdefault("web_search", {})["solo_documentazione"] = True
+
     def _applica_verificato(self, project: Path | str, run_id: str,
                             change_manifest: Dict[str, Any], task: str, patch: str = ""):
         """Applica da solo un manifest GIA' verificato (test e prova verdi).
