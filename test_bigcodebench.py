@@ -221,12 +221,16 @@ def test_calibrazione_temporanei_propri_e_niente_gpu():
     test = """import unittest
 import os
 import tempfile
+import urllib.request
 
 
 class TestCases(unittest.TestCase):
     def test_tmp(self):
         self.assertEqual(os.path.realpath(tempfile.gettempdir()), os.path.realpath(os.getcwd()))
         self.assertEqual(os.environ.get("CUDA_VISIBLE_DEVICES"), "")
+        # niente rete: urllib, requests e nltk passano da un proxy chiuso
+        self.assertEqual(urllib.request.getproxies().get("https"), "http://127.0.0.1:9")
+        self.assertEqual(urllib.request.getproxies().get("http"), "http://127.0.0.1:9")
 """
     assert b.calibra_task(compito(test=test), sys.executable)["ok"] is True
 
@@ -241,6 +245,14 @@ def test_calibrazione_non_risale_oltre_la_cartella_del_compito(tmp_path, monkeyp
     monkeypatch.setattr(tempfile, "tempdir", str(base))
     out = b.calibra_task(compito(), sys.executable)
     assert out["ok"] is True, out["motivo"]
+
+
+def test_calibrazione_senza_rete():
+    soluzione = ("    import urllib.request\n"
+                 "    urllib.request.urlopen('http://example.com', timeout=5).read()\n"
+                 "    return sum(numeri)\n")
+    out = b.calibra_task(compito(soluzione=soluzione), sys.executable, secondi=60)
+    assert out["ok"] is False and ("Connection refused" in out["motivo"] or "URLError" in out["motivo"]), out
 
 
 def test_calibrazione_timeout(tmp_path):

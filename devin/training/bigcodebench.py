@@ -58,6 +58,8 @@ RIGHE = 1140
 MAX_BYTE = 8 * 1024 * 1024
 CARTELLA = Path(os.environ.get("DEVIN_BIGCODEBENCH_DIR", "/mnt/ai-rig-shared/palestra/bigcodebench"))
 SECONDI_CALIBRAZIONE = 120
+PROXY_CHIUSO = {k: "http://127.0.0.1:9" for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")} | {
+    "no_proxy": "localhost,127.0.0.1", "NO_PROXY": "localhost,127.0.0.1"}
 CAMPI = ("task_id", "instruct_prompt", "code_prompt", "canonical_solution", "test", "entry_point", "libs")
 
 # processi, sottoprocessi, shell, sistema: fuori dalla palestra (28/10). Si guarda la soluzione
@@ -238,7 +240,10 @@ def calibra_task(task: Dict[str, Any], python: str, bwrap: Optional[str] = None,
                "MPLBACKEND": "Agg", "PYTHONDONTWRITEBYTECODE": "1", "TF_CPP_MIN_LOG_LEVEL": "3",
                # i compiti in parallelo non si pestano i file temporanei (senza bubblewrap /tmp e' comune)
                "TMPDIR": str(cartella),
-               "CUDA_VISIBLE_DEVICES": ""}   # la GPU e' del modello: tensorflow resta su CPU
+               "CUDA_VISIBLE_DEVICES": "",   # la GPU e' del modello: tensorflow resta su CPU
+               # niente rete anche senza bubblewrap: i compiti che scaricano (dati di nltk, URL) non
+               # entrano, la palestra resta ripetibile. Un proxy chiuso basta per urllib/requests/nltk.
+               **PROXY_CHIUSO}
         proc = subprocess.Popen(argv, cwd=str(cartella), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, env=env, start_new_session=True)
         try:
