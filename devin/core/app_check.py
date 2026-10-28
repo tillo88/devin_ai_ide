@@ -97,7 +97,11 @@ def richiesta_piano(task: str, file_scritti: List[str], contesti: Dict[str, str]
         "(argomento o variabile: la porta e' anche in PORT).\n"
         "- \"contiene\" sono pezzi di testo che l'uscita (o la pagina) deve avere: "
         "solo cose che il programma scrive davvero secondo i sorgenti.\n"
-        "- Prova i casi che contano per l'utente, compreso un errore di input se il programma lo gestisce.\n"
+        "- Prova i casi che contano per l'utente: prima gli esempi e i test di riferimento del compito, "
+        "se ci sono, con i risultati che il compito indica.\n"
+        "- Verifica SOLO comportamenti che il compito chiede. Niente casi d'errore inventati: un'eccezione "
+        "(ValueError, TypeError, ...) su input vuoti, negativi o di tipo sbagliato si prova solo se il "
+        "compito la chiede esplicitamente.\n"
         f"- Al massimo {MAX_PASSI} passi, ognuno al massimo {MAX_SECONDI} secondi."
     )
 

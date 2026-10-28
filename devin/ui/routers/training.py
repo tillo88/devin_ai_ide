@@ -229,6 +229,45 @@ def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeo
     return evidence
 
 
+def _chiave_esercizio(store: TrainingStore):
+    """case_id -> (fonte, titolo): lo stesso esercizio anche sotto case_id diversi.
+
+    28/10: i doppioni dello store (un case_id nuovo a ogni import per 105 titoli MBPP)
+    facevano rigirare lo stesso esercizio a ogni giro: per skip_attempted e per il
+    ripasso un esercizio e' fatto se e' fatto sotto QUALUNQUE suo case_id, ritirati compresi."""
+    per_id = {c.get("case_id"): (c.get("source"), str(c.get("title") or "").strip())
+              for c in store.list_cases(limit=1_000_000, include_retired=True)}
+    return lambda case_id: per_id.get(case_id, case_id)
+
+
+def _tentativo_precedente(store: TrainingStore, case: Dict[str, Any]) -> str:
+    """Il perche' dell'ultimo fallimento dello stesso esercizio, da mettere nel compito del ripasso.
+
+    28/10, Alessandro: i falliti vanno ripresi "per fargli capire la logica". Prima il ripasso
+    ridava lo stesso identico compito (un nuovo tiro di dadi). Ora DEVIN vede che cosa era
+    andato storto: il motivo e l'uscita dei test ufficiali. MBPP e' materiale di training
+    (non held-out); gli assert ufficiali sono gia' nel compito come test di riferimento.
+    Niente sezione se l'ultimo tentativo e' riuscito o se il "fallimento" era un bug della
+    verifica corretto il 23/10 (gold verdi non riconosciuti, copie dei gold nella sandbox)."""
+    stesso = _chiave_esercizio(store)
+    chiave = stesso(case.get("case_id"))
+    precedenti = [a for a in store.list_attempts(limit=1_000_000)
+                  if stesso(a.get("case_id")) == chiave and (a.get("status") or "") not in INFRA_STATUSES]
+    if not precedenti or precedenti[-1].get("status") not in AUTO_FAILURE_STATUSES:
+        return ""
+    ultimo = precedenti[-1]
+    gold = ((ultimo.get("tests") or {}).get("gold_executed") or {}) if isinstance(ultimo.get("tests"), dict) else {}
+    uscita = str(gold.get("output") or "")
+    if "import file mismatch" in uscita or (gold.get("exit_code") == 0 and gold.get("missing")):
+        return ""
+    motivo = str(ultimo.get("error_reason") or "").strip()[:700]
+    testo = ("\n\nTENTATIVO PRECEDENTE FALLITO (" + str(len(precedenti)) + " finora). Motivo:\n" + motivo)
+    if uscita and gold.get("exit_code") not in (None, 0):
+        testo += "\nUscita dei test ufficiali (estratto):\n" + uscita[-900:]
+    return testo + ("\nCapisci PERCHE' era sbagliato prima di riscrivere: correggi il ragionamento, non "
+                    "ripetere la stessa soluzione. Non aggiungere requisiti che il compito non chiede.")
+
+
 def _training_job_snapshot(job_id: str = "") -> List[Dict[str, Any]] | Dict[str, Any]:
     with _training_jobs_lock:
         if job_id:
@@ -565,7 +604,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
             (project_path / safe_name).write_text(str(content), encoding="utf-8")
             gold_expected[safe_name] = str(content)
 
-        prompt = _training_case_prompt(case)
+        prompt = _training_case_prompt(case) + _tentativo_precedente(store, case)
         log_path = LOG_DIR / f"{run_id}.log"
         log_path.write_text(
             f"Training eval started: {run_id}\n"
@@ -734,7 +773,7 @@ async def api_training_run(request: Request):
     benchmark_id = data.get("benchmark_id", "devin-mini")
     case_id = data.get("case_id", "")
     store = _training_store_for(data.get("project_path", ""))
-    cases = store.list_cases(limit=1000)
+    cases = store.list_cases(limit=1_000_000)
     selected = [item for item in cases if item.get("source") == benchmark_id]
     if case_id:
         selected = [item for item in selected if item.get("case_id") == case_id]
@@ -742,7 +781,7 @@ async def api_training_run(request: Request):
         builtin = get_builtin_cases(benchmark_id)
         if builtin:
             store.seed_cases(builtin, source=benchmark_id)
-            cases = store.list_cases(limit=1000)
+            cases = store.list_cases(limit=1_000_000)
             selected = [item for item in cases if item.get("source") == benchmark_id]
             if case_id:
                 selected = [item for item in selected if item.get("case_id") == case_id]
@@ -765,24 +804,26 @@ async def api_training_run(request: Request):
             tetto = max(2, min(int(data.get("max_attempts") or 2), 5))
         except (TypeError, ValueError):
             return {"error": "max_attempts deve essere un numero"}
-        ultimi: Dict[str, str] = {}
-        quanti: Dict[str, int] = {}
-        for tentativo in store.list_attempts(limit=100000):
-            cid = tentativo.get("case_id")
+        ultimi: Dict[Any, str] = {}
+        quanti: Dict[Any, int] = {}
+        stesso = _chiave_esercizio(store)
+        for tentativo in store.list_attempts(limit=1_000_000):
+            chiave = stesso(tentativo.get("case_id"))
             if (tentativo.get("status") or "") in INFRA_STATUSES:
                 continue    # un guasto del rig non e' un tentativo del modello
-            ultimi[cid] = tentativo.get("status") or ""
-            quanti[cid] = quanti.get(cid, 0) + 1
-        selected = [c for c in selected if ultimi.get(c.get("case_id")) in AUTO_FAILURE_STATUSES
-                    and quanti.get(c.get("case_id"), 0) < tetto]
+            ultimi[chiave] = tentativo.get("status") or ""
+            quanti[chiave] = quanti.get(chiave, 0) + 1
+        selected = [c for c in selected if ultimi.get(stesso(c.get("case_id"))) in AUTO_FAILURE_STATUSES
+                    and quanti.get(stesso(c.get("case_id")), 0) < tetto]
         if not selected:
             return {"error": "nessun caso fallito da ripassare (o tutti oltre max_attempts): niente da riprendere"}
     elif bool(data.get("skip_attempted", False)):
         attempted_statuses = (AUTO_SUCCESS_STATUSES | AUTO_FAILURE_STATUSES
                               | SAFE_SUCCESS_STATUSES | FAILURE_STATUSES)
-        attempted = {a.get("case_id") for a in store.list_attempts(limit=10000)
+        stesso = _chiave_esercizio(store)
+        attempted = {stesso(a.get("case_id")) for a in store.list_attempts(limit=1_000_000)
                      if (a.get("status") or "") in attempted_statuses}
-        selected = [c for c in selected if c.get("case_id") not in attempted]
+        selected = [c for c in selected if stesso(c.get("case_id")) not in attempted]
         if not selected:
             return {"error": "tutti i casi di questa source hanno gia' un attempt (skip_attempted attivo): niente da riprendere"}
 
@@ -795,6 +836,13 @@ async def api_training_run(request: Request):
         return {"error": "max_cases/max_minutes devono essere numeri"}
     if max_cases < 0 or not 0 <= max_minutes <= 720:
         return {"error": "max_cases >= 0 e max_minutes fra 0 e 720"}
+    # un esercizio una volta sola per giro, anche se nello store ha piu' copie attive (28/10)
+    stesso, visti, unici = _chiave_esercizio(store), set(), []
+    for caso in selected:
+        if stesso(caso.get("case_id")) not in visti:
+            visti.add(stesso(caso.get("case_id")))
+            unici.append(caso)
+    selected = unici
     if max_cases:
         selected = selected[:max_cases]
     etichetta = str(data.get("memory_label") or "")

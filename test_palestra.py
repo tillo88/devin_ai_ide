@@ -198,3 +198,122 @@ def test_il_training_applica_il_verificato_e_dice_il_perche_dei_fallimenti(monke
         finale = dict(training_router._training_jobs["giro"])
     assert visti == [True]
     assert finale["results"][0]["reason"] == "scaffold failed: test_gold_mbpp_1 FAILED: 3 != 4 (file falliti: 1)"
+
+
+# ---------------------------------------------------------------------------
+# 28/10: 105 titoli MBPP che, tagliati a 70 caratteri, finivano con uno spazio
+# ---------------------------------------------------------------------------
+
+def _riga_mbpp(task_id, testo):
+    return {"task_id": task_id, "text": testo, "test_list": [f"assert f{task_id}(1) == 1"], "test_setup_code": ""}
+
+
+def _store_con_doppioni(tmp_path):
+    """Lo store come sul rig: il vecchio seed creava un doppione a ogni import per i titoli con lo spazio in coda."""
+    from devin.training.adapters import mbpp_rows_to_cases
+    store = TrainingStore(tmp_path / "t")
+    righe = [_riga_mbpp(18, "Write a function to remove characters from the first string which are present in the second"),
+             _riga_mbpp(7, "Find words")]
+    casi = mbpp_rows_to_cases(righe, limit=10)
+    vecchio = dict(casi[0], title=casi[0]["title"] + " ")       # il titolo di prima del fix, con lo spazio
+    for _ in range(3):                                            # tre import col codice vecchio = tre copie
+        store.add_case(task=vecchio["prompt"], title=vecchio["title"], source="mbpp")
+    store.add_case(task=casi[1]["prompt"], title=casi[1]["title"], source="mbpp")
+    return store, righe
+
+
+def test_il_reseed_non_crea_doppioni_e_ritira_quelli_vecchi(tmp_path):
+    from devin.training.adapters import mbpp_rows_to_cases
+    store, righe = _store_con_doppioni(tmp_path)
+    primo = [c["case_id"] for c in store.list_cases() if c["title"].startswith("MBPP 18")][0]
+    assert mbpp_rows_to_cases(righe, limit=10)[0]["title"].endswith("second") is False
+    assert not mbpp_rows_to_cases(righe, limit=10)[0]["title"].endswith(" "), "titolo senza spazio in coda"
+    for _ in range(3):
+        assert store.seed_cases(mbpp_rows_to_cases(righe, limit=10), source="mbpp") == []
+    attivi = [c for c in store.list_cases() if c["source"] == "mbpp"]
+    assert sorted(c["title"][:7] for c in attivi) == ["MBPP 18", "MBPP 7:"], "una copia per esercizio"
+    assert [c["case_id"] for c in attivi if c["title"].startswith("MBPP 18")] == [primo], "resta il piu' vecchio"
+    assert store.last_seed_retired_duplicates == 0, "il ritiro avviene una volta sola"
+    # chiavi normalizzate anche per chi passa titoli o compiti con spazi attorno
+    for _ in range(2):
+        store.seed_cases([{"title": "Caso libero ", "prompt": " compito libero\n"}], source="mbpp")
+    assert sum(c["title"] == "Caso libero" for c in store.list_cases()) == 1
+
+
+def test_un_esercizio_fatto_sotto_un_doppione_e_fatto(monkeypatch, tmp_path):
+    """skip_attempted e ripasso guardano l'esercizio (fonte + titolo), non il case_id."""
+    store, _ = _store_con_doppioni(tmp_path)
+    copie = [c["case_id"] for c in store.list_cases() if c["title"].startswith("MBPP 18")]
+    store.add_attempt(case_id=copie[0], prompt="p", response="r", status="auto_success")
+    monkeypatch.setattr(training_router, "_training_store_for", lambda project_path="": store)
+    partiti = []
+    monkeypatch.setattr(training_router.threading, "Thread",
+                        lambda target, args, daemon: type("T", (), {"start": lambda self: partiti.append(args)})())
+    asyncio.run(training_router.api_training_run(_Req({"benchmark_id": "mbpp", "skip_attempted": True})))
+    assert [c["title"][:7] for c in partiti[0][2]] == ["MBPP 7:"], "MBPP 18 e' gia' fatto sotto un'altra copia"
+    store.add_attempt(case_id=copie[1], prompt="p", response="r", status="auto_failure")
+    store.add_attempt(case_id=copie[2], prompt="p", response="r", status="auto_failure")
+    out = asyncio.run(training_router.api_training_run(_Req({"benchmark_id": "mbpp", "retry_failed": True})))
+    assert "error" in out, "due fallimenti su copie diverse = due tentativi: oltre il tetto di 2"
+    out = asyncio.run(training_router.api_training_run(_Req({"benchmark_id": "mbpp", "retry_failed": True,
+                                                             "max_attempts": 4})))
+    assert [c["title"][:7] for c in partiti[-1][2]] == ["MBPP 18"], out
+
+
+def test_la_prova_dell_app_non_inventa_casi_d_errore():
+    """28/10: 26 dei 47 non risolti erano la prova dell'app che pretendeva ValueError/TypeError su
+    input che il compito non nomina. Ora solo comportamenti chiesti dal compito, prima i suoi esempi."""
+    from devin.core.app_check import richiesta_piano
+    testo = richiesta_piano("Scrivi f(n)", ["solution.py"], {}, {"python": True})
+    assert "compreso un errore di input" not in testo
+    assert "Niente casi d'errore inventati" in testo and "test di riferimento del compito" in testo
+
+
+def test_il_ripasso_dice_a_devin_che_cosa_era_andato_storto(tmp_path):
+    """28/10: il ripasso non e' piu' un nuovo tiro di dadi: il compito porta il motivo e l'uscita
+    dei test ufficiali dell'ultimo fallimento, anche se registrato sotto un'altra copia del caso."""
+    store, _ = _store_con_doppioni(tmp_path)
+    copie = [c for c in store.list_cases() if c["title"].startswith("MBPP 18")]
+    assert training_router._tentativo_precedente(store, copie[0]) == "", "mai provato: niente sezione"
+    store.add_attempt(case_id=copie[1]["case_id"], prompt="p", response="r", status="runner_error", error_reason="rig")
+    assert training_router._tentativo_precedente(store, copie[0]) == "", "un guasto del rig non e' un tentativo"
+    store.add_attempt(case_id=copie[1]["case_id"], prompt="p", response="r", status="auto_failure",
+                      error_reason="gold test non eseguiti: non raccolti/passati: test_gold_mbpp_18.py",
+                      tests={"gold_executed": {"exit_code": 1, "missing": ["t"], "output": "E AssertionError: 'bacuve'"}})
+    testo = training_router._tentativo_precedente(store, copie[0])
+    assert "TENTATIVO PRECEDENTE FALLITO (1 finora)" in testo and "AssertionError: 'bacuve'" in testo
+    store.add_attempt(case_id=copie[2]["case_id"], prompt="p", response="r", status="auto_failure",
+                      error_reason="gold test non eseguiti: non raccolti/passati: t.py",
+                      tests={"gold_executed": {"exit_code": 0, "missing": ["t"], "output": "1 passed"}})
+    assert training_router._tentativo_precedente(store, copie[0]) == "", "falso negativo del 23/10: niente"
+    store.add_attempt(case_id=copie[0]["case_id"], prompt="p", response="r", status="auto_success")
+    assert training_router._tentativo_precedente(store, copie[0]) == "", "ultimo riuscito: niente"
+
+
+def test_il_runner_passa_il_tentativo_precedente_a_devin(monkeypatch, tmp_path):
+    compiti = []
+
+    class Orch:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def run_scaffold(self, task, project_path, run_id):
+            compiti.append(task)
+            return {"success": True, "quality_gate": dict(GREEN_GATE), "files_written": ["sol.py"]}
+
+    fast_app = _patch_runner_surface(monkeypatch, tmp_path)
+    monkeypatch.setattr(fast_app, "Orchestrator", Orch)
+    monkeypatch.setattr(training_router, "_verify_gold_tests_executed", _fake_gold_check)
+    store = TrainingStore(tmp_path / "training")
+    case = _runner_case()
+    store.add_attempt(case_id=case["case_id"], prompt="p", response="r", status="auto_failure",
+                      error_reason="quality gate: test_sol.py::test_add FAILED")
+    _register_job("job_prec", [case])
+    training_router._run_training_cases_background("job_prec", store, [case], "bench-test")
+    assert "TENTATIVO PRECEDENTE FALLITO" in compiti[0] and "test_add FAILED" in compiti[0]

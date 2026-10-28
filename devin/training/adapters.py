@@ -139,7 +139,9 @@ def mbpp_rows_to_cases(rows: List[Dict[str, Any]], limit: int = 10, offset: int 
               "pytest tests. No network access, no extra dependencies."
         )
         cases.append({
-            "title": f"MBPP {task_id}: {text[:70]}",
+            # rstrip: tagliato a 70 caratteri il titolo puo' finire con uno spazio; lo store lo
+            # salva strippato e il reseed non lo riconosceva piu' (28/10: 105 doppioni a import)
+            "title": f"MBPP {task_id}: {text[:70]}".rstrip(),
             "kind": "code_generation",
             "prompt": prompt,
             "expected_signals": ["tests_pass"],
@@ -166,6 +168,7 @@ def import_mbpp_cases(store, limit: int = 10, offset: int = 0,
         "converted": len(cases),
         "created": len(created),
         "skipped_existing": len(cases) - len(created),
+        "retired_duplicates": int(getattr(store, "last_seed_retired_duplicates", 0) or 0),
         "source": "mbpp",
         "cache": info["path"],
     }
