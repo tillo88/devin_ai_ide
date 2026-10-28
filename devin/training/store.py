@@ -27,6 +27,10 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _norm(value: Any) -> str:
+    return str(value or "").strip()
+
+
 def _append_jsonl(path: Path, record: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
@@ -155,19 +159,30 @@ class TrainingStore:
         attivo con stesso (source, title) ma task/metadata aggiornati (es. gold
         tests aggiunti), il vecchio viene RITIRATO e si crea la versione nuova.
         Cosi' il reseed aggiorna il bench senza far girare doppioni."""
-        active = self.list_cases(limit=10000)
-        by_key = {(item.get("source"), item.get("title"), item.get("task")): item for item in active}
-        by_title = {(item.get("source"), item.get("title")): item for item in active}
+        # 28/10: le chiavi si confrontano STRIPPATE, come add_case le salva. Prima un titolo
+        # con uno spazio in coda (MBPP tagliato a 70 caratteri) non combaciava mai: a ogni
+        # import un doppione nuovo, mai ritirato, e skip_attempted lo rigirava da capo.
+        # I doppioni gia' presenti si ritirano qui: resta il piu' vecchio.
+        gruppi: Dict[tuple, List[Dict[str, Any]]] = {}
+        for item in self.list_cases(limit=1_000_000):
+            gruppi.setdefault((item.get("source"), _norm(item.get("title"))), []).append(item)
         created = []
+        self.last_seed_retired_duplicates = 0
         for raw in cases:
-            task = raw.get("prompt") or raw.get("task") or ""
-            title = raw.get("title", "")
-            if (source, title, task) in by_key:
+            task = _norm(raw.get("prompt") or raw.get("task"))
+            title = _norm(raw.get("title"))
+            presenti = gruppi.get((source, title), [])
+            uguale = next((c for c in presenti if _norm(c.get("task")) == task), None)
+            if uguale is not None:
+                for altro in presenti:
+                    if altro is not uguale:
+                        self.retire_case(altro.get("case_id"), reason="duplicate of " + str(uguale.get("case_id")))
+                        self.last_seed_retired_duplicates += 1
+                gruppi[(source, title)] = [uguale]
                 continue
-            old = by_title.get((source, title))
-            if old:
+            for old in presenti:
                 self.retire_case(old.get("case_id"), reason="superseded by reseed")
-            created.append(self.add_case(
+            nuovo = self.add_case(
                 task=task,
                 title=title,
                 kind=raw.get("kind", "benchmark"),
@@ -175,7 +190,9 @@ class TrainingStore:
                 source=source,
                 expected_signals=raw.get("expected_signals", []),
                 metadata={k: v for k, v in raw.items() if k not in {"prompt", "task", "title", "kind", "tags", "expected_signals"}},
-            ))
+            )
+            gruppi[(source, title)] = [nuovo]
+            created.append(nuovo)
         return created
 
     def retire_case(self, case_id: str, reason: str = "") -> None:
