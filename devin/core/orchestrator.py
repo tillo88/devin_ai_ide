@@ -557,15 +557,18 @@ class Orchestrator:
         Uses the same interpreter of the app (venv) via sys.executable, cwd nel
         sandbox del progetto. Ritorna dict con success/command/output.
         """
+        # l'interprete del progetto: quello di DEVIN o, nel training, l'ambiente del benchmark
+        from devin.engine.ambienti import env_corrente, python_corrente
+        python = python_corrente()
         commands = [
-            [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--maxfail=20"],
-            [sys.executable, "-m", "unittest", "discover", "-v"],
+            [python, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--maxfail=20"],
+            [python, "-m", "unittest", "discover", "-v"],
         ]
         # PYTHONDONTWRITEBYTECODE: nel self-heal loop un file corretto puo'
         # avere STESSA dimensione e mtime (stesso secondo) della versione
         # buggata -> Python riuserebbe il .pyc stale e i test resterebbero
         # rossi a codice ormai giusto. Niente bytecode = niente staleness.
-        gate_env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        gate_env = env_corrente(dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         last: Dict[str, Any] = {"success": False, "command": "", "output": "no test runner available"}
         from devin.engine.pytest_isolato import argomenti_isolati
         for argv in commands:

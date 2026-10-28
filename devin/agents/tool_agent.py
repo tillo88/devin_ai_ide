@@ -245,13 +245,19 @@ class AgenteStrumenti:
     def _esegui(self, comando: List[str], input: str = "", secondi: int = 60) -> str:
         if not isinstance(comando, list) or not comando or not all(isinstance(a, str) for a in comando):
             return "ERRORE: 'comando' deve essere una lista di testi, es. [\"python\", \"app.py\"]"
-        import sys
-        argv = [sys.executable if comando[0] in ("python", "python3") else comando[0], *comando[1:]]
+        from devin.engine.ambienti import env_corrente, python_corrente
+        python = python_corrente()
+        if comando[0] in ("python", "python3"):
+            argv = [python, *comando[1:]]
+        elif comando[0] in ("pytest", "py.test"):
+            argv = [python, "-m", "pytest", *comando[1:]]   # lo stesso interprete dei test del gate
+        else:
+            argv = list(comando)
         casa = self.radice / ".casa"
         casa.mkdir(exist_ok=True)
-        env = dict(os.environ, HOME=str(casa), PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1",
-                   PYTHONIOENCODING="utf-8", QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg",
-                   SDL_VIDEODRIVER="dummy", NO_COLOR="1")
+        env = env_corrente(dict(os.environ, HOME=str(casa), PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1",
+                                PYTHONIOENCODING="utf-8", QT_QPA_PLATFORM="offscreen", MPLBACKEND="Agg",
+                                SDL_VIDEODRIVER="dummy", NO_COLOR="1"))
         limite = max(1, min(MAX_SECONDI_COMANDO, int(secondi or 60)))
         try:
             proc = subprocess.run(argv, cwd=str(self.radice), env=env, input=input or "",

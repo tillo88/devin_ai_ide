@@ -218,11 +218,13 @@ def _ambiente(cartella: Path, porta: Optional[int] = None) -> Dict[str, str]:
     })
     if porta:
         env["PORT"] = str(porta)
-    return env
+    from devin.engine.ambienti import env_corrente
+    return env_corrente(env)
 
 
 def _argv(passo: Dict[str, Any], porta: Optional[int]) -> List[str]:
-    argv = [sys.executable] + list(passo["argv"][1:])
+    from devin.engine.ambienti import python_corrente
+    argv = [python_corrente()] + list(passo["argv"][1:])
     if porta:
         argv = [a.replace("{port}", str(porta)) for a in argv]
     return argv
