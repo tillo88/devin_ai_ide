@@ -66,6 +66,9 @@ def env_corrente(env: Dict[str, str]) -> Dict[str, str]:
     nuovo = dict(env)
     nuovo["VIRTUAL_ENV"] = str(venv)
     nuovo["PATH"] = str(venv / "bin") + os.pathsep + env.get("PATH", os.environ.get("PATH", ""))
+    # la GPU e' del modello: tensorflow & co. del benchmark non devono aprire un contesto CUDA
+    # (VRAM) mentre il modello gira. Senza GPU visibili girano su CPU.
+    nuovo["CUDA_VISIBLE_DEVICES"] = ""
     return nuovo
 
 

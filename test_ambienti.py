@@ -31,6 +31,7 @@ def test_dentro_il_blocco_tutto_usa_l_ambiente(tmp_path, monkeypatch):
         assert scelto == str(python) == ambienti.python_corrente()
         env = ambienti.env_corrente({"PATH": "/usr/bin"})
         assert env["PATH"].split(os.pathsep)[0] == str(python.parent) and env["VIRTUAL_ENV"].endswith("venv-bigcodebench")
+        assert env["CUDA_VISIBLE_DEVICES"] == "", "la GPU e' del modello"
     assert ambienti.python_corrente() == sys.executable, "uscito dal blocco si torna a DEVIN"
 
 
@@ -47,11 +48,12 @@ def test_gate_verifica_gold_agente_e_prova_dell_app_usano_l_ambiente(tmp_path, m
     """I quattro punti che eseguono il codice del progetto passano dall'ambiente corrente."""
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     python = venv_finto(tmp_path / "home")
-    chiamate = []
+    chiamate, gpu = [], []
     vero = __import__("subprocess").run
 
     def run(argv, *a, **k):
         chiamate.append((list(argv), (k.get("env") or {}).get("VIRTUAL_ENV", "")))
+        gpu.append((k.get("env") or {}).get("CUDA_VISIBLE_DEVICES"))
         return vero(argv, *a, **k)
 
     import subprocess
@@ -73,9 +75,11 @@ def test_gate_verifica_gold_agente_e_prova_dell_app_usano_l_ambiente(tmp_path, m
         agente._esegui(["pytest", "-q"])
         assert app_check._argv({"argv": ["python", "sol.py"]}, None)[0] == str(python)
         assert app_check._ambiente(progetto)["VIRTUAL_ENV"].endswith("venv-bigcodebench")
+        assert app_check._ambiente(progetto)["CUDA_VISIBLE_DEVICES"] == ""
     eseguiti = [argv for argv, _ in chiamate]
     assert eseguiti and all(argv[0] == str(python) for argv in eseguiti), eseguiti
     assert all(venv.endswith("venv-bigcodebench") for _, venv in chiamate)
+    assert gpu and all(g == "" for g in gpu), "niente GPU per il codice del benchmark mentre il modello gira"
     assert ["-m", "pytest", "-q"] == eseguiti[-1][1:4], "pytest dell'agente = python -m pytest dell'ambiente"
 
 

@@ -41,6 +41,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -203,6 +204,20 @@ def argv_isolato(bwrap: Optional[str], cartella: Path, argv: List[str]) -> List[
             "--unshare-net", "--unshare-ipc", "--die-with-parent", "--new-session", *argv]
 
 
+def _ferma(proc: "subprocess.Popen[str]", secondi: int, attesa: int = 30) -> str:
+    """Allo scadere: SIGTERM a tutto il gruppo (pytest e i processi che ha lanciato, es. un Pool),
+    attesa limitata, mai SIGKILL. Se il gruppo non si ferma lo si dice nel motivo."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.communicate(timeout=attesa)
+        return f"timeout {secondi}s"
+    except subprocess.TimeoutExpired:
+        return f"timeout {secondi}s, processo ancora vivo dopo SIGTERM (pid {proc.pid})"
+
+
 def calibra_task(task: Dict[str, Any], python: str, bwrap: Optional[str] = None,
                  secondi: int = SECONDI_CALIBRAZIONE) -> Dict[str, Any]:
     """Soluzione ufficiale (code_prompt + canonical_solution) contro il SUO gold, come nel training."""
@@ -219,13 +234,15 @@ def calibra_task(task: Dict[str, Any], python: str, bwrap: Optional[str] = None,
         env = {"PATH": str(Path(python).parent) + ":/usr/bin:/bin", "HOME": str(cartella), "LANG": "C.UTF-8",
                "MPLBACKEND": "Agg", "PYTHONDONTWRITEBYTECODE": "1", "TF_CPP_MIN_LOG_LEVEL": "3",
                # i compiti in parallelo non si pestano i file temporanei (senza bubblewrap /tmp e' comune)
-               "TMPDIR": str(cartella)}
+               "TMPDIR": str(cartella),
+               "CUDA_VISIBLE_DEVICES": ""}   # la GPU e' del modello: tensorflow resta su CPU
+        proc = subprocess.Popen(argv, cwd=str(cartella), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, env=env, start_new_session=True)
         try:
-            proc = subprocess.run(argv, cwd=str(cartella), capture_output=True, text=True, timeout=secondi,
-                                  env=env, start_new_session=True)
+            uscita, _ = proc.communicate(timeout=secondi)
         except subprocess.TimeoutExpired:
-            return {"ok": False, "motivo": f"timeout {secondi}s", "secondi": round(time.monotonic() - inizio, 1)}
-        uscita = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+            return {"ok": False, "motivo": _ferma(proc, secondi), "secondi": round(time.monotonic() - inizio, 1)}
+        uscita = (uscita or "").strip()
         return {"ok": proc.returncode == 0, "motivo": "" if proc.returncode == 0 else uscita[-400:],
                 "secondi": round(time.monotonic() - inizio, 1)}
     finally:
