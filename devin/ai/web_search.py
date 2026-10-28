@@ -165,13 +165,59 @@ def is_searchable_error(error: str) -> bool:
     return any(p in err for p in SEARCHABLE_ERROR_PATTERNS)
 
 
+# =============================================================================
+# Solo documentazione (28/10, palestra)
+#
+# Durante il training le soluzioni degli esercizi (MBPP & co.) sono ovunque sul web:
+# trovarle e copiarle non insegna il metodo, e una "lezione" presa cosi' non vale.
+# Con web_search.solo_documentazione si tengono soltanto i risultati dei siti di
+# documentazione ufficiale (linguaggi, test, GitHub, librerie): come funziona una
+# funzione si', la risposta all'esercizio no. Forum, blog e repository di codice
+# restano fuori. Per il lavoro normale l'impostazione e' spenta.
+# =============================================================================
+
+DOCS_DOMAINS = (
+    "docs.python.org", "peps.python.org", "packaging.python.org", "docs.pytest.org",
+    "docs.github.com", "readthedocs.io", "readthedocs.org", "numpy.org", "pandas.pydata.org",
+    "docs.scipy.org", "matplotlib.org", "docs.sqlalchemy.org", "fastapi.tiangolo.com",
+    "flask.palletsprojects.com", "docs.djangoproject.com", "developer.mozilla.org",
+    "nodejs.org", "docs.rs", "doc.rust-lang.org", "go.dev", "openscad.org", "git-scm.com",
+)
+
+
+def solo_documentazione(config: Dict[str, Any]) -> bool:
+    return bool(((config or {}).get("web_search") or {}).get("solo_documentazione"))
+
+
+def e_documentazione(url: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        host = (urlparse(str(url or "")).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == d or host.endswith("." + d) for d in DOCS_DOMAINS)
+
+
+def _cerca(provider: Any, query: str, config: Dict[str, Any], max_results: int = 4) -> List[Dict[str, Any]]:
+    """La ricerca, filtrata alla documentazione quando la config lo chiede (un secondo
+    tentativo con "documentation" in coda, se il primo non trova nessun sito di doc)."""
+    results = provider.search(query, max_results=max_results)
+    if not solo_documentazione(config):
+        return results
+    tenuti = [r for r in results or [] if e_documentazione(r.get("url", ""))]
+    if not tenuti:
+        tenuti = [r for r in provider.search(f"{query} documentation", max_results=max_results * 2) or []
+                  if e_documentazione(r.get("url", ""))]
+    return tenuti[:max_results]
+
+
 def search_coding_context(query: str, config: Dict[str, Any],
                            max_chars: int = 2000) -> str:
     """Ricerca compatta per gli agenti: snippet + contenuto della prima pagina
     utile. Fail-soft: '' su qualsiasi problema (rete giu', key mancante...)."""
     try:
         provider = get_web_search_provider(config)
-        results = provider.search(query, max_results=4)
+        results = _cerca(provider, query, config)
         if not results:
             return ""
         snippets = format_results_as_context(results)
@@ -280,7 +326,7 @@ def search_docs_context(query: str, config: Dict[str, Any], max_chars: int = 220
     prima pagina utile con fetch_page_smart (Crawl4AI-first). Fail-soft: ''."""
     try:
         provider = get_web_search_provider(config)
-        results = provider.search(query, max_results=4)
+        results = _cerca(provider, query, config)
         if not results:
             return ""
         snippets = format_results_as_context(results)
