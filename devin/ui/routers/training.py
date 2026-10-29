@@ -179,7 +179,7 @@ def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeo
     xml_fd, xml_name = tempfile.mkstemp(prefix="gold_verify_", suffix=".xml")
     os.close(xml_fd)
     xml_path = Path(xml_name)
-    from devin.engine.ambienti import env_corrente, python_corrente
+    from devin.engine.ambienti import env_corrente, protetto, python_corrente
     argv = [python_corrente(), "-m", "pytest", "-q", "-p", "no:cacheprovider",
             "--maxfail=20", f"--junitxml={xml_path}"]
     # PYTHONDONTWRITEBYTECODE: come nel gate, niente .pyc stale tra i rerun.
@@ -189,8 +189,8 @@ def _verify_gold_tests_executed(project_path: Path, gold_names: List[str], timeo
             # rootdir/config/conftest del progetto, mai del repo DEVIN che lo contiene (#1856)
             from devin.engine.pytest_isolato import argomenti_isolati
             with argomenti_isolati(project_path) as isolati:
-                proc = subprocess.run(argv + isolati, cwd=str(project_path), capture_output=True,
-                                      text=True, timeout=timeout, env=env)
+                proc = subprocess.run(protetto(argv + isolati, project_path, env), cwd=str(project_path),
+                                      capture_output=True, text=True, timeout=timeout, env=env)
         except subprocess.TimeoutExpired:
             evidence["detail"] = f"timeout dopo {timeout}s"
             return evidence
@@ -598,6 +598,12 @@ async def api_training_export_teacher_packet(request: Request):
 # dei test su fast_app.Orchestrator/LOG_DIR/_run_events restano validi).
 
 
+def _scatola_nel_training() -> bool:
+    """La scatola e' sempre accesa nel training; ``DEVIN_SCATOLA=0`` la spegne solo nei test
+    (CI senza bubblewrap): i test della scatola la provano accesa per davvero."""
+    return os.environ.get("DEVIN_SCATOLA", "1") != "0"
+
+
 def _run_training_cases_background(job_id: str, store: TrainingStore, cases: List[Dict[str, Any]], benchmark_id: str) -> None:
     from devin.ui.fast_app import (  # lazy: risolti a thread-run time
         CONFIG_PATH,
@@ -672,9 +678,13 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
         # 28/10: l'ambiente di prova del caso (es. BigCodeBench). Tutto il caso, scaffold e verifica
         # dei gold, gira li'; se l'ambiente manca e' un guasto del rig (runner_error), mai di DEVIN.
         from devin.engine import ambienti
-        token_ambiente = None
+        token_ambiente = token_scatola = None
         try:
             token_ambiente = ambienti.entra(str((case.get("metadata") or {}).get("ambiente") or "") or None)
+            # 29/10: il codice del caso gira nella scatola (bubblewrap): scrive solo nel progetto
+            # del caso, non vede ne' ferma altri processi, niente rete. Senza scatola: runner_error.
+            if _scatola_nel_training():
+                token_scatola = ambienti.entra_scatola(project_path)
             with Orchestrator(config_path=CONFIG_PATH, project_path=str(project_path), sse_callback=_make_run_callback(run_id, log_path)) as orch:
                 with _training_jobs_lock:
                     etichetta = str((_training_jobs.get(job_id) or {}).get("memory_label") or "")
@@ -782,6 +792,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 f.write(f"\n[FATAL] {error_reason}\ntraining_status: runner_error\nstatus: failed\n")
             _finish_run_events(run_id, "failed", mode="training")
         finally:
+            ambienti.esci_scatola(token_scatola)
             ambienti.esci(token_ambiente)
 
         attempt = store.add_attempt(

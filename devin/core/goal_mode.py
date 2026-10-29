@@ -355,9 +355,10 @@ def _iter_files(root: Path, globs: list[str]):
 def _run(argv: list[str], root: Path, timeout: int) -> dict[str, Any]:
     # PYTHONDONTWRITEBYTECODE come nel gate: evita .pyc stale nei loop di heal.
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    from devin.engine.ambienti import protetto
     try:
         proc = subprocess.run(
-            argv, cwd=str(root), capture_output=True, text=True, timeout=timeout, env=env,
+            protetto(argv, root, env), cwd=str(root), capture_output=True, text=True, timeout=timeout, env=env,
         )
     except subprocess.TimeoutExpired:
         return {"returncode": 124, "output": f"timeout dopo {timeout}s"}

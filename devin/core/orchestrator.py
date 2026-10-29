@@ -558,7 +558,7 @@ class Orchestrator:
         sandbox del progetto. Ritorna dict con success/command/output.
         """
         # l'interprete del progetto: quello di DEVIN o, nel training, l'ambiente del benchmark
-        from devin.engine.ambienti import env_corrente, python_corrente
+        from devin.engine.ambienti import env_corrente, protetto, python_corrente
         python = python_corrente()
         commands = [
             [python, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--maxfail=20"],
@@ -578,7 +578,7 @@ class Orchestrator:
                 # rootdir, opzioni e fixture del gate (#1856).
                 with argomenti_isolati(root) as isolati:
                     proc = subprocess.run(
-                        argv + (isolati if argv[2] == "pytest" else []), cwd=str(root),
+                        protetto(argv + (isolati if argv[2] == "pytest" else []), root, gate_env), cwd=str(root),
                         capture_output=True, text=True, timeout=timeout, env=gate_env,
                     )
             except subprocess.TimeoutExpired:
