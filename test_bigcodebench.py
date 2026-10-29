@@ -298,7 +298,8 @@ def test_argv_isolato():
     assert b.argv_isolato(None, Path("/x"), argv) == argv
     isolato = b.argv_isolato("/usr/bin/bwrap", Path("/x"), argv)
     assert isolato[0] == "/usr/bin/bwrap" and isolato[-3:] == argv
-    for opzione in ("--unshare-net", "--unshare-pid", "--die-with-parent", "--new-session"):
+    assert "--new-session" not in isolato, "SIGTERM al gruppo deve arrivare al compito"
+    for opzione in ("--unshare-net", "--unshare-pid", "--die-with-parent"):
         assert opzione in isolato
     assert isolato[isolato.index("--ro-bind") + 1:isolato.index("--ro-bind") + 3] == ["/", "/"]
     assert isolato[isolato.index("--bind") + 1:isolato.index("--bind") + 3] == ["/x", "/x"]

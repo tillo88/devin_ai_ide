@@ -25,8 +25,9 @@ _MODULE_RE = re.compile(r"No module named ['\"]([\w\.]+)['\"]")
 
 def _run_process(argv, cwd, timeout, on_process=None):
     """Run one process with a hard timeout and kill its whole process group."""
+    from devin.engine.ambienti import protetto
     proc = subprocess.Popen(
-        argv,
+        protetto(argv, cwd),
         cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

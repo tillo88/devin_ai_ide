@@ -245,7 +245,7 @@ class AgenteStrumenti:
     def _esegui(self, comando: List[str], input: str = "", secondi: int = 60) -> str:
         if not isinstance(comando, list) or not comando or not all(isinstance(a, str) for a in comando):
             return "ERRORE: 'comando' deve essere una lista di testi, es. [\"python\", \"app.py\"]"
-        from devin.engine.ambienti import env_corrente, python_corrente
+        from devin.engine.ambienti import env_corrente, protetto, python_corrente
         python = python_corrente()
         if comando[0] in ("python", "python3"):
             argv = [python, *comando[1:]]
@@ -260,7 +260,7 @@ class AgenteStrumenti:
                                 SDL_VIDEODRIVER="dummy", NO_COLOR="1"))
         limite = max(1, min(MAX_SECONDI_COMANDO, int(secondi or 60)))
         try:
-            proc = subprocess.run(argv, cwd=str(self.radice), env=env, input=input or "",
+            proc = subprocess.run(protetto(argv, self.radice, env), cwd=str(self.radice), env=env, input=input or "",
                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=limite)
         except FileNotFoundError:

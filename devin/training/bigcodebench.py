@@ -203,16 +203,40 @@ def argv_isolato(bwrap: Optional[str], cartella: Path, argv: List[str]) -> List[
         return argv
     return [bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
             "--bind", str(cartella), str(cartella), "--chdir", str(cartella), "--unshare-pid",
-            "--unshare-net", "--unshare-ipc", "--die-with-parent", "--new-session", *argv]
+            "--unshare-net", "--unshare-ipc", "--die-with-parent", *argv]
+
+
+def _sigterm_al_gruppo(pgid: int) -> None:
+    """SIGTERM ai processi del gruppo tranne bubblewrap (che uscendo chiuderebbe la scatola di
+    colpo); senza scatola e' come killpg. Come ambienti.termina_gruppo di DEVIN: questo file
+    gira anche da solo, col python di venv-bigcodebench, e non importa DEVIN."""
+    raggiunti = 0
+    for voce in os.listdir("/proc"):
+        if not voce.isdigit():
+            continue
+        try:
+            stat = Path("/proc", voce, "stat").read_text()
+        except OSError:
+            continue
+        campi = stat[stat.rfind(")") + 2:].split()
+        if len(campi) < 3 or int(campi[2]) != pgid or stat[stat.find("(") + 1:stat.rfind(")")] == "bwrap":
+            continue
+        try:
+            os.kill(int(voce), signal.SIGTERM)
+            raggiunti += 1
+        except ProcessLookupError:
+            pass
+    if not raggiunti:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
 
 def _ferma(proc: "subprocess.Popen[str]", secondi: int, attesa: int = 30) -> str:
     """Allo scadere: SIGTERM a tutto il gruppo (pytest e i processi che ha lanciato, es. un Pool),
     attesa limitata, mai SIGKILL. Se il gruppo non si ferma lo si dice nel motivo."""
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
+    _sigterm_al_gruppo(proc.pid)
     try:
         proc.communicate(timeout=attesa)
         return f"timeout {secondi}s"

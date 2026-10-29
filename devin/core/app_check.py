@@ -234,9 +234,10 @@ def _chiudi(proc: subprocess.Popen) -> str:
     """SIGTERM al gruppo e attesa. Niente SIGKILL: se non si chiude, si dice."""
     if proc.poll() is not None:
         return ""
+    from devin.engine.ambienti import termina_gruppo
     try:
         if os.name != "nt":
-            os.killpg(proc.pid, signal.SIGTERM)
+            termina_gruppo(proc.pid, signal.SIGTERM)    # nella scatola: al programma, non a bubblewrap
         else:
             proc.terminate()
         proc.wait(timeout=10)
@@ -244,7 +245,7 @@ def _chiudi(proc: subprocess.Popen) -> str:
     except subprocess.TimeoutExpired:
         try:
             if os.name != "nt":
-                os.killpg(proc.pid, signal.SIGINT)
+                termina_gruppo(proc.pid, signal.SIGINT)
             proc.wait(timeout=5)
             return ""
         except (subprocess.TimeoutExpired, ProcessLookupError):
@@ -253,12 +254,13 @@ def _chiudi(proc: subprocess.Popen) -> str:
         return ""
 
 
-def _avvia(argv: List[str], cartella: Path, env: Dict[str, str]):
+def _avvia(argv: List[str], cartella: Path, env: Dict[str, str], rete: bool = False):
     """Avvia in background; l'uscita va su file (una pipe piena bloccherebbe il server)."""
+    from devin.engine.ambienti import protetto
     registro = Path(tempfile.mkstemp(prefix="uscita-", suffix=".txt", dir=str(cartella / ".casa"))[1])
     with registro.open("w", encoding="utf-8") as scrittura:
         proc = subprocess.Popen(
-            argv, cwd=str(cartella), env=env, stdin=subprocess.DEVNULL,
+            protetto(argv, cartella, env, rete=rete), cwd=str(cartella), env=env, stdin=subprocess.DEVNULL,
             stdout=scrittura, stderr=subprocess.STDOUT, start_new_session=(os.name != "nt"),
         )
     return proc, registro
@@ -278,9 +280,11 @@ def _controlla_testo(testo: str, passo: Dict[str, Any]) -> List[str]:
 
 
 def _esegui_comando(passo, cartella):
+    from devin.engine.ambienti import protetto
+    env = _ambiente(cartella)
     try:
         proc = subprocess.run(
-            _argv(passo, None), cwd=str(cartella), env=_ambiente(cartella),
+            protetto(_argv(passo, None), cartella, env), cwd=str(cartella), env=env,
             input=passo.get("stdin", ""), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=passo["secondi"],
         )
@@ -296,7 +300,8 @@ def _esegui_comando(passo, cartella):
 def _esegui_http(passo, cartella, browser):
     porta = _porta_libera()
     env = _ambiente(cartella, porta)
-    proc, registro = _avvia(_argv(passo, porta), cartella, env)
+    # il server deve rispondere da fuori: nella scatola condivide la rete, il resto resta chiuso
+    proc, registro = _avvia(_argv(passo, porta), cartella, env, rete=True)
     url = f"http://127.0.0.1:{porta}{passo['path']}"
     limite = time.time() + passo["secondi"]
     corpo, stato, errore = "", None, ""
