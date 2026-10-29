@@ -205,6 +205,36 @@ class Orchestrator:
                 pass
         print(f"[{level.upper()}] {message}")
 
+    # 29/10: un tetto di tempo per il caso del training. Un caso della palestra e' rimasto
+    # acceso oltre un'ora (60 turni dell'agente, ognuno con minuti di ragionamento) e il giro
+    # non si chiudeva piu'. Allo scadere e' come uno stop: l'agente non comincia un turno
+    # nuovo, si valuta quello che c'e'. Vale per tutti i punti che guardano _should_stop.
+    scadenza_caso: Optional[float] = None
+    _stop_richiesto: bool = False
+    _scadenza_annunciata: bool = False
+
+    @property
+    def _should_stop(self) -> bool:
+        if self._stop_richiesto:
+            return True
+        if self.scadenza_caso is not None and time.time() >= self.scadenza_caso:
+            if not self._scadenza_annunciata:
+                self._scadenza_annunciata = True
+                try:
+                    self._log("⏱ Tempo del caso scaduto: niente turni nuovi, si valuta quello che c'e'", "warning")
+                except Exception:
+                    pass
+            return True
+        return False
+
+    @_should_stop.setter
+    def _should_stop(self, valore: bool) -> None:
+        self._stop_richiesto = bool(valore)
+
+    @property
+    def tempo_scaduto(self) -> bool:
+        return self._scadenza_annunciata
+
     def stop(self):
         """Richiede l'arresto del run in corso."""
         self._should_stop = True
