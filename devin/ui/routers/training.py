@@ -598,6 +598,10 @@ async def api_training_export_teacher_packet(request: Request):
 # dei test su fast_app.Orchestrator/LOG_DIR/_run_events restano validi).
 
 
+# 29/10: un caso del training non va oltre questo (si valuta quello che c'e' allo scadere)
+MINUTI_PER_CASO = 30.0
+
+
 def _scatola_nel_training() -> bool:
     """La scatola e' sempre accesa nel training; ``DEVIN_SCATOLA=0`` la spegne solo nei test
     (CI senza bubblewrap): i test della scatola la provano accesa per davvero."""
@@ -702,6 +706,11 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 # GitHub, librerie), niente soluzioni degli esercizi da copiare.
                 if hasattr(orch, "limita_web_alla_documentazione"):
                     orch.limita_web_alla_documentazione()
+                # 29/10: tetto di tempo del caso (un caso oltre un'ora bloccava il giro)
+                with _training_jobs_lock:
+                    minuti_caso = float((_training_jobs.get(job_id) or {}).get("max_minuti_caso")
+                                        or MINUTI_PER_CASO)
+                orch.scadenza_caso = time.time() + minuti_caso * 60
                 with runs_lock:
                     active_runs[run_id] = orch
                 try:
@@ -780,6 +789,8 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 if salvato.get("executed"):
                     test_propri_rossi = error_reason or "test propri rossi"
                     status, error_reason, gold_check = "auto_success", "", salvato
+            if status != "auto_success" and getattr(orch, "tempo_scaduto", False):
+                error_reason = f"tempo del caso scaduto ({minuti_caso:g} min): {error_reason}"[:800]
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\ntraining_status: {status}\n")
                 f.write(f"validators: {validation.get('overall', 'n/a')}\n")
@@ -918,10 +929,13 @@ async def api_training_run(request: Request):
     try:
         max_cases = int(data.get("max_cases") or 0)
         max_minutes = float(data.get("max_minutes") or 0)
+        minuti_caso = float(data.get("max_minutes_per_case") or MINUTI_PER_CASO)
     except (TypeError, ValueError):
         return {"error": "max_cases/max_minutes devono essere numeri"}
     if max_cases < 0 or not 0 <= max_minutes <= 720:
         return {"error": "max_cases >= 0 e max_minutes fra 0 e 720"}
+    if not 1 <= minuti_caso <= 240:
+        return {"error": "max_minutes_per_case fra 1 e 240"}
     # un esercizio una volta sola per giro, anche se nello store ha piu' copie attive (28/10)
     stesso, visti, unici = _chiave_esercizio(store), set(), []
     for caso in selected:
@@ -951,6 +965,7 @@ async def api_training_run(request: Request):
         "requires_teacher_validation": True,
         "memory_label": etichetta[:40],
         "deadline": (time.time() + max_minutes * 60) if max_minutes else None,
+        "max_minuti_caso": minuti_caso,
         "stop_requested": False,
         "stopped": "",
         "lessons_saved": 0,
