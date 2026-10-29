@@ -196,6 +196,25 @@ def test_il_training_accende_la_scatola_e_senza_bubblewrap_e_un_guasto_del_rig(m
     tentativo, job = giro(monkeypatch, tmp_path)
     assert tentativo["status"] == "runner_error" and "scatola non disponibile" in tentativo["error_reason"]
     assert ambienti.scatola_attiva() is None
+    assert job["stopped"] == "scatola non disponibile"
+
+
+def test_senza_scatola_il_giro_si_ferma_al_primo_caso(monkeypatch, tmp_path):
+    import devin.ui.routers.training as training_router
+    from devin.training.store import TrainingStore
+    from test_training_runner_declass import _patch_runner_surface, _register_job, _runner_case
+    monkeypatch.delenv("DEVIN_SCATOLA")
+    monkeypatch.setattr(ambienti, "prova_scatola", lambda bwrap=None: (_ for _ in ()).throw(
+        ambienti.ScatolaMancante("scatola non disponibile: bubblewrap non parte")))
+    _patch_runner_surface(monkeypatch, tmp_path)
+    casi = [_runner_case(case_id=f"c{i}", title=f"caso {i}") for i in range(4)]
+    _register_job("job_s", casi)
+    store = TrainingStore(tmp_path / "t")
+    training_router._run_training_cases_background("job_s", store, casi, "mbpp")
+    with training_router._training_jobs_lock:
+        job = dict(training_router._training_jobs["job_s"])
+    assert job["runner_error"] == 1 and job["completed"] == 1 and job["stopped"] == "scatola non disponibile"
+    assert job["status"] == "finished" and len(store.list_attempts()) == 1
 
 
 @serve_bwrap
