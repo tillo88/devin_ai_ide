@@ -675,6 +675,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
         gold_check: Dict[str, Any] = {}
         gold_tampered: List[str] = []
         test_propri_rossi = ""
+        senza_scatola = False
         # 28/10: l'ambiente di prova del caso (es. BigCodeBench). Tutto il caso, scaffold e verifica
         # dei gold, gira li'; se l'ambiente manca e' un guasto del rig (runner_error), mai di DEVIN.
         from devin.engine import ambienti
@@ -788,6 +789,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
             status = "runner_error"
             error_reason = str(exc)
             result = {"success": False, "error": error_reason, "infra_error": True}
+            senza_scatola = isinstance(exc, ambienti.ScatolaMancante)
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n[FATAL] {error_reason}\ntraining_status: runner_error\nstatus: failed\n")
             _finish_run_events(run_id, "failed", mode="training")
@@ -835,6 +837,12 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                                       "status": status, "seconds": round(time.time() - inizio_caso),
                                       "lessons": lezioni_caso, "reason": str(error_reason or "")[:160],
                                       "test_propri_rossi": bool(test_propri_rossi)})
+                # 29/10: senza scatola nessun caso puo' girare: il giro si ferma qui invece di
+                # registrare un guasto per ogni caso. runner_error non conta come tentativo.
+                if senza_scatola:
+                    job["stopped"] = "scatola non disponibile"
+        if senza_scatola:
+            break
 
     with _training_jobs_lock:
         job = _training_jobs.get(job_id)
