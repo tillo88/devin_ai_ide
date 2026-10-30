@@ -260,7 +260,8 @@ class AgenteStrumenti:
                                 SDL_VIDEODRIVER="dummy", NO_COLOR="1"))
         limite = max(1, min(MAX_SECONDI_COMANDO, int(secondi or 60)))
         try:
-            proc = subprocess.run(protetto(argv, self.radice, env), cwd=str(self.radice), env=env, input=input or "",
+            from devin.engine.processi import run_limitato
+            proc = run_limitato(protetto(argv, self.radice, env), cwd=str(self.radice), env=env, input=input or "",
                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=limite)
         except FileNotFoundError:

@@ -67,7 +67,10 @@ def disponibile(config: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
 
 
 def _limiti() -> None:  # pragma: no cover - gira nel processo figlio
-    os.setsid()
+    try:
+        os.setsid()          # gia' sessione propria se lanciato da run_limitato
+    except OSError:
+        pass
     try:
         resource.setrlimit(resource.RLIMIT_AS, (MEMORIA_BYTE, MEMORIA_BYTE))
     except (ValueError, OSError):
@@ -99,7 +102,8 @@ def esegui(codice: str, secondi: int = 120, config: Optional[Dict[str, Any]] = N
         env = {"PATH": "/usr/bin:/bin", "HOME": str(cartella), "LANG": "C.UTF-8",
                "PYTHONIOENCODING": "utf-8", "TMPDIR": str(cartella), "PYTHONDONTWRITEBYTECODE": "1", "OMP_NUM_THREADS": "8"}
         try:
-            proc = subprocess.run(argv, cwd=str(cartella), env=env, capture_output=True, text=True,
+            from devin.engine.processi import run_limitato
+            proc = run_limitato(argv, cwd=str(cartella), env=env, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=limite,
                                   stdin=subprocess.DEVNULL, preexec_fn=_limiti)
         except subprocess.TimeoutExpired:

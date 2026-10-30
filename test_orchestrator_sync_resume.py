@@ -295,6 +295,8 @@ def test_pytest_gate_falls_back_to_unittest_when_pytest_missing(monkeypatch, tmp
         return MagicMock(stdout="OK\n", stderr="", returncode=0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    import devin.engine.processi as _processi      # 30/10: il gate passa da run_limitato
+    monkeypatch.setattr(_processi, "run_limitato", fake_run)
     result = Orchestrator._run_pytest_gate(object(), tmp_path)
 
     assert result["success"] is True
@@ -313,6 +315,8 @@ def test_pytest_gate_generic_error_continues_to_next_command(monkeypatch, tmp_pa
         return MagicMock(stdout="Ran 0 tests", stderr="", returncode=0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    import devin.engine.processi as _processi      # 30/10: il gate passa da run_limitato
+    monkeypatch.setattr(_processi, "run_limitato", fake_run)
     result = Orchestrator._run_pytest_gate(object(), tmp_path)
 
     assert result["success"] is True
@@ -328,6 +332,8 @@ def test_pytest_gate_timeout_branch(monkeypatch, tmp_path):
         raise subprocess.TimeoutExpired(cmd=argv, timeout=timeout)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    import devin.engine.processi as _processi      # 30/10: il gate passa da run_limitato
+    monkeypatch.setattr(_processi, "run_limitato", fake_run)
     result = Orchestrator._run_pytest_gate(object(), tmp_path)
 
     assert result["success"] is False
@@ -343,6 +349,8 @@ def test_pytest_gate_all_runners_unavailable(monkeypatch, tmp_path):
         raise OSError("exec failed")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
+    import devin.engine.processi as _processi      # 30/10: il gate passa da run_limitato
+    monkeypatch.setattr(_processi, "run_limitato", fake_run)
     result = Orchestrator._run_pytest_gate(object(), tmp_path)
 
     assert result["success"] is False

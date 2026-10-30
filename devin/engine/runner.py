@@ -40,15 +40,16 @@ def _run_process(argv, cwd, timeout, on_process=None):
         stdout, stderr = proc.communicate(timeout=timeout)
         return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
     except subprocess.TimeoutExpired:
-        if os.name != "nt":
+        # 30/10: SIGTERM al gruppo (nella scatola al codice, non a bubblewrap), mai SIGKILL
+        from devin.engine.processi import _ferma
+        nota = _ferma(proc, 10.0)
+        stdout = stderr = ""
+        if not nota:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
+                stdout, stderr = proc.communicate(timeout=10)
+            except (subprocess.TimeoutExpired, ValueError, OSError):
                 pass
-        else:
-            proc.kill()
-        stdout, stderr = proc.communicate()
-        stderr = (stderr or "") + f"\nTimeout dopo {timeout}s"
+        stderr = (stderr or "") + f"\nTimeout dopo {timeout}s" + (f" ({nota})" if nota else "")
         return subprocess.CompletedProcess(argv, 124, stdout or "", stderr)
     finally:
         if on_process:
@@ -200,13 +201,14 @@ class Runner:
             process = self._process
         if not process or process.poll() is not None:
             return
+        from devin.engine.ambienti import termina_gruppo
         if os.name != "nt":
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                termina_gruppo(process.pid, signal.SIGTERM)     # 30/10: mai SIGKILL
             except ProcessLookupError:
                 pass
         else:
-            process.kill()
+            process.terminate()
 
     def run(self, sandbox_path: str, entrypoint: str = None,
             timeout: int = None) -> RunnerResult:
