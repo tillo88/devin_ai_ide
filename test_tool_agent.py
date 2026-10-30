@@ -254,3 +254,35 @@ def test_lo_stesso_comando_dopo_una_modifica_non_e_una_ripetizione(tmp_path):
     agente, _ = _agente(tmp_path, ai)
     esito = agente.esegui("prova piu' valori")
     assert esito.motivo == "fine" and agente.sorvegliante.interventi == []
+
+
+def _giro_verde_poi(tmp_path, dopo, stato="verified_success"):
+    ai = AIRipete([[chiamata("scrivi_file", percorso="calc.py", contenuto=CALC),
+                    chiamata("scrivi_file", percorso="test_calc.py", contenuto=TEST_CALC)],
+                   [chiamata("verifica")]] + dopo + ["Mi sono bloccato."])
+    agente, log = _agente(tmp_path, ai, verifica=lambda: {"status": stato, "errors": []})
+    return agente, agente.esegui("Crea calc.py con somma e un test"), log, ai
+
+
+def test_dopo_la_verifica_verde_le_ripetizioni_chiudono_il_lavoro(tmp_path):
+    """30/10, Council (MBPP 5 e 549): codice e test a posto, DEVIN rilanciava gli stessi comandi e il
+    sorvegliante lo fermava come "gira in tondo": caso fallito. Ora si chiude come finito."""
+    pytest_ = [chiamata("esegui", comando=["python", "-c", "print('5 passed')"])]
+    agente, esito, log, ai = _giro_verde_poi(tmp_path, [pytest_] * 6)
+    assert esito.motivo == "fine" and not esito.errore and "verifica ufficiale e' verde" in esito.riassunto
+    assert agente.sorvegliante.interventi and agente.sorvegliante.interventi[0].stato == "avviso"
+    assert not any("Ti stai ripetendo" in str(m.get("content")) for m in ai.visti[-1]), "niente avviso inutile"
+    assert any("chiudo io" in riga for riga in log)
+
+
+def test_se_dopo_il_verde_cambia_un_file_il_sorvegliante_resta_quello_di_prima(tmp_path):
+    rilegge = [chiamata("leggi_file", percorso="calc.py")]
+    cambia = [[chiamata("modifica_file", percorso="calc.py", vecchio="a + b", nuovo="b + a")]]
+    _, esito, _, _ = _giro_verde_poi(tmp_path, cambia + [rilegge] * 6)
+    assert esito.motivo == "giro_a_vuoto" and "sorvegliante" in esito.errore
+
+
+def test_con_la_verifica_rossa_le_ripetizioni_restano_un_giro_a_vuoto(tmp_path):
+    rilegge = [chiamata("leggi_file", percorso="calc.py")]
+    _, esito, _, _ = _giro_verde_poi(tmp_path, [rilegge] * 6, stato="verified_failure")
+    assert esito.motivo == "giro_a_vuoto"
