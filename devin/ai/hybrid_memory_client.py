@@ -275,3 +275,58 @@ class HybridMemoryClient:
 
 
 __all__ = ["HybridMemoryClient", "LocalMemoryStore", "project_tags"]
+
+
+class _LocaleSolaLettura:
+    """La memoria locale vista da un esame: si legge (percorso, ricerca), non si scrive."""
+
+    def __init__(self, locale):
+        self._locale = locale
+        self.path = getattr(locale, "path", None)
+        self.enabled = getattr(locale, "enabled", False)
+
+    def recall(self, query, tags=None, limit=3):
+        return self._locale.recall(query, tags=tags, limit=limit)
+
+    def count(self):
+        return self._locale.count()
+
+    def status(self):
+        return self._locale.status()
+
+    def store(self, *args, **kwargs):
+        return "not_recorded"
+
+
+class MemoriaSolaLettura:
+    """Esame (30/10): DEVIN usa quello che ha imparato, ma un esame non insegna niente.
+
+    Avvolge la memoria del run: ``recall`` e lo stato passano, ogni scrittura (locale,
+    condivisa, coda offline) torna ``not_recorded`` senza toccare nulla. Nessun inoltro
+    generico: un metodo nuovo che scrive non passa per sbaglio."""
+
+    solo_lettura = True
+
+    def __init__(self, memoria):
+        self._memoria = memoria
+        self.enabled = getattr(memoria, "enabled", False)
+        locale = getattr(memoria, "local", None)
+        self.local = _LocaleSolaLettura(locale) if locale is not None else None
+
+    def recall(self, query, tags=None, limit=3):
+        return self._memoria.recall(query, tags=tags, limit=limit)
+
+    def status(self):
+        return self._memoria.status()
+
+    def outbox_size(self):
+        return self._memoria.outbox_size()
+
+    def store_local(self, *args, **kwargs):
+        return "not_recorded"
+
+    def store(self, *args, **kwargs):
+        return "not_recorded"
+
+    def flush_outbox(self):
+        return 0

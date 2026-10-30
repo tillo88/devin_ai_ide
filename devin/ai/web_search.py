@@ -200,7 +200,10 @@ def e_documentazione(url: str) -> bool:
 
 def _cerca(provider: Any, query: str, config: Dict[str, Any], max_results: int = 4) -> List[Dict[str, Any]]:
     """La ricerca, filtrata alla documentazione quando la config lo chiede (un secondo
-    tentativo con "documentation" in coda, se il primo non trova nessun sito di doc)."""
+    tentativo con "documentation" in coda, se il primo non trova nessun sito di doc).
+    In un esame (30/10) nessuna ricerca: le soluzioni dei problemi di gara sono in rete."""
+    if ((config or {}).get("web_search") or {}).get("esame"):
+        return []
     results = provider.search(query, max_results=max_results)
     if not solo_documentazione(config):
         return results

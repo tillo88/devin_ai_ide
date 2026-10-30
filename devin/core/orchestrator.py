@@ -893,6 +893,19 @@ class Orchestrator:
             if isinstance(config, dict):
                 config.setdefault("web_search", {})["solo_documentazione"] = True
 
+    def modalita_esame(self) -> None:
+        """Esame (30/10, LiveCodeBench): DEVIN usa la memoria ma non le scrive niente (nessuna
+        correzione, nessun esito dello scaffold) e non cerca sul web (le soluzioni dei problemi
+        di gara sono in rete). Il voto lo da' il giudice del rig, non questo run."""
+        from devin.ai.hybrid_memory_client import MemoriaSolaLettura
+        memoria = getattr(self, "memory_client", None)
+        if memoria is not None and not getattr(memoria, "solo_lettura", False):
+            self.memory_client = MemoriaSolaLettura(memoria)
+        for config in (self.config, getattr(getattr(self, "ai_client", None), "config", None)):
+            if isinstance(config, dict):
+                config.setdefault("web_search", {})["esame"] = True
+        self.esame = True
+
     def _applica_verificato(self, project: Path | str, run_id: str,
                             change_manifest: Dict[str, Any], task: str, patch: str = ""):
         """Applica da solo un manifest GIA' verificato (test e prova verdi).

@@ -450,8 +450,11 @@ class TrainingStore:
             reviews_by_attempt.setdefault(review.get("attempt_id", ""), []).append(review)
 
         rows = []
+        from devin.training.livecodebench import e_esame
         for attempt in self.list_attempts(limit=10000):
             case = cases.get(attempt.get("case_id"), {})
+            if e_esame(case):
+                continue  # 30/10: l'esame non va mai a un revisore ne' in un dataset
             status = attempt.get("status") or "pending_review"
             rows.append({
                 "packet_version": "teacher_review_v1",
@@ -505,6 +508,7 @@ class TrainingStore:
         }
 
     def export_sft_dataset(self, filename: str = "") -> Dict[str, Any]:
+        from devin.training.livecodebench import e_esame
         attempts = {item.get("attempt_id"): item for item in self.list_attempts(limit=10000)}
         cases = {item.get("case_id"): item for item in self.list_cases(limit=10000, include_retired=True)}
         rows = []
@@ -512,7 +516,7 @@ class TrainingStore:
             attempt = attempts.get(correction.get("attempt_id"), {})
             case = cases.get(attempt.get("case_id"), {})
             solution = correction.get("corrected_solution") or correction.get("correction")
-            if not solution:
+            if not solution or e_esame(case):
                 continue
             rows.append({
                 "messages": [

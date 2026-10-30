@@ -39,6 +39,7 @@ from fastapi import APIRouter, Request
 from devin.ai.structured_contracts import TrainingReviewDecision
 from devin.training.adapters import import_mbpp_cases
 from devin.training.bigcodebench import import_bigcodebench_cases
+from devin.training.livecodebench import e_esame, import_livecodebench_cases
 from devin.training.benchmarks import get_builtin_cases, list_builtin_benchmarks
 from devin.training.store import (
     AUTO_FAILURE_STATUSES,
@@ -461,6 +462,32 @@ async def api_training_adapter_bigcodebench(request: Request):
     return result
 
 
+@router.post("/api/training/adapters/livecodebench/import")
+async def api_training_adapter_livecodebench(request: Request):
+    """Import ESPLICITO dei casi d'ESAME LiveCodeBench (30/10): solo il testo dei compiti che il
+    rig ha preparato (i test restano sul rig, solo root), dal giorno ``dal`` (YYYY-MM-DD,
+    obbligatorio: un problema piu' vecchio del modello puo' essere nei suoi dati) a ``al``."""
+    import re
+    data = await request.json()
+    dal, al = str(data.get("dal") or ""), str(data.get("al") or "") or None
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", dal) or (al and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", al)):
+        return {"error": "dal (obbligatorio) e al: date YYYY-MM-DD"}
+    piattaforme = [str(x) for x in (data.get("piattaforme") or [])]
+    if any(x not in {"leetcode", "codeforces", "atcoder"} for x in piattaforme):
+        return {"error": "piattaforme: leetcode, codeforces, atcoder"}
+    store = _training_store_for(data.get("project_path", ""))
+    try:
+        result = await asyncio.to_thread(
+            import_livecodebench_cases, store, dal, al,
+            limit=max(1, min(int(data.get("limit", 10) or 10), 1200)),
+            offset=max(0, int(data.get("offset", 0) or 0)),
+            piattaforme=piattaforme or None,
+        )
+    except Exception as exc:
+        return {"error": f"import LiveCodeBench fallito: {type(exc).__name__}: {exc}"}
+    return result
+
+
 @router.get("/api/training/review_queue")
 async def api_training_review_queue(project_path: str = "", limit: int = 50):
     """Coda Teacher: attempt auto_*/runner_error/pending_review senza review,
@@ -736,15 +763,20 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
         # sbagliato). Il contenuto atteso resta in gold_expected per la
         # guardia anti-manomissione dopo il run.
         gold_expected: Dict[str, str] = {}
+        # 30/10: un caso d'esame (LiveCodeBench) non ha gold qui (i test sono sul rig, solo root),
+        # non vede i tentativi precedenti, non scrive in memoria e non cerca sul web
+        esame = e_esame(case)
         for fname, content in ((case.get("metadata") or {}).get("gold_tests") or {}).items():
+            if esame:
+                break
             safe_name = Path(str(fname)).name
             if not safe_name.endswith(".py") or not str(content).strip():
                 continue
             (project_path / safe_name).write_text(str(content), encoding="utf-8")
             gold_expected[safe_name] = str(content)
 
-        fallito_prima = _ultimo_fallimento(store, case)
-        prompt = _training_case_prompt(case) + _tentativo_precedente(store, case)
+        fallito_prima = None if esame else _ultimo_fallimento(store, case)
+        prompt = _training_case_prompt(case) + ("" if esame else _tentativo_precedente(store, case))
         log_path = LOG_DIR / f"{run_id}.log"
         log_path.write_text(
             f"Training eval started: {run_id}\n"
@@ -795,6 +827,8 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 # GitHub, librerie), niente soluzioni degli esercizi da copiare.
                 if hasattr(orch, "limita_web_alla_documentazione"):
                     orch.limita_web_alla_documentazione()
+                if esame:
+                    orch.modalita_esame()
                 # 29/10: tetto di tempo del caso (un caso oltre un'ora bloccava il giro)
                 with _training_jobs_lock:
                     minuti_caso = float((_training_jobs.get(job_id) or {}).get("max_minuti_caso")
@@ -807,7 +841,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 finally:
                     with runs_lock:
                         active_runs.pop(run_id, None)
-                    lezioni_caso = int(getattr(orch, "correzioni_salvate", 0) or 0)
+                    lezioni_caso = 0 if esame else int(getattr(orch, "correzioni_salvate", 0) or 0)
             status = "auto_success" if result.get("success") else "auto_failure"
             if result.get("success"):
                 error_reason = ""
@@ -878,7 +912,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 if salvato.get("executed"):
                     test_propri_rossi = error_reason or "test propri rossi"
                     status, error_reason, gold_check = "auto_success", "", salvato
-            if status == "auto_success" and fallito_prima is not None:
+            if status == "auto_success" and fallito_prima is not None and not esame:
                 lezioni_caso += _salva_lezione_ripasso(orch, fallito_prima, project_path, result, case)
             if status != "auto_success" and getattr(orch, "tempo_scaduto", False):
                 error_reason = f"tempo del caso scaduto ({minuti_caso:g} min): {error_reason}"[:800]
@@ -916,6 +950,8 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 "gold_executed": gold_check,
                 "test_propri_rossi": bool(test_propri_rossi),
                 "motivo_test_propri": str(test_propri_rossi)[:800],
+                # 30/10: in un esame l'esito e' quello che dichiara DEVIN; il voto e' del giudice del rig
+                "esame": esame,
             },
             error_reason=error_reason,
             run_id=run_id,
@@ -987,6 +1023,12 @@ async def api_training_run(request: Request):
     # 23/10 palestra, ripasso: i casi il cui ULTIMO tentativo e' fallito (auto_failure),
     # con meno di max_attempts tentativi. Dopo un primo passaggio misura se le lezioni
     # salvate in memoria aiutano: quanti dei falliti ora passano.
+    # 30/10: un esame si fa una volta sola. Niente ripasso; i casi gia' tentati (esclusi i
+    # guasti del rig) non rigirano mai.
+    if any(e_esame(c) for c in selected):
+        if bool(data.get("retry_failed", False)):
+            return {"error": "un caso d'esame non si ripassa: un tentativo solo"}
+        data["skip_attempted"] = True
     if bool(data.get("retry_failed", False)):
         try:
             tetto = max(2, min(int(data.get("max_attempts") or 2), 5))
