@@ -244,6 +244,101 @@ def _chiave_esercizio(store: TrainingStore):
     return lambda case_id: per_id.get(case_id, case_id)
 
 
+def _ultimo_fallimento(store: TrainingStore, case: Dict[str, Any]) -> Dict[str, Any] | None:
+    """L'ultimo tentativo dello stesso esercizio se e' un fallimento vero (non un guasto del rig,
+    non un falso negativo della verifica corretto il 23/10), altrimenti None."""
+    stesso = _chiave_esercizio(store)
+    chiave = stesso(case.get("case_id"))
+    precedenti = [a for a in store.list_attempts(limit=1_000_000)
+                  if stesso(a.get("case_id")) == chiave and (a.get("status") or "") not in INFRA_STATUSES]
+    if not precedenti or precedenti[-1].get("status") not in AUTO_FAILURE_STATUSES:
+        return None
+    ultimo = dict(precedenti[-1])
+    gold = ((ultimo.get("tests") or {}).get("gold_executed") or {}) if isinstance(ultimo.get("tests"), dict) else {}
+    uscita = str(gold.get("output") or "")
+    if "import file mismatch" in uscita or (gold.get("exit_code") == 0 and gold.get("missing")):
+        return None
+    ultimo["_quanti"] = len(precedenti)
+    ultimo["_uscita_gold"] = uscita if gold.get("exit_code") not in (None, 0) else ""
+    return ultimo
+
+
+# 30/10: la lezione di un ripasso riuscito. Prima i ripassi recuperavano gli esercizi (43/44
+# MBPP) ma in memoria non restava nulla: la correzione si salva solo quando, DENTRO un run,
+# il gate passa dal rosso al verde. Qui il "rosso" e' il tentativo precedente e il "verde" e'
+# questo: si salva il perche' del fallimento e cosa e' cambiato nel codice.
+MAX_DIFF_LEZIONE = 2500
+
+
+def _codice_soluzione(radici: List[Path]) -> Dict[str, str]:
+    """I moduli della soluzione (niente test, gold o conftest) dalla prima radice che ne ha."""
+    for radice in radici:
+        try:
+            if not radice.is_dir():
+                continue
+            file = sorted(p for p in radice.glob("*.py") if p.is_file() and not p.is_symlink()
+                          and not p.name.startswith("test") and not p.name.endswith("_test.py")
+                          and p.name != "conftest.py")
+            if file:
+                return {p.name: p.read_text(encoding="utf-8", errors="replace")[:20_000] for p in file}
+        except OSError:
+            continue
+    return {}
+
+
+def _radici_tentativo(progetto: Path) -> List[Path]:
+    """Dove sta il codice di un tentativo: il progetto e, se no, la sandbox piu' recente."""
+    sandbox = sorted((progetto / "workspace" / "sandboxes").glob("*"), key=lambda p: p.name, reverse=True) \
+        if (progetto / "workspace" / "sandboxes").is_dir() else []
+    return [progetto, *sandbox]
+
+
+def _lezione_dal_ripasso(fallito: Dict[str, Any], prima: Dict[str, str], dopo: Dict[str, str],
+                         titolo: str) -> tuple[str, str]:
+    """(errore, correzione) per la memoria problema -> soluzione."""
+    import difflib
+    errore = str(fallito.get("error_reason") or "").strip()[:700]
+    if fallito.get("_uscita_gold"):
+        errore += "\n" + str(fallito["_uscita_gold"])[-900:]
+    righe: List[str] = []
+    for nome in sorted(set(prima) | set(dopo)):
+        righe += difflib.unified_diff(prima.get(nome, "").splitlines(), dopo.get(nome, "").splitlines(),
+                                      f"prima/{nome}", f"dopo/{nome}", lineterm="", n=2)
+    diff = "\n".join(righe)
+    if len(diff) > MAX_DIFF_LEZIONE:
+        diff = diff[:MAX_DIFF_LEZIONE] + "\n... (diff tagliato)"
+    if not diff.strip():
+        codice = "\n\n".join(f"# {n}\n{t}" for n, t in sorted(dopo.items()))
+        diff = "(codice del tentativo fallito non disponibile; soluzione riuscita)\n" + codice[:MAX_DIFF_LEZIONE]
+    correzione = (f"Esercizio: {titolo}\nIl tentativo precedente era fallito per il motivo sopra; questo ha "
+                  f"passato i test ufficiali. Cosa e' cambiato nel codice:\n{diff}")
+    return errore, correzione
+
+
+def _salva_lezione_ripasso(orch: Any, fallito: Dict[str, Any], project_path: Path, result: Dict[str, Any],
+                           case: Dict[str, Any]) -> int:
+    """1 se la lezione del ripasso e' stata salvata in memoria, 0 altrimenti (mai un blocco)."""
+    try:
+        from devin.core.fix_memory import ricorda_correzione
+        artefatti = [Path(str(a)) for a in (fallito.get("artifacts") or []) if str(a).strip()]
+        prima = _codice_soluzione(_radici_tentativo(artefatti[0])) if artefatti else {}
+        radici = [Path(project_path)]
+        if result.get("sandbox_path"):
+            radici.append(Path(str(result["sandbox_path"])))
+        dopo = _codice_soluzione(radici)
+        if not dopo:
+            return 0
+        errore, correzione = _lezione_dal_ripasso(fallito, prima, dopo, str(case.get("title") or ""))
+        etichetta = str(getattr(orch, "etichetta_memoria", "") or "")
+        esito = ricorda_correzione(getattr(orch, "memory_client", None), progetto=Path(project_path).name,
+                                   errore=errore, correzione=correzione,
+                                   origine=f"{etichetta}:ripasso" if etichetta else "ripasso")
+        return 0 if esito in {"not_recorded", "duplicate"} else 1
+    except Exception as exc:
+        print(f"[Training] lezione del ripasso non salvata: {type(exc).__name__}: {exc}")
+        return 0
+
+
 def _tentativo_precedente(store: TrainingStore, case: Dict[str, Any]) -> str:
     """Il perche' dell'ultimo fallimento dello stesso esercizio, da mettere nel compito del ripasso.
 
@@ -253,21 +348,13 @@ def _tentativo_precedente(store: TrainingStore, case: Dict[str, Any]) -> str:
     (non held-out); gli assert ufficiali sono gia' nel compito come test di riferimento.
     Niente sezione se l'ultimo tentativo e' riuscito o se il "fallimento" era un bug della
     verifica corretto il 23/10 (gold verdi non riconosciuti, copie dei gold nella sandbox)."""
-    stesso = _chiave_esercizio(store)
-    chiave = stesso(case.get("case_id"))
-    precedenti = [a for a in store.list_attempts(limit=1_000_000)
-                  if stesso(a.get("case_id")) == chiave and (a.get("status") or "") not in INFRA_STATUSES]
-    if not precedenti or precedenti[-1].get("status") not in AUTO_FAILURE_STATUSES:
-        return ""
-    ultimo = precedenti[-1]
-    gold = ((ultimo.get("tests") or {}).get("gold_executed") or {}) if isinstance(ultimo.get("tests"), dict) else {}
-    uscita = str(gold.get("output") or "")
-    if "import file mismatch" in uscita or (gold.get("exit_code") == 0 and gold.get("missing")):
+    ultimo = _ultimo_fallimento(store, case)
+    if ultimo is None:
         return ""
     motivo = str(ultimo.get("error_reason") or "").strip()[:700]
-    testo = ("\n\nTENTATIVO PRECEDENTE FALLITO (" + str(len(precedenti)) + " finora). Motivo:\n" + motivo)
-    if uscita and gold.get("exit_code") not in (None, 0):
-        testo += "\nUscita dei test ufficiali (estratto):\n" + uscita[-900:]
+    testo = ("\n\nTENTATIVO PRECEDENTE FALLITO (" + str(ultimo["_quanti"]) + " finora). Motivo:\n" + motivo)
+    if ultimo["_uscita_gold"]:
+        testo += "\nUscita dei test ufficiali (estratto):\n" + ultimo["_uscita_gold"][-900:]
     return testo + ("\nCapisci PERCHE' era sbagliato prima di riscrivere: correggi il ragionamento, non "
                     "ripetere la stessa soluzione. Non aggiungere requisiti che il compito non chiede.")
 
@@ -655,6 +742,7 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
             (project_path / safe_name).write_text(str(content), encoding="utf-8")
             gold_expected[safe_name] = str(content)
 
+        fallito_prima = _ultimo_fallimento(store, case)
         prompt = _training_case_prompt(case) + _tentativo_precedente(store, case)
         log_path = LOG_DIR / f"{run_id}.log"
         log_path.write_text(
@@ -789,6 +877,8 @@ def _run_training_cases_background(job_id: str, store: TrainingStore, cases: Lis
                 if salvato.get("executed"):
                     test_propri_rossi = error_reason or "test propri rossi"
                     status, error_reason, gold_check = "auto_success", "", salvato
+            if status == "auto_success" and fallito_prima is not None:
+                lezioni_caso += _salva_lezione_ripasso(orch, fallito_prima, project_path, result, case)
             if status != "auto_success" and getattr(orch, "tempo_scaduto", False):
                 error_reason = f"tempo del caso scaduto ({minuti_caso:g} min): {error_reason}"[:800]
             with open(log_path, "a", encoding="utf-8") as f:
