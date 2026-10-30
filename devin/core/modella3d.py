@@ -355,7 +355,8 @@ def modella(codice: str, nome: str = "pezzo", destinazione: Optional[Path] = Non
                "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1",
                "DEVIN_OUT": str(uscita_dir), "DEVIN_NOME": nome, "DEVIN_OPENSCAD": str(openscad(config))}
         try:
-            proc = subprocess.run(argv, cwd=str(cartella), env=env, capture_output=True, text=True,
+            from devin.engine.processi import run_limitato
+            proc = run_limitato(argv, cwd=str(cartella), env=env, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=limite,
                                   stdin=subprocess.DEVNULL, preexec_fn=_limiti)
         except subprocess.TimeoutExpired:

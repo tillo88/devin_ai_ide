@@ -11,7 +11,8 @@ def run_shell(command, cwd, timeout=60):
     solo timeout e cwd fissa come protezioni minime.
     """
     try:
-        result = subprocess.run(
+        from devin.engine.processi import run_limitato
+        result = run_limitato(
             command,
             shell=True,
             cwd=str(cwd),
