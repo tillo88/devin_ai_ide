@@ -39,7 +39,7 @@ from fastapi import APIRouter, Request
 from devin.ai.structured_contracts import TrainingReviewDecision
 from devin.training.adapters import import_mbpp_cases
 from devin.training.bigcodebench import import_bigcodebench_cases
-from devin.training.livecodebench import e_esame, import_livecodebench_cases
+from devin.training.livecodebench import e_esame, import_esame_nuovo_cases, import_livecodebench_cases
 from devin.training.benchmarks import get_builtin_cases, list_builtin_benchmarks
 from devin.training.store import (
     AUTO_FAILURE_STATUSES,
@@ -485,6 +485,23 @@ async def api_training_adapter_livecodebench(request: Request):
         )
     except Exception as exc:
         return {"error": f"import LiveCodeBench fallito: {type(exc).__name__}: {exc}"}
+    return result
+
+
+@router.post("/api/training/adapters/esame-nuovo/import")
+async def api_training_adapter_esame_nuovo(request: Request):
+    """Import ESPLICITO dei casi dell'esame nuovo (30/10): problemi scritti dopo il modello, nello
+    stesso formato di LiveCodeBench; il rig li prepara (test solo root), qui solo il testo."""
+    data = await request.json()
+    store = _training_store_for(data.get("project_path", ""))
+    try:
+        result = await asyncio.to_thread(
+            import_esame_nuovo_cases, store,
+            limit=max(1, min(int(data.get("limit", 50) or 50), 1200)),
+            offset=max(0, int(data.get("offset", 0) or 0)),
+        )
+    except Exception as exc:
+        return {"error": f"import esame nuovo fallito: {type(exc).__name__}: {exc}"}
     return result
 
 

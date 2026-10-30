@@ -246,3 +246,24 @@ def test_gli_export_non_portano_l_esame(tmp_path):
     sft = Path(store.export_sft_dataset()["path"]).read_text()
     assert "MBPP 1" in pacchetto and "LiveCodeBench" not in pacchetto
     assert "fai x" in sft and "Read A and B" not in sft
+
+
+def test_esame_nuovo(tmp_path, monkeypatch):
+    nuovo = {**compito(id="nuovo-001", piattaforma="esame-nuovo", data="2026-10-30T00:00:00", titolo="Night shift"),
+             "question_id": "nuovo-001"}
+    path = tmp_path / "nuovo.jsonl"
+    path.write_text(json.dumps(nuovo) + "\n")
+    store = TrainingStore(tmp_path / "t")
+    monkeypatch.setattr(training_router, "_training_store_for", lambda project_path="": store)
+    monkeypatch.setattr(lcb, "COMPITI_NUOVO", path)
+    out = asyncio.run(training_router.api_training_adapter_esame_nuovo(_Req({})))
+    assert out["created"] == 1 and out["source"] == "esame-nuovo", out
+    caso, = store.list_cases()
+    assert caso["title"] == "Esame nuovo nuovo-001: Night shift" and "esame-nuovo" in caso["tags"]
+    assert caso["source"] == "esame-nuovo" and caso["metadata"]["esame"] is True and caso["metadata"]["lcb_id"] == "nuovo-001"
+    assert lcb.e_esame({"source": "esame-nuovo", "metadata": {}}), "l'esame nuovo e' un esame anche senza metadata"
+    partiti = []
+    monkeypatch.setattr(training_router.threading, "Thread",
+                        lambda target, args, daemon: type("T", (), {"start": lambda self: partiti.append(args)})())
+    assert "error" in asyncio.run(training_router.api_training_run(_Req({"benchmark_id": "esame-nuovo",
+                                                                          "retry_failed": True})))
