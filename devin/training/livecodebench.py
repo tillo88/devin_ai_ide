@@ -20,9 +20,14 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 FONTE = "livecodebench"
-ESAMI = frozenset({FONTE})
+# 30/10: LiveCodeBench pubblico finisce ad aprile 2025, prima del modello di DEVIN (agosto 2026).
+# L'esame nuovo sono problemi scritti dopo, nello stesso formato: stesso import, stesso giudice.
+FONTE_NUOVO = "esame-nuovo"
+ESAMI = frozenset({FONTE, FONTE_NUOVO})
 COMPITI = Path(os.environ.get("DEVIN_LIVECODEBENCH_COMPITI",
                               "/mnt/ai-rig-shared/esame/livecodebench/compiti.jsonl"))
+COMPITI_NUOVO = Path(os.environ.get("DEVIN_ESAME_NUOVO_COMPITI", "/mnt/ai-rig-shared/esame/nuovo/compiti.jsonl"))
+NOMI = {FONTE: "LiveCodeBench", FONTE_NUOVO: "Esame nuovo"}
 CAMPI = ("id", "piattaforma", "data", "difficolta", "titolo", "testo", "starter_code", "tipo", "func_name")
 MAX_TESTO = 20_000
 
@@ -46,8 +51,8 @@ def compito(c: Dict[str, Any]) -> str:
             "solution.py on the examples in the statement.")
 
 
-def titolo(c: Dict[str, Any]) -> str:
-    return f"LiveCodeBench {c['id']}: {str(c['titolo'])[:70]}".rstrip()
+def titolo(c: Dict[str, Any], fonte: str = FONTE) -> str:
+    return f"{NOMI[fonte]} {c['id']}: {str(c['titolo'])[:70]}".rstrip()
 
 
 def leggi_compiti(path: Path) -> List[Dict[str, Any]]:
@@ -65,7 +70,7 @@ def leggi_compiti(path: Path) -> List[Dict[str, Any]]:
 
 
 def casi(compiti: Iterable[Dict[str, Any]], dal: str, al: Optional[str] = None, limit: int = 50, offset: int = 0,
-         piattaforme: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+         piattaforme: Optional[Iterable[str]] = None, fonte: str = FONTE) -> Dict[str, Any]:
     scelte = set(piattaforme or ())
     buoni, scartati = [], {"prima_della_data": 0, "dopo_la_data": 0, "errata": 0, "piattaforma": 0}
     for c in sorted(compiti, key=lambda x: (x["data"], x["id"])):
@@ -80,11 +85,11 @@ def casi(compiti: Iterable[Dict[str, Any]], dal: str, al: Optional[str] = None, 
         else:
             buoni.append(c)
     return {"idonei": len(buoni), "scartati": scartati, "casi": [{
-        "title": titolo(c),
+        "title": titolo(c, fonte),
         "kind": "code_generation",
         "prompt": compito(c),
         "expected_signals": ["tests_pass"],
-        "tags": ["python", FONTE, "esame", c["piattaforma"], c["difficolta"]],
+        "tags": ["python", fonte, "esame", c["piattaforma"], c["difficolta"]],
         "esame": True,
         "lcb_id": c["id"],
         "tipo": c["tipo"],
@@ -104,3 +109,13 @@ def import_livecodebench_cases(store, dal: str, al: Optional[str] = None, limit:
     return {"dataset_rows": len(compiti), "idonei": scelta["idonei"], "scartati": scelta["scartati"],
             "converted": len(scelta["casi"]), "created": len(creati),
             "skipped_existing": len(scelta["casi"]) - len(creati), "source": FONTE, "dal": dal, "al": al}
+
+
+def import_esame_nuovo_cases(store, limit: int = 50, offset: int = 0, path: Optional[Path] = None) -> Dict[str, Any]:
+    """L'esame nuovo: tutti i problemi sono successivi al modello, nessun filtro di data."""
+    compiti = leggi_compiti(Path(path or COMPITI_NUOVO))
+    scelta = casi(compiti, "0000-01-01", limit=limit, offset=offset, fonte=FONTE_NUOVO)
+    creati = store.seed_cases(scelta["casi"], source=FONTE_NUOVO)
+    return {"dataset_rows": len(compiti), "idonei": scelta["idonei"], "scartati": scelta["scartati"],
+            "converted": len(scelta["casi"]), "created": len(creati),
+            "skipped_existing": len(scelta["casi"]) - len(creati), "source": FONTE_NUOVO}
