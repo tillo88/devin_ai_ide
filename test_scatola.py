@@ -143,13 +143,13 @@ def test_gate_gold_agente_e_prova_dell_app_girano_nella_scatola(progetto, monkey
     (progetto / "test_sol.py").write_text("from sol import f\n\n\ndef test_f():\n    assert f() == 1\n")
     (progetto / "test_gold_x.py").write_text("from sol import f\n\n\ndef test_gold():\n    assert f() == 1\n")
     lanciati = []
-    vero_run, vero_popen = subprocess.run, subprocess.Popen
+    vero_run, vero_popen = subprocess.Popen, subprocess.Popen   # 30/10: run_limitato usa Popen
 
     def run(argv, *a, **k):
         lanciati.append(list(argv)[0])
         return vero_run(argv, *a, **k)
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", run)
     from devin.core.orchestrator import Orchestrator
     from devin.ui.routers.training import _verify_gold_tests_executed
     from devin.agents.tool_agent import AgenteStrumenti
@@ -222,12 +222,12 @@ def test_il_training_verifica_i_gold_nella_scatola(monkeypatch, tmp_path):
     from test_verdetto_gold import giro
     monkeypatch.setenv("DEVIN_SCATOLA", "1")
     lanciati = []
-    vero = subprocess.run
+    vero = subprocess.Popen
 
     def run(argv, *a, **k):
         lanciati.append(list(argv))
         return vero(argv, *a, **k)
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", run)
     tentativo, _job = giro(monkeypatch, tmp_path)
     assert tentativo["status"] == "auto_success", tentativo["error_reason"]
     pytest_lanciati = [a for a in lanciati if "pytest" in a]

@@ -77,7 +77,10 @@ def nomi(config: Optional[Dict[str, Any]] = None) -> tuple[list[str], list[str]]
 
 
 def _limiti() -> None:  # pragma: no cover - gira nel processo figlio
-    os.setsid()
+    try:
+        os.setsid()          # gia' sessione propria se lanciato da run_limitato
+    except OSError:
+        pass
     try:
         resource.setrlimit(resource.RLIMIT_AS, (MEMORIA_BYTE, MEMORIA_BYTE))
     except (ValueError, OSError):
@@ -147,7 +150,8 @@ def affetta(stl: Path, sbalzi: bool = False, config: Optional[Dict[str, Any]] = 
     with tempfile.TemporaryDirectory(prefix="devin-slicer-") as casa:
         env = {"PATH": "/usr/bin:/bin", "HOME": casa, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
         try:
-            proc = subprocess.run([str(binario(config)), *argomenti(stl, gcode, s, supporti)],
+            from devin.engine.processi import run_limitato
+            proc = run_limitato([str(binario(config)), *argomenti(stl, gcode, s, supporti)],
                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=secondi, stdin=subprocess.DEVNULL, env=env, cwd=casa,
                                   preexec_fn=_limiti)

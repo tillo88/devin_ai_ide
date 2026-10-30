@@ -447,7 +447,7 @@ def kill_server_on_port(port):
             pid = pid.strip()
             if pid:
                 try:
-                    os.kill(int(pid), signal.SIGKILL)
+                    os.kill(int(pid), signal.SIGTERM)       # 30/10: mai SIGKILL
                     print("[KILL] Terminato PID {} su porta {}".format(pid, port))
                 except ProcessLookupError:
                     pass
@@ -493,9 +493,9 @@ def ensure_model_running(alias, config, max_retries=2):
                 print("[FAIL] '{}' non caricato - {}".format(alias, reason))
                 try:
                     process.terminate()
-                    process.wait(timeout=5)
+                    process.wait(timeout=30)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    print("[WARN] llama-server non si e' chiuso con SIGTERM in 30 s (nessun SIGKILL)")
                 if attempt < max_retries - 1:
                     backoff = 2 ** attempt
                     print("[WAIT] Backoff {}s prima del prossimo retry...".format(backoff))

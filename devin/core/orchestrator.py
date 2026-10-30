@@ -607,7 +607,8 @@ class Orchestrator:
                 # cartella antenata (il repo DEVIN per i progetti in workspace/) cambia
                 # rootdir, opzioni e fixture del gate (#1856).
                 with argomenti_isolati(root) as isolati:
-                    proc = subprocess.run(
+                    from devin.engine.processi import run_limitato
+                    proc = run_limitato(
                         protetto(argv + (isolati if argv[2] == "pytest" else []), root, gate_env), cwd=str(root),
                         capture_output=True, text=True, timeout=timeout, env=gate_env,
                     )

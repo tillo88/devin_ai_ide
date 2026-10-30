@@ -49,7 +49,7 @@ def test_gate_verifica_gold_agente_e_prova_dell_app_usano_l_ambiente(tmp_path, m
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     python = venv_finto(tmp_path / "home")
     chiamate, gpu = [], []
-    vero = __import__("subprocess").run
+    vero = __import__("subprocess").Popen      # 30/10: tutto passa da Popen (run_limitato e run)
 
     def run(argv, *a, **k):
         chiamate.append((list(argv), (k.get("env") or {}).get("VIRTUAL_ENV", "")))
@@ -57,7 +57,7 @@ def test_gate_verifica_gold_agente_e_prova_dell_app_usano_l_ambiente(tmp_path, m
         return vero(argv, *a, **k)
 
     import subprocess
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", run)
     progetto = tmp_path / "p"
     progetto.mkdir()
     (progetto / "sol.py").write_text("def f():\n    return 1\n")

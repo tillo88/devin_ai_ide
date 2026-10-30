@@ -283,7 +283,8 @@ def _esegui_comando(passo, cartella):
     from devin.engine.ambienti import protetto
     env = _ambiente(cartella)
     try:
-        proc = subprocess.run(
+        from devin.engine.processi import run_limitato
+        proc = run_limitato(
             protetto(_argv(passo, None), cartella, env), cwd=str(cartella), env=env,
             input=passo.get("stdin", ""), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=passo["secondi"],

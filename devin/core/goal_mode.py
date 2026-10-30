@@ -357,7 +357,8 @@ def _run(argv: list[str], root: Path, timeout: int) -> dict[str, Any]:
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     from devin.engine.ambienti import protetto
     try:
-        proc = subprocess.run(
+        from devin.engine.processi import run_limitato
+        proc = run_limitato(
             protetto(argv, root, env), cwd=str(root), capture_output=True, text=True, timeout=timeout, env=env,
         )
     except subprocess.TimeoutExpired:
