@@ -186,6 +186,9 @@ class Orchestrator:
         )
 
         self.ai_client = AIClient()
+        # 31/10: lo stop e il tempo del caso valgono anche a chiamata in corso (il 30/10 una
+        # chiamata e' rimasta aperta 2 ore e mezza oltre il tetto del caso)
+        self.ai_client.interrompi = lambda: self._should_stop
         self.planner = Planner(self.ai_client, self.config)
         self.coder = Coder(self.ai_client)
         self.critic = Critic(self.ai_client)

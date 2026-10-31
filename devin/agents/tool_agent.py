@@ -27,6 +27,7 @@ import subprocess
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from devin.ai.client import ChiamataInterrotta
 from devin.core.sorvegliante import Sorvegliante, messaggio_avviso, messaggio_stop
 
 MAX_TURNI = 60
@@ -424,6 +425,12 @@ class AgenteStrumenti:
                 risposta = self.ai.chiama_con_strumenti(
                     self.messaggi, [] if fermato else self.strumenti, sforzo=self.sforzo,
                     max_tokens=self.max_tokens_turno)
+            except ChiamataInterrotta as exc:
+                # 31/10: chiusa da noi a meta' (stop, tempo del caso o tetto della chiamata)
+                esito.motivo = "stop" if exc.motivo == "stop" else "errore"
+                esito.errore = str(exc)[:500]
+                self.log(f"Agente: {exc}", "warning")
+                return esito
             except Exception as exc:
                 esito.motivo, esito.errore = "errore", f"{type(exc).__name__}: {exc}"[:500]
                 self.log(f"Agente: il modello non risponde ({esito.errore})", "error")

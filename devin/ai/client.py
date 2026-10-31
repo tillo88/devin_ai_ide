@@ -1,5 +1,7 @@
 import json
 import os
+import socket
+import threading
 import time
 import subprocess
 import requests
@@ -81,6 +83,99 @@ class RigUnavailableError(RuntimeError):
     """The required DEVIN model slot is not safely reachable."""
 
 
+# 31/10: una chiamata al modello e' rimasta aperta dalle 20:29 alle 23:06 del 30/10. Il timeout
+# di requests vale fra un byte e l'altro, non per la chiamata intera: finche' il server manda
+# qualcosa (un token, un avanzamento della lettura) la chiamata non scade mai. E il tetto di tempo
+# del caso e lo stop si guardavano solo fra un turno e l'altro, cioe' mai, a chiamata ferma.
+# Adesso ogni chiamata in streaming ha un guardiano: chiude la connessione quando chi ha chiesto
+# vuole fermarsi (stop, tempo del caso) o quando la chiamata supera il suo tetto complessivo.
+# Chiudere la connessione e' anche il modo in cui llama-server smette di generare.
+VELOCITA_MINIMA_TOKEN = 3          # token/s: misurati ~8,8; sotto 3 il modello non sta lavorando
+TOKEN_SENZA_TETTO = 16384          # per il tetto di una chiamata che non dichiara max_tokens
+PASSO_GUARDIANO = 1.0              # secondi fra un controllo e l'altro
+
+
+class ChiamataInterrotta(RuntimeError):
+    """La chiamata al modello l'abbiamo chiusa noi: ``stop`` (chi chiedeva vuole fermarsi,
+    compreso il tempo del caso scaduto) o ``tetto`` (troppo lunga per essere ancora lavoro)."""
+
+    def __init__(self, motivo: str, secondi: float):
+        self.motivo = motivo
+        self.secondi = round(float(secondi), 1)
+        spiegazione = ("fermata su richiesta (stop o tempo del caso)" if motivo == "stop"
+                       else "oltre il tetto complessivo della chiamata")
+        super().__init__(f"chiamata al modello chiusa dopo {self.secondi} s: {spiegazione}")
+
+
+def _chiudi_connessione(risposta) -> bool:
+    """Sblocca chi sta leggendo lo stream: shutdown del socket sottostante.
+
+    Un ``close()`` da un altro thread non sveglia una ``recv`` gia' ferma; lo shutdown si'.
+    Si tocca solo un vero ``socket.socket`` (le risposte finte dei test non ne hanno).
+    """
+    raw = getattr(risposta, "raw", None)
+    candidati = []
+    for percorso in (("_fp", "fp", "raw", "_sock"), ("_connection", "sock")):
+        oggetto = raw
+        try:
+            for nome in percorso:
+                oggetto = getattr(oggetto, nome)
+        except AttributeError:
+            continue
+        candidati.append(oggetto)
+    for sock in candidati:
+        if isinstance(sock, socket.socket):
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+                return True
+            except OSError:
+                continue
+    return False
+
+
+class _Guardiano:
+    """Un thread accanto alla lettura dello stream: chiude la connessione allo stop o al tetto."""
+
+    def __init__(self, risposta, inizio: float, scadenza: float, interrompi=None, passo: float = PASSO_GUARDIANO,
+                 adesso=time.monotonic):
+        self.risposta, self.inizio, self.scadenza = risposta, inizio, scadenza
+        self.interrompi, self.passo, self.adesso = interrompi, passo, adesso
+        self.motivo = ""
+        self._fatto = threading.Event()
+        self._thread = threading.Thread(target=self._gira, name="guardiano-modello", daemon=True)
+
+    @staticmethod
+    def motivo_ora(interrompi, scadenza: float, adesso=time.monotonic) -> str:
+        if interrompi is not None:
+            try:
+                if interrompi():
+                    return "stop"
+            except Exception:
+                pass
+        return "tetto" if adesso() >= scadenza else ""
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._fatto.set()
+        self._thread.join(timeout=5)
+        return False
+
+    def _gira(self):
+        while not self._fatto.wait(self.passo):
+            motivo = self.motivo_ora(self.interrompi, self.scadenza, self.adesso)
+            if motivo and not self._fatto.is_set():
+                self.motivo = motivo
+                _chiudi_connessione(self.risposta)
+                return
+
+    def verifica(self):
+        if self.motivo:
+            raise ChiamataInterrotta(self.motivo, self.adesso() - self.inizio)
+
+
 class AIClient:
     """
     AIClient con:
@@ -101,6 +196,10 @@ class AIClient:
     # Circuit Breaker config
     CIRCUIT_BREAKER_THRESHOLD = 3
     CIRCUIT_BREAKER_COOLDOWN = 60  # secondi
+
+    # 31/10: chi usa il client puo' dire quando smettere (l'orchestratore ci mette il suo stop,
+    # che comprende il tempo del caso). Le chiamate in streaming lo guardano mentre leggono.
+    interrompi = None
 
     @staticmethod
     def _bool_value(value, default=False):
@@ -691,6 +790,12 @@ class AIClient:
         token = caratteri // CARATTERI_PER_TOKEN
         return token // PREFILL_TOKEN_PER_SECONDO
 
+    @staticmethod
+    def _tetto_chiamata(timeout, max_tokens=None):
+        """Secondi massimi di una chiamata intera: il prefill (gia' dentro ``timeout``) piu' tutti
+        i token chiesti a una velocita' che e' meno della meta' di quella misurata."""
+        return float(timeout) + int(max_tokens or TOKEN_SENZA_TETTO) / VELOCITA_MINIMA_TOKEN
+
     def _corpo(self, model, messages, sforzo="", stream=False, max_tokens=None,
                temperature=None, response_format=None):
         """Costruisce UNA volta il corpo della richiesta.
@@ -882,13 +987,14 @@ class AIClient:
             print(f"[AIClient] richiesta non registrata su disco: {type(exc).__name__}: {exc}")
 
     def chiama_con_strumenti(self, messages, tools, mode="reasoning", sforzo="", max_tokens=None,
-                             timeout=None):
+                             timeout=None, interrompi=None):
         """Un turno con tool calling nativo (API ``tools`` di llama-server).
 
         In streaming come local(): il timeout vale fra un pezzo e l'altro.
         Restituisce {content, reasoning, tool_calls, finish_reason}. Un 4xx
         (richiesta rifiutata, es. contesto pieno) e' un ValueError col motivo
-        del server; la rete che cade si ritenta come in local().
+        del server; la rete che cade si ritenta come in local(). Stop, tempo
+        del caso e tetto complessivo chiudono la chiamata: ChiamataInterrotta.
         """
         try:
             url_catalogo = self._get_endpoints(mode)[0]
@@ -897,9 +1003,15 @@ class AIClient:
         messages = self._con_catalogo_se_serve(messages, tools, url_catalogo)
         sforzo = self._sforzo(sforzo)
         timeout = self._timeout_ragionato(sforzo, timeout, messages)
+        interrompi = interrompi or self.interrompi
+        inizio = time.monotonic()
+        scadenza = inizio + self._tetto_chiamata(timeout, max_tokens)
         ultimo = None
         for attempt in range(self.MAX_RETRIES):
             url = ""
+            motivo = _Guardiano.motivo_ora(interrompi, scadenza)
+            if motivo:
+                raise ChiamataInterrotta(motivo, time.monotonic() - inizio)
             try:
                 url, model = self._get_endpoints(mode)
                 corpo = {**self._corpo(model, messages, sforzo=sforzo, stream=True, max_tokens=max_tokens),
@@ -912,16 +1024,24 @@ class AIClient:
                 r = requests.post(url, json=corpo, timeout=timeout, stream=True,
                                   headers=self._auth_headers(url))
                 try:
-                    if 400 <= r.status_code < 500:
-                        raise ValueError(f"richiesta rifiutata dal modello (HTTP {r.status_code}): "
-                                         f"{(r.text or '')[:400]}")
-                    r.raise_for_status()
-                    return self._chiamate_ripulite(self._raccogli_con_strumenti(r.iter_lines()), tools)
+                    with _Guardiano(r, inizio, scadenza, interrompi) as guardiano:
+                        try:
+                            if 400 <= r.status_code < 500:
+                                raise ValueError(f"richiesta rifiutata dal modello (HTTP {r.status_code}): "
+                                                 f"{(r.text or '')[:400]}")
+                            r.raise_for_status()
+                            raccolto = self._raccogli_con_strumenti(r.iter_lines())
+                        except Exception:
+                            guardiano.verifica()
+                            raise
+                    # uno stream chiuso dal guardiano puo' anche finire "pulito": non e' una risposta
+                    guardiano.verifica()
+                    return self._chiamate_ripulite(raccolto, tools)
                 finally:
                     chiudi = getattr(r, "close", None)
                     if callable(chiudi):
                         chiudi()
-            except RigUnavailableError:
+            except (RigUnavailableError, ChiamataInterrotta):
                 raise
             except ValueError:
                 raise
@@ -949,6 +1069,9 @@ class AIClient:
         """
         sforzo = self._sforzo(sforzo)
         timeout = self._timeout_ragionato(sforzo, timeout, messages)
+        interrompi = self.interrompi
+        inizio = time.monotonic()
+        scadenza = inizio + self._tetto_chiamata(timeout, max_tokens)
 
         last_exception = None
         self.ultima_fine = ""
@@ -956,6 +1079,9 @@ class AIClient:
         for attempt in range(self.MAX_RETRIES):
             url = ""
             try:
+                motivo = _Guardiano.motivo_ora(interrompi, scadenza)
+                if motivo:
+                    raise ChiamataInterrotta(motivo, time.monotonic() - inizio)
                 url, model = self._get_endpoints(mode)
                 print(f"[AIClient] POST {url} (mode={mode}, model={model}, timeout={timeout}s, attempt={attempt+1}/{self.MAX_RETRIES})")
                 # In streaming anche qui: il timeout di requests vale fra un
@@ -977,8 +1103,14 @@ class AIClient:
                     stream=True,
                 )
                 try:
-                    r.raise_for_status()
-                    content, ragionamento, fine = self._raccogli_risposta(r)
+                    with _Guardiano(r, inizio, scadenza, interrompi) as guardiano:
+                        try:
+                            r.raise_for_status()
+                            content, ragionamento, fine = self._raccogli_risposta(r)
+                        except Exception:
+                            guardiano.verifica()
+                            raise
+                    guardiano.verifica()
                 finally:
                     chiudi = getattr(r, "close", None)
                     if callable(chiudi):
@@ -996,6 +1128,10 @@ class AIClient:
 
             except RigUnavailableError as e:
                 print(f"[AIClient] Routing fail-closed: {e}")
+                return None
+            except ChiamataInterrotta as e:
+                print(f"[AIClient] {e} (mode={mode})")
+                self.ultima_fine = "interrotta"
                 return None
             except Exception as e:
                 last_exception = f"{type(e).__name__}: {e}"
